@@ -42,23 +42,19 @@ def _is_temperature_rejected(exc: Exception) -> bool:
     return "temperature" in str(exc).lower()
 
 
-# 「provider 未必认」的可选调参字段。采样参数 + 思考控制(reasoning_effort / thinking)同属一类:
-# 都只是调优、都不影响语义正确性,被 400 拒时一律退回模型默认重试,绝不让一轮对话因此失败。
-_SAMPLING_PARAM_NAMES = ("temperature", "top_p", "top_k", "frequency_penalty", "presence_penalty",
-                         "repetition_penalty", "reasoning_effort", "thinking")
+# create() 里「我们主动加的、provider 未必认」的顶层 kwargs。extra_body 里还装着
+# top_k / repetition_penalty / thinking,一并由 _strip_sampling 处理。
+_OPTIONAL_TUNING_KEYS = ("temperature", "top_p", "frequency_penalty", "presence_penalty",
+                         "extra_body", "reasoning_effort")
 
 
-def _is_sampling_rejected(exc: Exception) -> bool:
-    """provider 拒绝任一可选调参字段(采样参数 / reasoning_effort / thinking)——
-    400 BadRequest 且报错点名其中之一。据此自愈:剥掉全部可选调参用模型默认重试(反馈#93 预设接线兜底)。"""
+def _is_bad_request(exc: Exception) -> bool:
+    """是不是 400 BadRequest(与 _is_tools_unsupported 同一判据,只是语义不同)。"""
     try:
         from openai import BadRequestError
-        if not isinstance(exc, BadRequestError):
-            return False
     except ImportError:
         return False
-    s = str(exc).lower()
-    return any(p in s for p in _SAMPLING_PARAM_NAMES)
+    return isinstance(exc, BadRequestError)
 
 
 def _strip_sampling(kwargs: dict) -> None:
@@ -137,18 +133,25 @@ class _OpenAICompatBackend:
         """
         combo = (self.api_id, self.model_name, self.user_id)
         if combo in self._fixed_temp_combos:
-            _strip_sampling(kwargs)  # 本进程已知该 combo 拒采样参数 → 直接剥掉不再发
+            _strip_sampling(kwargs)  # 本进程已知该 combo 拒可选调参 → 直接剥掉不再发
         try:
             return self.client.chat.completions.create(**kwargs)
         except Exception as exc:
-            # provider 拒绝任一采样参数(temperature/top_p/penalties/extra_body 里的 top_k/repetition_penalty)
-            # → 剥掉全部采样参数用模型默认重试 + 记忆。保证「预设接线」不会让任何 provider 400 断轮。
-            if _is_sampling_rejected(exc) and any(k in kwargs for k in ("temperature", "top_p", "frequency_penalty", "presence_penalty", "extra_body")):
-                self._fixed_temp_combos.add(combo)
-                _strip_sampling(kwargs)
-                log.info(f"[GM] {self.api_id}/{self.model_name} 拒绝自定义采样参数 → 用模型默认重试")
-                return self.client.chat.completions.create(**kwargs)
-            raise
+            # provider 拒绝任一可选调参(采样参数 / reasoning_effort / extra_body 里的 top_k / thinking)
+            # → 剥掉全部可选调参用模型默认重试。保证「预设接线」不会让任何 provider 400 断轮。
+            #
+            # 判据用「是不是 400 + 我们确实发了可选调参」,不再依赖报错文本点名字段:中转站的
+            # 400 文案五花八门,点名式嗅探漏一个就是整轮崩。反正 400 本来就要失败,退参重试一次
+            # 只可能变好。**记忆放在重试成功之后** —— 若退参也没救回来,说明 400 另有原因,
+            # 不能就此把该 combo 永久标成「拒采样参数」、白白吃掉用户的生成参数预设。
+            if not (_is_bad_request(exc) and any(
+                    k in kwargs for k in _OPTIONAL_TUNING_KEYS)):
+                raise
+            _strip_sampling(kwargs)
+            log.info(f"[GM] {self.api_id}/{self.model_name} 拒绝可选调参(400)→ 用模型默认重试")
+            resp = self.client.chat.completions.create(**kwargs)
+            self._fixed_temp_combos.add(combo)
+            return resp
 
     def _sampling_kwargs(self, default_temperature: float) -> dict[str, Any]:
         """叙事调用的采样参数 = 用户预设(只覆盖设过的键)叠加在后端默认 temperature 上。

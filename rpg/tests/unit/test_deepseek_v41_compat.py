@@ -176,3 +176,72 @@ def _fake_stream(*, reasoning: str = "", text: str = "", tool_call: bool = False
         chunks.append(_D(usage=None, choices=[_D(delta=_D(reasoning_content=None, content=None,
                                                          tool_calls=[tc]), finish_reason="tool_calls")]))
     return iter(chunks)
+
+
+# ── 四、退参自愈:新发的 reasoning_effort 不能把中转站用户打崩 ────────────────
+#
+# 生产实况:67 个 deepseek 凭据里有 1 个把 base_url 指向中转站(literouter),另有 6 个
+# 用户显式配过 deepseek 的 effort 档(其中 "extra"→官方 xhigh)。中转站未必认这些字段,
+# 而它们纯属调优 —— 被 400 拒就该退参重试,绝不能让一轮对话因此崩掉。
+class _Boom(Exception):
+    pass
+
+
+def _backend_with_fake_client(responses):
+    """responses: 依次返回的对象;元素是 Exception 就抛出。返回 (backend, 记录的 kwargs 列表)。"""
+    b = object.__new__(_OpenAICompatBackend)
+    b.api_id, b.model_name, b.user_id = "deepseek", "deepseek-flash", 1
+    b._fixed_temp_combos = set()
+    calls = []
+
+    def _create(**kw):
+        calls.append(dict(kw))
+        r = responses[len(calls) - 1]
+        if isinstance(r, Exception):
+            raise r
+        return r
+
+    b.client = type("C", (), {"chat": type("Ch", (), {"completions": type("Co", (), {"create": staticmethod(_create)})()})()})()
+    return b, calls
+
+
+def _bad_request(msg="unsupported parameter"):
+    from openai import BadRequestError
+    import httpx
+    req = httpx.Request("POST", "https://api.deepseek.com/v1/chat/completions")
+    return BadRequestError(msg, response=httpx.Response(400, request=req), body=None)
+
+
+def test_tuning_rejected_retries_without_it():
+    b, calls = _backend_with_fake_client([_bad_request(), "ok"])
+    out = b._create(model="m", messages=[], temperature=0.9, reasoning_effort="xhigh",
+                    extra_body={"top_k": 40})
+    assert out == "ok"
+    assert len(calls) == 2
+    assert not ({"temperature", "reasoning_effort", "extra_body"} & set(calls[1])), \
+        "重试必须把全部可选调参剥干净"
+    assert b._fixed_temp_combos, "退参救回来了才记忆,下次直接不发"
+
+
+def test_400_not_caused_by_tuning_does_not_poison_the_memo():
+    """退参也没救回来 = 400 另有原因。此时若仍记忆,会白白吃掉该用户之后所有生成参数预设。"""
+    b, calls = _backend_with_fake_client([_bad_request(), _bad_request("messages: invalid role")])
+    try:
+        b._create(model="m", messages=[], temperature=0.9)
+    except Exception:
+        pass
+    else:
+        raise AssertionError("第二次仍 400 应上抛")
+    assert not b._fixed_temp_combos, "不能把与调参无关的 400 记成「该 combo 拒调参」"
+
+
+def test_non_400_bubbles_up_untouched():
+    """429/5xx/超时是瞬时或鉴权问题,不能当调参被拒来吞。"""
+    b, calls = _backend_with_fake_client([_Boom("timeout")])
+    try:
+        b._create(model="m", messages=[], temperature=0.9)
+    except _Boom:
+        pass
+    else:
+        raise AssertionError("非 400 必须原样上抛")
+    assert len(calls) == 1, "非 400 不该重试"
