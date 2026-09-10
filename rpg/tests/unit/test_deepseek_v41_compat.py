@@ -49,10 +49,27 @@ def test_flash_family_has_vision_and_reasoning():
 def test_dated_preview_variant_falls_back_by_prefix():
     """生产实测存在 `deepseek-v4.1-flash-expires-on-0910` 这类带日期后缀的预览别名。
     前缀回退必须兜住,否则这批用户「有型号、没价格、没能力标签」。"""
-    caps = model_probe.get_capabilities("deepseek", "deepseek-v4.1-flash-expires-on-0910")
+    dated = "deepseek-v4.1-flash-expires-on-0910"
+    caps = model_probe.get_capabilities("deepseek", dated)
     assert "reasoning" in caps and "tools" in caps
-    p = model_probe.get_pricing("deepseek", "deepseek-v4.1-flash")
-    assert p and (p["input"], p["output"]) == (_FLASH_IN, _FLASH_OUT)
+    # 价格也必须兜住 —— 此前 get_pricing 是精确匹配、没有前缀回退,同一族信息
+    # 「能力有、价格 None」,是修 A 漏 B。
+    p = model_probe.get_pricing("deepseek", dated)
+    assert p is not None, "带日期后缀的变体必须走前缀回退拿到价格"
+    assert (p["input"], p["output"]) == (_FLASH_IN, _FLASH_OUT)
+    assert p["source"] == "static-prefix", "前缀命中要能与精确命中区分"
+
+
+def test_exact_pricing_hit_still_marked_static():
+    """回退不能污染精确命中的 source(admin/诊断按它判定价格来源)。"""
+    assert model_probe.get_pricing("deepseek", "deepseek-flash")["source"] == "static"
+
+
+def test_pricing_prefix_fallback_is_generic_not_deepseek_only():
+    """同一个洞在 Gemini 的带日期变体上一模一样,回退必须是通用的。"""
+    p = model_probe.get_pricing("vertex_ai", "gemini-3.8-flash-preview-09-01")
+    assert p is not None and p["source"] == "static-prefix"
+    assert p["input"] == model_probe.get_pricing("vertex_ai", "gemini-3.8-flash")["input"]
 
 
 def test_seed_catalog_offers_current_flash_id():

@@ -136,8 +136,9 @@ _STATIC_PRICING: dict[str, dict[str, dict[str, Any]]] = {
         # 记 Flash 价才是用户真实账单(此前记的 $0.22/$0.66 是老 V4-Flash 价,已失真)。
         "deepseek-v4-flash": {"input": 0.15, "output": 0.60, "context": 1000000, "notes": "旧别名 → 实由 V4.1-Flash 服务并按 Flash 价计费"},
         "deepseek-v4-flash-vision-exp": {"input": 0.15, "output": 0.60, "context": 1000000, "notes": "旧别名 → 实由 V4.1-Flash 服务并按 Flash 价计费"},
-        # 生产日志实测到的预览别名(uid=233 在用,GET /v1/chat/completions 返 200)。非官方目录 ID,
-        # 不进菜单,只兜底定价/能力,免得这类用户「有模型没价格没能力标签」。前缀回退覆盖带日期后缀的变体。
+        # 生产日志实测到的预览别名(uid=233 在用,POST /v1/chat/completions 返 200)。非官方目录 ID,
+        # 不进菜单,只兜底定价/能力,免得这类用户「有模型没价格没能力标签」。
+        # 带日期后缀的变体(…-expires-on-0910)靠 get_pricing / get_capabilities 的最长前缀回退命中。
         "deepseek-v4.1-flash": {"input": 0.15, "output": 0.60, "context": 1000000, "notes": "V4.1-Flash 预览别名(实测存在,非官方目录 ID)"},
         "deepseek-v3":       {"input": 0.27, "output": 1.10, "context": 64000,  "notes": "V3 旧版 · 已随 deepseek-chat/reasoner 于 2026-07-24 退役"},
         # 兼容驼峰大小写写法(同样已由 V4.1-Flash 承接)
@@ -194,6 +195,13 @@ def get_pricing(api_id_or_kind: str, model_real_name: str, catalog_override: dic
     pricing = table.get(model_real_name)
     if pricing:
         return {**pricing, "source": "static", "unit": "USD per million tokens"}
+    # 最长前缀回退,与 get_capabilities 对称。厂商的带日期/后缀变体
+    # (gemini-3.8-flash-preview-09-01、deepseek-v4.1-flash-expires-on-0910 …)此前
+    # **只有能力表兜得住、价格恒 None** —— 同一族信息一半有一半没有,是典型的修 A 漏 B。
+    # 前缀命中的价格标 source="static-prefix",与精确命中可区分。
+    for prefix in sorted(table.keys(), key=len, reverse=True):
+        if model_real_name.startswith(prefix):
+            return {**table[prefix], "source": "static-prefix", "unit": "USD per million tokens"}
     return None
 
 
