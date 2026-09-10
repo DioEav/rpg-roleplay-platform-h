@@ -188,28 +188,17 @@
       "base_url": "https://api.deepseek.com/v1",
       "models": [
         {
-          "id": "deepseek-v4-flash-vision-exp",
-          "real_name": "deepseek-v4-flash-vision-exp",
-          "display_name": "DeepSeek V4 Flash Vision (exp)",
+          "id": "deepseek-flash",
+          "real_name": "deepseek-flash",
+          "display_name": "DeepSeek Flash (V4.1)",
           "enabled": true,
           "capabilities": [
             "text",
             "streaming",
             "image_input",
             "tools",
-            "json_mode"
-          ]
-        },
-        {
-          "id": "deepseek-v4-flash",
-          "real_name": "deepseek-v4-flash",
-          "display_name": "DeepSeek V4 Flash",
-          "enabled": true,
-          "capabilities": [
-            "text",
-            "streaming",
-            "tools",
-            "json_mode"
+            "json_mode",
+            "reasoning"
           ]
         },
         {
@@ -220,6 +209,35 @@
           "capabilities": [
             "text",
             "streaming",
+            "tools",
+            "json_mode",
+            "reasoning",
+            "code_exec"
+          ]
+        },
+        {
+          "id": "deepseek-v4-flash",
+          "real_name": "deepseek-v4-flash",
+          "display_name": "DeepSeek V4 Flash (旧别名 → V4.1-Flash)",
+          "enabled": true,
+          "capabilities": [
+            "text",
+            "streaming",
+            "image_input",
+            "tools",
+            "json_mode",
+            "reasoning"
+          ]
+        },
+        {
+          "id": "deepseek-v4-flash-vision-exp",
+          "real_name": "deepseek-v4-flash-vision-exp",
+          "display_name": "DeepSeek V4 Flash Vision (旧别名 → V4.1-Flash)",
+          "enabled": true,
+          "capabilities": [
+            "text",
+            "streaming",
+            "image_input",
             "tools",
             "json_mode",
             "reasoning"

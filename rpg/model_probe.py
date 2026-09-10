@@ -125,15 +125,24 @@ _STATIC_PRICING: dict[str, dict[str, dict[str, Any]]] = {
     },
     # DeepSeek 直供平台(api.deepseek.com),区别于 siliconflow 转售
     "deepseek": {
-        # 2026-09-04 校准(官方 api-docs 定价页)。**记的是 off-peak 价**;官方高峰时段
-        # (UTC 周一至周五 01:00-04:00 / 06:00-10:00)翻倍,故实际账单可能是此处两倍。
-        "deepseek-v4-pro":   {"input": 0.66, "output": 1.98, "context": 1000000, "notes": "V4-Pro 官方 · off-peak(高峰翻倍)"},
-        "deepseek-v4-flash": {"input": 0.22, "output": 0.66, "context": 1000000, "notes": "V4-Flash 官方 · off-peak(高峰翻倍)"},
-        "deepseek-v4-flash-vision-exp": {"input": 0.22, "output": 0.66, "context": 1000000, "notes": "V4-Flash 视觉实验版 · off-peak"},
-        "deepseek-v3":       {"input": 0.27, "output": 1.10, "context": 64000,  "notes": "V3 旧版"},
-        # 兼容驼峰大小写写法
-        "DeepSeek-V4-Flash": {"input": 0.10, "output": 0.40, "context": 1000000},
-        "DeepSeek-V4-Pro":   {"input": 0.30, "output": 1.20, "context": 1000000},
+        # 2026-09-10 校准(官方 api-docs「Models & Pricing」页)。**记的是 off-peak 价**;
+        # 官方高峰时段(UTC 周一至周五 01:00-04:00 / 06:00-10:00)整单翻倍,实际账单可能是此处两倍。
+        # 现役只剩两个 ID:deepseek-flash(= DeepSeek-V4.1-Flash)与 deepseek-v4-pro。
+        "deepseek-flash":    {"input": 0.15, "output": 0.60, "context": 1000000, "notes": "V4.1-Flash 现役 · off-peak(高峰翻倍);缓存命中 $0.003"},
+        # v4-pro 自 2026-09-14 12:00(北京)起被官方路由到 V4.1-Flash 并按 Flash 价计费,
+        # 直到 V4.1-Pro 发布为止。此处保留 Pro 自身价:重路由是临时的,且高报成本比低报安全。
+        "deepseek-v4-pro":   {"input": 0.66, "output": 1.98, "context": 1000000, "notes": "V4-Pro · off-peak(高峰翻倍);2026-09-14 起官方暂转由 V4.1-Flash 承接"},
+        # 下面两个是**已退役的旧别名**:官方仍接受,但请求实际由 V4.1-Flash 服务、按 Flash 价计费。
+        # 记 Flash 价才是用户真实账单(此前记的 $0.22/$0.66 是老 V4-Flash 价,已失真)。
+        "deepseek-v4-flash": {"input": 0.15, "output": 0.60, "context": 1000000, "notes": "旧别名 → 实由 V4.1-Flash 服务并按 Flash 价计费"},
+        "deepseek-v4-flash-vision-exp": {"input": 0.15, "output": 0.60, "context": 1000000, "notes": "旧别名 → 实由 V4.1-Flash 服务并按 Flash 价计费"},
+        # 生产日志实测到的预览别名(uid=233 在用,GET /v1/chat/completions 返 200)。非官方目录 ID,
+        # 不进菜单,只兜底定价/能力,免得这类用户「有模型没价格没能力标签」。前缀回退覆盖带日期后缀的变体。
+        "deepseek-v4.1-flash": {"input": 0.15, "output": 0.60, "context": 1000000, "notes": "V4.1-Flash 预览别名(实测存在,非官方目录 ID)"},
+        "deepseek-v3":       {"input": 0.27, "output": 1.10, "context": 64000,  "notes": "V3 旧版 · 已随 deepseek-chat/reasoner 于 2026-07-24 退役"},
+        # 兼容驼峰大小写写法(同样已由 V4.1-Flash 承接)
+        "DeepSeek-V4-Flash": {"input": 0.15, "output": 0.60, "context": 1000000},
+        "DeepSeek-V4-Pro":   {"input": 0.66, "output": 1.98, "context": 1000000},
     },
     "siliconflow": {
         # task 57: DeepSeek V4 系列（2026-04-24 发布）
@@ -929,9 +938,13 @@ _CAPABILITY_DEFAULTS: dict[str, dict[str, list[str]]] = {
     "deepseek": {
         # 直供平台(api.deepseek.com)。此前只有 siliconflow 转售侧有能力表,直供侧缺失
         # → 直供用户的模型卡片一律拿不到能力标签。
+        # 2026-09-10 按官方能力矩阵校准:两个现役型号都默认开思考(reasoning)、都支持 tools/json;
+        # 只有 Flash 侧有 vision。三个旧别名实际都由 V4.1-Flash 服务,故能力按 V4.1-Flash 给。
+        "deepseek-flash":               ["text", "streaming", "image_input", "tools", "json_mode", "reasoning"],
         "deepseek-v4-pro":              ["text", "streaming", "tools", "json_mode", "reasoning", "code_exec"],
-        "deepseek-v4-flash-vision-exp": ["text", "streaming", "image_input", "tools", "json_mode"],
-        "deepseek-v4-flash":            ["text", "streaming", "tools", "json_mode"],
+        "deepseek-v4-flash-vision-exp": ["text", "streaming", "image_input", "tools", "json_mode", "reasoning"],
+        "deepseek-v4-flash":            ["text", "streaming", "image_input", "tools", "json_mode", "reasoning"],
+        "deepseek-v4.1-flash":          ["text", "streaming", "image_input", "tools", "json_mode", "reasoning"],
     },
     "minimax":   {"MiniMax-M1": ["text", "streaming", "tools", "json_mode"]},
     "dashscope": {

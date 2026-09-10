@@ -198,9 +198,10 @@ function ModelParamsSection() {
 
       {/* task 141: Extended Thinking 开关 — 只对真正消费 model_effort 的 provider 显示:
           anthropic/vertex_ai 走 budget_tokens(backends/anthropic.py、vertex.py),
-          openai 走 reasoning_effort(openai_compat.py 且仅 api_id=="openai" 才传)。
-          其余 provider(deepseek/中转/本地)后端静默忽略该偏好,显示开关=「已启用」谎报。 */}
-      {selectedModelKey && ["anthropic", "vertex_ai", "openai"].includes(selectedModelKey.split(":")[0]) && (
+          openai 走 reasoning_effort、deepseek 走 reasoning_effort + thinking.type
+          (均在 openai_compat.py 的 _reasoning_param 里按 api_id 分方言)。
+          其余 provider(Qwen/Hunyuan/中转/本地)后端静默忽略该偏好,显示开关=「已启用」谎报。 */}
+      {selectedModelKey && ["anthropic", "vertex_ai", "openai", "deepseek"].includes(selectedModelKey.split(":")[0]) && (
         <SetRow label={t('settings.modelparams.extended_thinking')}
           description={t('settings.modelparams.extended_thinking_desc')}>
           <CSToggle checked={thinkingEnabled} onChange={({ detail }) => toggleThinking(detail.checked)}>

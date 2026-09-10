@@ -83,8 +83,9 @@ const MODELS_DATA = [
     id: "deepseek", name: "DeepSeek", base_url: "https://api.deepseek.com/v1",
     enabled: true, status: "online", key_set: true, key_hint: "·sk-…a8d2", proxy: "直连",
     models: [
+      { id: "deepseek-flash", real_name: "deepseek-flash", display: "DeepSeek Flash · V4.1", capabilities: ["reasoning", "vision", "cn", "fast", "tool-use"], enabled: true, price: "$0.15 / $0.60", context: "1M", health: "ok", visible: true },
       { id: "deepseek-v4-pro", real_name: "deepseek-v4-pro", display: "DeepSeek V4-Pro · 旗舰", capabilities: ["reasoning", "cn", "tool-use"], enabled: true, price: "$0.66 / $1.98", context: "1M", health: "ok", visible: true },
-      { id: "deepseek-v4-flash", real_name: "deepseek-v4-flash", display: "DeepSeek V4-Flash · 快速", capabilities: ["cn", "fast"], enabled: true, price: "$0.22 / $0.66", context: "1M", health: "ok", visible: true },
+      { id: "deepseek-v4-flash", real_name: "deepseek-v4-flash", display: "DeepSeek V4-Flash · 旧别名", capabilities: ["reasoning", "vision", "cn", "fast", "tool-use"], enabled: true, price: "$0.15 / $0.60", context: "1M", health: "ok", visible: true },
     ]
   },
   {

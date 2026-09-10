@@ -42,12 +42,15 @@ def _is_temperature_rejected(exc: Exception) -> bool:
     return "temperature" in str(exc).lower()
 
 
-_SAMPLING_PARAM_NAMES = ("temperature", "top_p", "top_k", "frequency_penalty", "presence_penalty", "repetition_penalty")
+# 「provider 未必认」的可选调参字段。采样参数 + 思考控制(reasoning_effort / thinking)同属一类:
+# 都只是调优、都不影响语义正确性,被 400 拒时一律退回模型默认重试,绝不让一轮对话因此失败。
+_SAMPLING_PARAM_NAMES = ("temperature", "top_p", "top_k", "frequency_penalty", "presence_penalty",
+                         "repetition_penalty", "reasoning_effort", "thinking")
 
 
 def _is_sampling_rejected(exc: Exception) -> bool:
-    """provider 拒绝任一自定义采样参数(temperature/top_p/penalties/top_k/repetition_penalty)——
-    400 BadRequest 且报错点名其中之一。据此自愈:剥掉全部采样参数用模型默认重试(反馈#93 预设接线兜底)。"""
+    """provider 拒绝任一可选调参字段(采样参数 / reasoning_effort / thinking)——
+    400 BadRequest 且报错点名其中之一。据此自愈:剥掉全部可选调参用模型默认重试(反馈#93 预设接线兜底)。"""
     try:
         from openai import BadRequestError
         if not isinstance(exc, BadRequestError):
@@ -59,9 +62,38 @@ def _is_sampling_rejected(exc: Exception) -> bool:
 
 
 def _strip_sampling(kwargs: dict) -> None:
-    """就地剥掉所有采样参数(含 extra_body 内的 top_k/repetition_penalty)→ 退回模型默认。"""
-    for _sp in ("temperature", "top_p", "frequency_penalty", "presence_penalty", "extra_body"):
+    """就地剥掉所有可选调参(含 extra_body 里的 top_k/repetition_penalty/thinking)→ 退回模型默认。"""
+    for _sp in ("temperature", "top_p", "frequency_penalty", "presence_penalty", "extra_body",
+                "reasoning_effort"):
         kwargs.pop(_sp, None)
+
+
+# DeepSeek 直供的思考档位名单(官方 api-docs「Thinking Mode」:minimal/low/medium/high/xhigh/max)。
+# 本仓 effort 枚举里的 "extra" 官方没有,映射到 xhigh(官方 xhigh→high,与 high 同档,不会报错)。
+_EFFORT_TO_DEEPSEEK = {
+    "low": "low", "medium": "medium", "high": "high", "extra": "xhigh", "max": "max",
+}
+
+
+def _merge_tuning(*parts: dict) -> dict:
+    """把多份请求调参字典并成一份,**extra_body 做深合并而不是互相覆盖**。
+
+    采样参数(top_k/repetition_penalty)和 DeepSeek 的 thinking 开关都住在 extra_body 里,
+    两边各自 `**` 展开进 create() 会撞出 `multiple values for keyword 'extra_body'` TypeError。
+    """
+    out: dict[str, Any] = {}
+    extra: dict[str, Any] = {}
+    for part in parts:
+        if not part:
+            continue
+        for k, v in part.items():
+            if k == "extra_body":
+                extra.update(v or {})
+            else:
+                out[k] = v
+    if extra:
+        out["extra_body"] = extra
+    return out
 
 
 def _is_tools_unsupported(exc: Exception) -> bool:
@@ -211,25 +243,40 @@ class _OpenAICompatBackend:
         log.info(f"[GM] {display_kind} · {model} (base={effective_base or 'default'}, key from {result.get('source')})")
 
     def _reasoning_param(self) -> dict:
-        """task 141: 按用户偏好返 OpenAI o-series / gpt-5 系列的 reasoning.effort 字段。
-        返 {} 表示不传(off 或 model 不支持)。
+        """task 141: 按用户偏好返回思考控制字段。返 {} 表示不传(off / provider 不支持)。
 
-        DeepSeek / Qwen / Hunyuan / Mimo 等国内 provider 大多无 reasoning 字段,
-        传了 SDK 报 400 — 这里**只对 api_id='openai' 的请求传**,其他 provider
-        默认空字典(模型自己内置 thinking 行为,不通过 effort 参数控制)。
+        两家的方言不同,各自适配:
+        - `openai`:reasoning_effort 字符串(o-series / gpt-5)。
+        - `deepseek`:V4.1 起**思考默认开、默认 effort=high**。OpenAI 格式下用
+          `reasoning_effort` 调档、`extra_body.thinking.type` 开关(官方 api-docs「Thinking Mode」)。
+          此前本函数对非 openai 一律返 {},于是游戏内/设置页的 Effort 选择器对 deepseek
+          写了偏好、弹了成功提示,后端却整段丢弃 —— 用户想关思考关不掉(UI 存在≠生效)。
+
+        其余 provider(Qwen / Hunyuan / 中转 / 本地)仍返 {}:模型自己内置 thinking 行为,
+        没有权威的开关字段,乱传只会 400。
         """
         try:
-            from ._effort import resolve_openai_reasoning
-            # 仅 OpenAI 正式 endpoint 支持 reasoning.effort 字段
-            if self.api_id not in {"openai"}:
-                return {}
-            effort = resolve_openai_reasoning(self.user_id, self.api_id, self.model_name)
-            if not effort:
-                return {}
-            return {"reasoning_effort": effort}
+            if self.api_id == "openai":
+                from ._effort import resolve_openai_reasoning
+                effort = resolve_openai_reasoning(self.user_id, self.api_id, self.model_name)
+                return {"reasoning_effort": effort} if effort else {}
+            if self.api_id == "deepseek":
+                from ._effort import resolve_effort
+                effort = resolve_effort(self.user_id, self.api_id, self.model_name)
+                if effort == "off":
+                    # 唯一需要显式关的场合。开着是官方默认,不必多传一个字段去冒 400 的险。
+                    return {"extra_body": {"thinking": {"type": "disabled"}}}
+                mapped = _EFFORT_TO_DEEPSEEK.get(effort)
+                return {"reasoning_effort": mapped} if mapped else {}
+            return {}
         except Exception as exc:
             log.warning(f"[openai_compat] _reasoning_param failed: {exc}")
             return {}
+
+    def _tuning_kwargs(self, default_temperature: float) -> dict[str, Any]:
+        """叙事调用的全部可选调参 = 采样参数 + 思考控制,extra_body 已深合并。
+        三个调用点(call / stream / stream_with_mcp_loop)统一走这里,免得 extra_body 撞车。"""
+        return _merge_tuning(self._sampling_kwargs(default_temperature), self._reasoning_param())
 
     def _to_messages(self, system: str, messages: list[dict]) -> list[dict]:
         out = []
@@ -240,15 +287,14 @@ class _OpenAICompatBackend:
 
     def call(self, system: str, messages: list[dict], max_tokens: int) -> str:
         last_exc: Exception | None = None
-        _reasoning = self._reasoning_param()  # task 141
+        _tuning = self._tuning_kwargs(0.9)  # task 141: 采样 + 思考控制(extra_body 已深合并)
         for attempt in range(_MAX_RETRIES + 1):
             try:
                 resp = self._create(
                     model=self.model_name,
                     messages=self._to_messages(system, messages),
                     max_tokens=max_tokens,
-                    **self._sampling_kwargs(0.9),
-                    **_reasoning,
+                    **_tuning,
                 )
                 break
             except Exception as exc:
@@ -334,16 +380,15 @@ class _OpenAICompatBackend:
         return (resp.choices[0].message.content or "").strip()
 
     def stream(self, system: str, messages: list[dict], max_tokens: int) -> Iterator[str]:
-        _reasoning = self._reasoning_param()  # task 141
+        _tuning = self._tuning_kwargs(0.9)  # task 141: 采样 + 思考控制(extra_body 已深合并)
         finish_reason: str | None = None
         stream = self._create(
             model=self.model_name,
             messages=self._to_messages(system, messages),
             max_tokens=max_tokens,
-            **self._sampling_kwargs(0.9),
             stream=True,
             stream_options={"include_usage": True},  # 末尾 chunk 带 usage
-            **_reasoning,
+            **_tuning,
         )
         for chunk in stream:
             # 末尾 usage chunk 的 choices 可能为空
@@ -450,22 +495,27 @@ class _OpenAICompatBackend:
         oai_messages = self._to_messages(system, messages)
 
         first_attempt = True
+        # DeepSeek 思考模式硬要求(官方 api-docs「Thinking Mode · Tool Calls」):**带 tools 的请求,
+        # 后续每一次请求都必须把该轮的 reasoning_content 原样回传,否则 API 直接 400**。
+        # V4.1 起思考是默认开的,不回传就等于「模型调完工具、下一跳必崩」。这里逐轮累计并装回
+        # assistant 消息。对不产 reasoning_content 的 provider 天然是 no-op(累计恒空,字段不加)。
+        echo_reasoning = True  # 被中转站以 400 拒绝时降级为 False 重试一次
         for _iteration in range(max_iterations):
             tool_calls_buf: dict[int, dict[str, Any]] = {}  # index → {id, name, arguments}
             current_text = ""
+            current_reasoning = ""
             finish_reason: str | None = None
             try:
-                _reasoning = self._reasoning_param()  # task 141
+                _tuning = self._tuning_kwargs(0.9)  # task 141: 采样 + 思考控制(extra_body 已深合并)
                 stream = self._create(
                     model=self.model_name,
                     messages=oai_messages,
                     max_tokens=max_tokens,
-                    **self._sampling_kwargs(0.9),
                     tools=openai_tools,
                     tool_choice="auto",
                     stream=True,
                     stream_options={"include_usage": True},
-                    **_reasoning,
+                    **_tuning,
                 )
                 for chunk in stream:
                     try:
@@ -481,6 +531,7 @@ class _OpenAICompatBackend:
                             # text(叙事),最坏情况只是不显示、绝不污染正文。
                             rtext = getattr(delta, "reasoning_content", None) or getattr(delta, "reasoning", None)
                             if rtext:
+                                current_reasoning += rtext
                                 yield {"type": "reasoning", "text": rtext}
                             ctext = getattr(delta, "content", None)
                             if ctext:
@@ -515,6 +566,17 @@ class _OpenAICompatBackend:
                     self._unsupported_combos.add(combo_key)
                     yield from _openai_text_marker_loop(self, system, messages, mcp_tools, max_iterations, max_tokens, mcp_call)
                     return
+                # 少数中转站会把 assistant.reasoning_content 当非法字段 400 拒(自己吐得出、却收不回)。
+                # 剥掉重发一次:失去的只是思考连续性,总比整轮崩掉强。stream=True 的 400 在 create()
+                # 即抛、尚未 yield 任何增量,重发不会重复输出。
+                if echo_reasoning and _is_tools_unsupported(exc) and any(
+                        m.get("reasoning_content") for m in oai_messages if isinstance(m, dict)):
+                    log.warning(f"[gm] {self.api_id}/{self.model_name} 拒绝回传 reasoning_content(400)→ 剥离重试")
+                    echo_reasoning = False
+                    for m in oai_messages:
+                        if isinstance(m, dict):
+                            m.pop("reasoning_content", None)
+                    continue
                 # 非 tools-不支持(瞬时/鉴权/5xx)或后续 iteration 异常：let it bubble
                 raise
             first_attempt = False
@@ -536,6 +598,8 @@ class _OpenAICompatBackend:
                     for idx, buf in sorted(tool_calls_buf.items())
                 ],
             }
+            if current_reasoning and echo_reasoning:
+                assistant_msg["reasoning_content"] = current_reasoning
             oai_messages.append(assistant_msg)
 
             # dispatch + 装 tool result（OpenAI 用 role=tool, tool_call_id=...）
