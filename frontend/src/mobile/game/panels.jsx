@@ -14,7 +14,8 @@ import { ForcedSetSection, WorldbookOverlaySection } from '../../game-panels.jsx
 
 export const MOBILE_PANEL_TABS = [
   { id: 'status', label: i18n.t('mobile.game_panels.tab.status'), icon: 'status' },
-  { id: 'rules', label: i18n.t('mobile.game_panels.tab.rules'), icon: 'dice' },
+  // 「5E 规则」tab 已隐藏(与桌面 RightPanel PANEL_TABS 同步;恢复时解注释即可)。
+  // { id: 'rules', label: i18n.t('mobile.game_panels.tab.rules'), icon: 'dice' },
   { id: 'memory', label: i18n.t('mobile.game_panels.tab.memory'), icon: 'memory' },
   { id: 'worldbook', label: i18n.t('mobile.game_panels.tab.worldbook'), icon: 'world' },
   { id: 'cards', label: i18n.t('mobile.game_panels.tab.cards'), icon: 'cards' },

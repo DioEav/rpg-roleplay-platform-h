@@ -88,7 +88,9 @@ const PL_IDS = [
   ...((PL_NAV || []).filter((i) => i.id).map((i) => i.id)),
   'me', 'me-edit', 'me-settings', 'saves-branches', 'scripts-import', 'cards-npc', 'cards-online',
   // 新 IA 子页(Cloudscape 迁移后):剧本 / 开始游戏 / 设置&账户 各模块的左栏子页
-  'scripts-library', 'scripts-editor', 'scripts-settings', 'play-settings',
+  // 「play-settings」(游戏设置)已随「冒险模组」(modules,原经 PL_NAV 注入)一并隐藏:
+  // 不在合法 page 集合 → 直链 /modules、/play-settings 由 plPathToPage 返回 null 回落主页。
+  'scripts-library', 'scripts-editor', 'scripts-settings',
   'settings-models', 'settings-modelparams', 'settings-modules', 'settings-memory',
   'settings-permissions', 'settings-account', 'settings-danger', 'admin-deploy',
   'admin-users', 'admin-usage', 'admin-audit', 'admin-health',
@@ -169,10 +171,12 @@ function PlatformApp() {
   // iter#41: scripts-editor / scripts-settings 占位 route 删除 — 兼容旧 hash 重定向到 #scripts list
   else if (page === 'scripts-editor') body = <ScriptsPage subPage="list" />;
   else if (page === 'scripts-settings') body = <ComingSoon title="剧本设置" desc="剧本级设定覆盖(script_overrides)。迁移中。" />;
-  else if (page === 'modules') body = <ModulesPage />;
+  // 「冒险模组」(modules)与「游戏设置」(play-settings)页面已隐藏:
+  // 两 id 已不在 PL_IDS 合法集合,parsePage() 对直链返回 null → 回落 profile;此分支保留注释备恢复。
+  // else if (page === 'modules') body = <ModulesPage />;
   else if (page === 'saves') body = <SavesPage subPage="list" />;
   else if (page === 'saves-branches') body = <SavesPage subPage="branches" />;
-  else if (page === 'play-settings') body = <ComingSoon title="游戏设置" desc="全局游玩默认(元知识/引导/防剧透)。迁移中。" />;
+  // else if (page === 'play-settings') body = <ComingSoon title="游戏设置" desc="全局游玩默认(元知识/引导/防剧透)。迁移中。" />;
   else if (page === 'library') body = <LibraryPage />;
   else if (page === 'cards') body = <CardsPage subPage="user" />;
   else if (page === 'cards-npc') body = <CardsPage subPage="npc" />;

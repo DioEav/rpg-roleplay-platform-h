@@ -14,7 +14,9 @@ import { PanelDebug } from './PanelDebug.jsx';
 
 const PANEL_TABS = [
   { id: "status", labelKey: "game.tabs.status", icon: "status" },
-  { id: "rules", labelKey: "game.tabs.rules", icon: "debug" },
+  // 「5E 规则」tab 已隐藏(仅模组模式有真实数据,剧本局是空态)。
+  // 恢复:解注释下面这行 + body 分支里的 rules 分支即可。
+  // { id: "rules", labelKey: "game.tabs.rules", icon: "debug" },
   { id: "memory", labelKey: "game.tabs.memory", icon: "memory" },
   { id: "worldbook", labelKey: "game.tabs.worldbook", icon: "world" },
   // Codex 评审:tab 改名"人物" — 不再是"完整角色卡库"的镜像,而是三层运行时索引:
@@ -33,16 +35,19 @@ const PANEL_TABS = [
 function RightPanel({ state, activeTab, setActiveTab, sidebarWidth, density, collapsed, onToggle, resizeHandle }) {
   const { t } = useTranslation();
   const tabs = PANEL_TABS;
-  const active = tabs.find(tab => tab.id === activeTab) || tabs[0];
+  // 兜底:activeTab 不在可见 tab 集合(旧 #rules 链接 / localStorage 残留)时回落第一个,
+  // 防止「标题显示状态、内容渲染已隐藏面板」的错位。
+  const currentId = tabs.some((tab) => tab.id === activeTab) ? activeTab : tabs[0].id;
+  const active = tabs.find(tab => tab.id === currentId) || tabs[0];
   let body = null;
-  if (activeTab === "status") body = <PanelStatus state={state} panelWidth={sidebarWidth} />;
-  else if (activeTab === "rules") body = <PanelRules state={state} />;
-  else if (activeTab === "memory") body = <PanelMemory state={state} density={density} panelWidth={sidebarWidth} />;
-  else if (activeTab === "worldbook") body = <PanelWorldbook state={state} panelWidth={sidebarWidth} />;
-  else if (activeTab === "cards") body = <PanelCharacters state={state} panelWidth={sidebarWidth} />;
-  else if (activeTab === "timeline") body = <PanelTimeline state={state} panelWidth={sidebarWidth} />;
-  else if (activeTab === "context") body = <PanelContext state={state} />;
-  else if (activeTab === "debug") body = <PanelDebug state={state} />;
+  if (currentId === "status") body = <PanelStatus state={state} panelWidth={sidebarWidth} />;
+  // else if (currentId === "rules") body = <PanelRules state={state} />;
+  else if (currentId === "memory") body = <PanelMemory state={state} density={density} panelWidth={sidebarWidth} />;
+  else if (currentId === "worldbook") body = <PanelWorldbook state={state} panelWidth={sidebarWidth} />;
+  else if (currentId === "cards") body = <PanelCharacters state={state} panelWidth={sidebarWidth} />;
+  else if (currentId === "timeline") body = <PanelTimeline state={state} panelWidth={sidebarWidth} />;
+  else if (currentId === "context") body = <PanelContext state={state} />;
+  else if (currentId === "debug") body = <PanelDebug state={state} />;
 
   return (
     <aside className={`gp-panel ${collapsed ? "collapsed" : ""}`} style={{width: collapsed ? 0 : sidebarWidth}} aria-hidden={collapsed}>

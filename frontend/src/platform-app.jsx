@@ -183,14 +183,18 @@ const getCSModules = (t) => [
     ] },
   { id: 'play', label: t('platform.nav.saves'), group: t('platform.nav.group_play'),
     // NPC 角色卡已移入「剧本」详情面板(NPC 卡属于具体剧本),不再在开始游戏出现。
-    pages: ['saves', 'saves-branches', 'cards', 'cards-online', 'modules', 'play-settings'],
+    // 「冒险模组」(modules)与「游戏设置」(play-settings)两个子页已隐藏:
+    // 从左栏导航与合法 page 集合中移除,直链会回落主页(见 entries/platform.jsx PL_IDS)。
+    // 恢复:把下面注释的两行 sub 与 pages 里的两个 id 解注释,并同步恢复
+    // shared.jsx getPLNav 的 modules 条目 + entries/platform.jsx 的两条 route。
+    pages: ['saves', 'saves-branches', 'cards', 'cards-online'],
     sub: [
       { text: t('platform.nav.cs_saves'),          href: '#saves' },
       { text: t('platform.nav.cs_branches'),        href: '#saves-branches' },
       { text: t('platform.nav.cs_user_cards'),      href: '#cards' },
       { text: t('platform.nav.cards_online', { defaultValue: '在线角色卡库' }), href: '#cards-online' },
-      { text: t('platform.nav.modules'),            href: '#modules' },
-      { text: t('platform.nav.cs_play_settings'),   href: '#play-settings' },
+      // { text: t('platform.nav.modules'),            href: '#modules' },
+      // { text: t('platform.nav.cs_play_settings'),   href: '#play-settings' },
     ] },
   // 酒馆模式:与「开始游戏」(play)**平级**、同在「游玩/Play」分类下的独立模块
   // (不再是开始游戏的子项)。页面是 Platform 内嵌子页 #tavern(见 entries/platform.jsx)。
@@ -201,15 +205,16 @@ const getCSModules = (t) => [
     ] },
   // RATH:离线活世界实验,与「酒馆」平级、同在「游玩/Play」分类下
   // (docs/design/rath_observation_deck_v0.md)。页面是 Platform 内嵌子页 #rath。
-  // 开发期灰度:adminOnly —— 非 admin 不见导航项;直链 #rath 由 entries/platform.jsx 的
+  // 开发期灰度:**已从「全部功能」菜单整体隐藏**(不在导航注册表注册)。
+  // 直链 #rath 仍可进入,由 entries/platform.jsx 的
   // `<AdminGuard><RathPage /></AdminGuard>` 路由级拦截(与 admin-* 页面同款,真实生效,
-  // 非仅隐藏菜单)。后端 API 另有 rath_experiment flag 第三道防线。对全体开放时,删掉这一行
-  // 的 adminOnly 并把 entries/platform.jsx 里的 AdminGuard 包裹一并去掉即可。
-  { id: 'rath', label: t('platform.nav.rath', { defaultValue: 'RATH' }), group: t('platform.nav.group_play'), adminOnly: true,
-    pages: ['rath'],
-    sub: [
-      { text: t('platform.nav.rath', { defaultValue: 'RATH' }), href: '#rath' },
-    ] },
+  // 非仅隐藏菜单)。后端 API 另有 rath_experiment flag 第三道防线。恢复菜单项时,
+  // 把下面被注释的模块条目解注释即可。
+  // { id: 'rath', label: t('platform.nav.rath', { defaultValue: 'RATH' }), group: t('platform.nav.group_play'), adminOnly: true,
+  //   pages: ['rath'],
+  //   sub: [
+  //     { text: t('platform.nav.rath', { defaultValue: 'RATH' }), href: '#rath' },
+  //   ] },
   { id: 'account', label: t('platform.nav.account'), group: t('platform.nav.group_system'),
     pages: ['me', 'me-edit', 'me-settings', 'settings', 'settings-models',
       'settings-modelparams', 'settings-modules', 'settings-memory', 'settings-permissions',

@@ -14,7 +14,8 @@ const getPLNav = (t) => [
   { section: t('platform.nav.section_workspace') },
   { id: "profile",  label: t('platform.nav.profile'),  icon: "home" },
   { id: "scripts",  label: t('platform.nav.scripts'),  icon: "book" },
-  { id: "modules",  label: t('platform.nav.modules'),  icon: "spark" },
+  // 「冒险模组」(modules)已从导航隐藏(与 platform-app.jsx play 模块同步)。
+  // { id: "modules",  label: t('platform.nav.modules'),  icon: "spark" },
   { id: "saves",    label: t('platform.nav.saves'),    icon: "play" },
   { id: "cards",    label: t('platform.nav.cards'),    icon: "cards" },
   { id: "cards-online", label: t('platform.nav.cards_online', { defaultValue: '在线角色卡库' }), icon: "cards" },

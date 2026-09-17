@@ -240,10 +240,10 @@ export function FeedbackDrawer({ open, onClose }) {
     >
       <CSSpaceBetween size="m">
         {/* ── 红线警告 ── */}
-        <CSAlert type="warning" header={t('components.feedback_drawer.aup_warning.header')}>
-          {t('components.feedback_drawer.aup_warning.body')}{' '}
-          <a href={AUP_LINK} target="_blank" rel="noopener noreferrer">AUP §2.J</a>。
-        </CSAlert>
+        {/*<CSAlert type="warning" header={t('components.feedback_drawer.aup_warning.header')}>*/}
+        {/*  {t('components.feedback_drawer.aup_warning.body')}{' '}*/}
+        {/*  <a href={AUP_LINK} target="_blank" rel="noopener noreferrer">AUP §2.J</a>。*/}
+        {/*</CSAlert>*/}
 
         {/* 反馈处理回执:管理员处理过(unacked)的反馈,关抽屉时清"已读" */}
         {newlyReviewed.length > 0 && (
@@ -301,22 +301,22 @@ export function FeedbackDrawer({ open, onClose }) {
               />
             </CSFormField>
 
-            {/* ── 自部署:选填联系邮箱(用于收处理回执)── */}
-            {selfHost && (
-              <CSFormField
-                label={t('components.feedback_drawer.contact_email.label')}
-                description={t('components.feedback_drawer.contact_email.description')}
-              >
-                <CSInput
-                  value={contactEmail}
-                  onChange={({ detail }) => setContactEmail(detail.value)}
-                  placeholder="you@example.com"
-                  type="email"
-                  inputMode="email"
-                  disabled={busy}
-                />
-              </CSFormField>
-            )}
+            {/*/!* ── 自部署:选填联系邮箱(用于收处理回执)── *!/*/}
+            {/*{selfHost && (*/}
+            {/*  <CSFormField*/}
+            {/*    label={t('components.feedback_drawer.contact_email.label')}*/}
+            {/*    description={t('components.feedback_drawer.contact_email.description')}*/}
+            {/*  >*/}
+            {/*    <CSInput*/}
+            {/*      value={contactEmail}*/}
+            {/*      onChange={({ detail }) => setContactEmail(detail.value)}*/}
+            {/*      placeholder="you@example.com"*/}
+            {/*      type="email"*/}
+            {/*      inputMode="email"*/}
+            {/*      disabled={busy}*/}
+            {/*    />*/}
+            {/*  </CSFormField>*/}
+            {/*)}*/}
 
             {/* ── 运行环境切片(默认 ON,bug 排查必备)── */}
             <CSCheckbox
@@ -389,31 +389,6 @@ export function FeedbackDrawer({ open, onClose }) {
             </CSFormField>
           </>
         )}
-
-        {/* ── 玩家交流 QQ 群 ── */}
-        <CSContainer header={<CSHeader variant="h3">{t('components.feedback_drawer.qq.header')}</CSHeader>}>
-          <CSSpaceBetween size="s">
-            <CSBox fontSize="body-s" color="text-body-secondary">
-              {t('components.feedback_drawer.qq.description', { group: QQ_GROUP_NUMBER })}
-            </CSBox>
-            <div style={{ display: 'flex', gap: 16, alignItems: 'flex-start', flexWrap: 'wrap' }}>
-              <img
-                src={QQ_QR_SRC}
-                alt={t('components.feedback_drawer.qq.qr_alt', { group: QQ_GROUP_NUMBER })}
-                loading="lazy"
-                style={{ width: 150, height: 'auto', borderRadius: 10, border: '1px solid var(--color-border-divider-default, #2a2e33)' }}
-              />
-              <CSSpaceBetween size="xs">
-                <CSButton variant="primary" href={QQ_JOIN_URL} target="_blank" iconName="external">
-                  {t('components.feedback_drawer.qq.join_btn')}
-                </CSButton>
-                <CSBox fontSize="body-s" color="text-body-secondary">
-                  {t('components.feedback_drawer.qq.search_hint', { group: QQ_GROUP_NUMBER })}
-                </CSBox>
-              </CSSpaceBetween>
-            </div>
-          </CSSpaceBetween>
-        </CSContainer>
 
         <CSExpandableSection
           variant="container"
