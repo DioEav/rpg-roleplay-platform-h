@@ -647,7 +647,8 @@ function PlatformShellCS({ page, setPage, children, assistant, assistantOpen, on
             utilities={[
               { type: 'button', iconName: 'search', title: t('platform.menu.search_title'), ariaLabel: t('platform.menu.search_title'), disableUtilityCollapse: true, onClick: () => setSearchOpen(true) },
               { type: 'button', iconName: 'settings', title: t('platform.nav.settings'), ariaLabel: t('platform.nav.settings'), disableUtilityCollapse: true, onClick: () => { setPage('settings'); } },
-              { type: 'button', iconName: 'status-info', title: helpSlugForPage ? `${t('platform.menu.help_current')} (${helpSlugForPage})` : t('platform.menu.help'), ariaLabel: t('platform.menu.help'), disableUtilityCollapse: true, onClick: () => { if (window.__openHelp) window.__openHelp(helpSlugForPage || 'intro'); } },
+              // 「帮助」按钮已隐藏(弹框内容来自外部文档站 docs.stellatrix.icu)。恢复:解注释此行。
+              // { type: 'button', iconName: 'status-info', title: helpSlugForPage ? `${t('platform.menu.help_current')} (${helpSlugForPage})` : t('platform.menu.help'), ariaLabel: t('platform.menu.help'), disableUtilityCollapse: true, onClick: () => { if (window.__openHelp) window.__openHelp(helpSlugForPage || 'intro'); } },
               { type: 'button', iconName: 'refresh', title: t('common.refresh'), ariaLabel: t('platform.menu.refresh_aria'), disableUtilityCollapse: true, onClick: _csRefresh },
               {
                 type: 'menu-dropdown',
@@ -659,7 +660,8 @@ function PlatformShellCS({ page, setPage, children, assistant, assistantOpen, on
                   { id: 'me-edit', text: t('platform.nav.me_edit') },
                   { id: 'me-settings', text: t('platform.nav.me_settings') },
                   { id: 'feedback', text: t('platform.menu.feedback') },
-                  { id: 'help', text: t('platform.menu.help') },
+                  // 「帮助」菜单项已隐藏(与顶栏帮助按钮同步;恢复时解注释)。
+                  // { id: 'help', text: t('platform.menu.help') },
                   { id: 'signout', text: t('platform.menu.logout') },
                 ],
                 onItemClick: onUserMenu,
