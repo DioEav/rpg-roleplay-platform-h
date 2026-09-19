@@ -20,7 +20,11 @@ import { RebuildJobBanner } from '../RebuildJobBanner.jsx';
 import { RebuildEstimateModal } from '../RebuildEstimateModal.jsx';
 import { scriptPlayBlockReason } from './shared.js';
 import { VersionHistoryDrawer } from './VersionHistoryDrawer.jsx';
-import { SharingModeSelector } from './SharingModeSelector.jsx';
+// 「共享模式」四档选择器(私密/公开/固定快照/跟随最新)已隐藏 —— 遗留 UI:
+// 「公开」档调 /pin 接口必报 400(后端只收两种引用模式);两个 pin 档位只会 pin 到
+// 剧本自身,读取零变化(见 platform_app/knowledge/_pin.py)。真正的分享控制是列表
+// 行的「公开/取消公开」(visibility 接口),真正的版本快照是 fork。恢复:解注释本行
+// 与下方渲染块。 import { SharingModeSelector } from './SharingModeSelector.jsx';
 import { CoverFrame } from './CoverFrame.jsx';
 import { KbExtractPanel } from './KbExtractPanel.jsx';
 import { isCredentialsError } from '../../lib/creds.js';
@@ -394,10 +398,10 @@ function ScriptDetailPanel({ script: s, savesCount, scriptSaves = [], embedStatu
           </CSAlert>
         </CSSpaceBetween>
       )}
-      {/* Sharing mode selector — owner only */}
-      {isOwner && (
-        <SharingModeSelector script={s} currentUserId={currentUserId} onChanged={onReload} />
-      )}
+      {/* Sharing mode selector — owner only —— 已隐藏(遗留 UI,理由见文件头 import 处注释)。
+        {isOwner && (
+          <SharingModeSelector script={s} currentUserId={currentUserId} onChanged={onReload} />
+        )} */}
       {/* phase_rebuild_panel: 活跃重做任务通知条,所有 tab 共享 */}
       <RebuildJobBanner {...rb.bannerProps} />
       {playBlock && (

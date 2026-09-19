@@ -35,10 +35,14 @@
   border-radius: var(--r-2); padding: 5px 8px; color: var(--text); font-size: 13px;
 }
 .sr-table tbody td button {
-  height: 26px; padding: 0 9px; margin-right: 5px; border-radius: var(--r-2);
+  display: block; width: 100%;               /* 纵向堆叠 + 等宽(都撑满操作列宽) */
+  height: 26px; padding: 0 9px; margin: 0 0 6px; border-radius: var(--r-2);
   border: 1px solid var(--line); background: var(--panel-2); color: var(--text-quiet);
-  font-size: 12px; cursor: pointer; transition: background .12s, border-color .12s, color .12s;
+  font-size: 12px; cursor: pointer; text-align: center;
+  transition: background .12s, border-color .12s, color .12s;
+  white-space: nowrap; /* 禁止换行:固定 26px 高的按钮里文字折行会被裁切(「改摘要/删除」列被摘要列挤压时) */
 }
+.sr-table tbody td button:last-child { margin-bottom: 0; } /* 末尾按钮不留间距,避免撑高行 */
 .sr-table tbody td button:hover { color: var(--text); border-color: var(--line-strong); background: var(--panel-3); }
 /* 世界线列表 */
 .script-review ul { list-style: none; margin: 4px 0; padding: 0; }
