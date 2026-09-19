@@ -251,7 +251,9 @@ def _t_update_script_chapter(user_id: int, script_id: int | None, args: dict, st
                     _write_commit(
                         adb, script_id=sid, user_id=user_id,
                         kind="chapter_edit",
-                        message=f"编辑章节 #{ci}",
+                        # 标题带「AI 改写」前缀:与编辑器手动保存的记录(「手动编辑章节 #N」)
+                        # 在同一个改动历史列表里一眼可区分来源。
+                        message=f"AI 改写章节 #{ci}",
                         payload={
                             "table": "script_chapters", "op": "edit",
                             "ids": {"chapter_index": ci},

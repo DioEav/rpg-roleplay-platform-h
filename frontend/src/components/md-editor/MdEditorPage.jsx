@@ -344,7 +344,9 @@ export default function MdEditorPage() {
   }, [tabs, scriptId, t, openConflictMerge]);
 
   // agent 写库后:重载受影响的标签(若打开且无未保存改动)+ 刷新文件树。
-  const refreshTab = useCallback(async (kind, id) => {
+  // opts.silent:成功刷新时不弹「AI 已修改」——恢复(ChapterHistory onRestored)等非 AI 场景用,
+  // 调用方已弹过自己的提示(如「已恢复到该版本之前」),再用 AI 文案会误导。
+  const refreshTab = useCallback(async (kind, id, opts = {}) => {
     setTreeReloadKey((x) => x + 1);
     const key = nodeKey(kind, id);
     const tab = tabs.find((x) => x.key === key);
@@ -353,7 +355,7 @@ export default function MdEditorPage() {
       const meta = await loadNodeContentMeta(kind, scriptId, id);
       if (!tab.dirty) {
         setTabs((cur) => cur.map((x) => x.key === key ? { ...x, content: meta.content, original: meta.content, baseUpdatedAt: meta.updatedAt, dirty: false, conflict: false } : x));
-        toast(t('md_editor.toast.ai_refreshed'), { kind: 'ok', duration: 1400 });
+        if (!opts.silent) toast(t('md_editor.toast.ai_refreshed'), { kind: 'ok', duration: 1400 });
         return;
       }
       // P0:有未保存改动时不再只 toast(旧行为=用户随后 ⌘S 用旧底稿覆盖 AI 改动,静默丢数据)。
@@ -666,7 +668,7 @@ export default function MdEditorPage() {
       </div>
       {quickOpen && scriptId && <QuickOpen scriptId={scriptId} openNode={openNode} onClose={() => setQuickOpen(false)} />}
       {searchOpen && scriptId && <GlobalSearch scriptId={scriptId} openNode={openNode} onClose={() => setSearchOpen(false)} />}
-      {historyFor != null && scriptId && <ChapterHistory scriptId={scriptId} chapterIndex={historyFor} onClose={() => setHistoryFor(null)} onRestored={() => { try { refreshTab('chapter', historyFor); } catch (_) {} setHistoryFor(null); }} />}
+      {historyFor != null && scriptId && <ChapterHistory scriptId={scriptId} chapterIndex={historyFor} onClose={() => setHistoryFor(null)} onRestored={() => { try { refreshTab('chapter', historyFor, { silent: true }); } catch (_) {} setHistoryFor(null); }} />}
       {rulesOpen && scriptId && <WritingRules scriptId={scriptId} onClose={() => setRulesOpen(false)} />}
       {kbOpen && scriptId && <EditorKbPanel scriptId={scriptId} open={kbOpen} onClose={() => setKbOpen(false)} />}
       {issuesOpen && scriptId && <ProblemsPanel scriptId={scriptId} reloadKey={issuesReloadKey} onCountChange={setIssueCount}

@@ -1,7 +1,8 @@
 """test_chapter_undo — 撤销 AI 对章节的改动(确定性安全网,与落库前预览成对)。
 
 写作 agent 改章节正文 → script_commits 存改前全文(payload.before)→ 作者可一键撤销恢复。
-连续撤销逐次往前(undone 标记消费)。手动编辑(无 before)不可撤销 → 不受影响。
+连续撤销逐次往前(undone 标记消费)。编辑器的「手动保存」记录也带 before,但以
+undoable=false 落库(见 test_chapter_commit_history)→ 不进本撤销闸门,行为不受影响。
 """
 from __future__ import annotations
 

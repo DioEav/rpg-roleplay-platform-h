@@ -134,6 +134,26 @@ The write permission button at the bottom-left of the right panel input box has 
 
 The setting is saved to account preferences and persists across sessions.
 
+### View Chapter Edit History
+
+The editor's bottom status bar has a **History** button (available while a chapter tab is open) → it opens the chapter's **edit history**:
+
+- **Manual edits**: your saves in the editor (including the 2.5-second autosave) record one entry, titled like "manual edit of chapter #1";
+- **AI rewrites**: when the AI assistant rewrites this chapter, an entry titled like "AI rewrite of chapter #1" is recorded;
+- **Revert / undone**: entries left by restore or undo operations (they carry a snapshot too, so they can be rolled back again).
+
+**Consecutive edits are coalesced**: while you keep editing the same chapter (within 10 minutes by default) only one entry is kept, shown as "N saves"; editing again after a pause starts a new entry — autosave will not pile up entries.
+
+Each entry's **Restore to before** button rolls the chapter text back to the version *before* that entry (works for AI edits, manual edits, and restore/undo operations themselves). **A restore is itself reversible**: if you clicked by mistake, reopen the list with the **History** button at the bottom (the drawer closes automatically after a restore) and click **Restore to before** on the newly created "restore chapter #N to before #M" entry to go back to the state before it.
+
+> After a restore the text shown in the editor does not change immediately (same-tab content is never re-injected, so your in-progress typing and cursor position are never clobbered) — close the chapter tab and reopen it (or switch to another chapter and back) to see the restored text.
+
+When the list piles up with entries you no longer need, the **Delete** button on each entry removes it: **only that entry (and its snapshot) is removed — the chapter text is untouched**, and deletion cannot be undone.
+
+Manual-edit entries never feed the AI assistant's **Undo** button (that one serves AI edits only), so the two do not interfere.
+
+> Script-wide "Roll back to this version" is not yet available — see the Scripts docs' "View Version History".
+
 ### Creating or Switching Scripts
 
 Use the "Workspace" dropdown in the top bar: click an existing script name to switch to it, or select "＋ New Blank Script" to create one with a first chapter. Switching scripts closes all open tabs.

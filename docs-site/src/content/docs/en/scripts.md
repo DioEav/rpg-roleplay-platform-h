@@ -43,12 +43,12 @@ The vector index has four sub-modules: chapter text (chunks), NPC character card
 
 ### Sharing Mode
 
-Scripts have four sharing modes (author only):
+A script has only two practical states (author only):
 
 - **Private**: Not visible to others
-- **Public**: Listed in the Online Script Library; anyone can import
-- **Fixed Snapshot**: A specific historical version is published; subsequent edits do not affect what subscribers see
-- **Floating Latest**: Always publishes the most recent version
+- **Public**: Listed in the Online Script Library; anyone can import and subscribe
+
+> The older "Fixed Snapshot / Floating Latest" reference-mode selector is no longer shown: precise version playback is not implemented (reads always follow the target script's latest content). To pin a specific version, use **Fork** to make an independent copy.
 
 ---
 
@@ -93,7 +93,7 @@ Action buttons at the top of the detail panel:
 - **Start Game**: Dropdown to continue an existing save or start a new game
 - **View Chapters**: Open the chapter browse/edit modal
 - **Review Settings**: Open the KB review interface to verify AI-extracted content
-- **Version History**: View and roll back to historical versions (author only)
+- **Version History**: View the script's edit history (commit log)
 - **More** dropdown: Build vector index, export script package, publish/unpublish, unsubscribe (for subscribed scripts), delete
 
 ### Manage Chapters (ChaptersModal)
@@ -109,17 +109,23 @@ Click **View Chapters** at the top of the detail panel:
 
 Select a script → detail panel **More** dropdown → **Build Vector Index**, or click **Redo** on an individual sub-module card in the Overview tab. Each sub-module (chapters / cards / worldbook / canon) can be re-embedded independently.
 
-### Set Sharing Mode
+### Publish / Unpublish
 
-Select your own script → the **Sharing Mode** selector appears at the top of the detail panel → choose Public, Fixed Snapshot, or Floating Latest. When choosing Fixed Snapshot, you must also select a specific historical version. The system checks the review status before publishing; scripts that have not been reviewed must complete **Review Settings** first.
+Use **Publish / Unpublish** in the script list row actions, or the same item under **More** at the top of the detail panel. The system checks the review status before publishing; scripts that have not been reviewed must complete **Review Settings** first.
 
 ### Fork a Subscribed Script
 
 Click **Fork** in the blue notice area at the top of the detail panel. The system creates an independent copy under your account named "Original Title (Copy)". Future edits to the copy do not affect the original author.
 
-### View Version History and Roll Back
+### View Version History
 
-Click **Version History** at the top of the detail panel to open a right-side drawer listing all historical commits (with commit message, type, and timestamp). The author can click **Roll Back** on any commit to restore the script to that version.
+Click **Version History** at the top of the detail panel to open a right-side drawer listing all historical commits (with commit message, type, and timestamp).
+
+What gets recorded: editing chapter text, adding/editing/removing worldbook entries, timeline anchors, and KB entities, plus Fork — one entry each.
+
+**Consecutive edits to chapter text are coalesced per "editing session"**: while you keep editing the same chapter (within 10 minutes by default) only one entry is kept, shown as "N saves"; editing again after a pause starts a new entry. The editor's autosave (every 2.5s) therefore does not flood the list.
+
+> The drawer's **Roll Back** button is not yet available (the backend replay engine is unimplemented, so the button is greyed out). For chapter-level rollback, use the **script editor**'s per-chapter **Edit history** → **Restore to before** — see the Script Editor docs.
 
 ### Export a Script Package
 

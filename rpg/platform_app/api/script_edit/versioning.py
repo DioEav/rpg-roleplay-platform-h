@@ -13,6 +13,35 @@ from ...perms import script_owned
 from .._deps import json_response, require_user, value_error_response
 from ._shared import _require_owner, _write_commit, router
 
+# 快照护栏:超长正文不存 before.content(与写入侧 platform_app/api/scripts/chapters.py 同口径,
+# 避免 commit jsonb 爆炸)。
+_MAX_COMMIT_SNAPSHOT_CHARS = 100_000
+
+
+def _chapter_snapshot(db, script_id: int, chapter_index: int) -> dict | None:
+    """抓一章当前 title/content/volume_title,压成 commit payload.before 的形状。
+
+    撤销/恢复落库【前】调用 → 该条 chapter_revert 自带快照,故「撤销/恢复」本身也能被
+    「恢复到此前」退回(修复「点错了无法退回」)。失败返回 None(记录照写,只是不可逆)。
+    """
+    try:
+        row = db.execute(
+            "select title, content, volume_title from script_chapters "
+            "where script_id = %s and chapter_index = %s",
+            (script_id, int(chapter_index)),
+        ).fetchone()
+    except Exception:
+        return None
+    if not row:
+        return None
+    content = str((row or {}).get("content") or "")
+    return {
+        "title": row.get("title"),
+        "content": content if len(content) <= _MAX_COMMIT_SNAPSHOT_CHARS else None,
+        "volume_title": row.get("volume_title"),
+    }
+
+
 # ─── commits log ─────────────────────────────────────────────────────────────
 
 @router.get("/api/scripts/{script_id}/commits")
@@ -52,6 +81,42 @@ async def api_list_commits(
     })
 
 
+@router.delete("/api/scripts/{script_id}/commits/{commit_id}")
+async def api_delete_commit(script_id: int, commit_id: int, user=Depends(require_user)):
+    """删除一条历史记录(仅 owner)。只删审计记录,不动正文。
+
+    指针维护(必须):scripts.head_commit_id 无外键约束 —— 删掉它指向的记录会留下悬空 id,
+    下次 _write_commit 拿它当 parent 插入时撞 parent_commit_id 的外键 → 之后所有记录都写不进去。
+    故:被删记录若是 head → head 回退到它的 parent(可能置 NULL)。
+    parent_commit_id 自身是 on delete set null,删中间记录不会报错(其直接子记录的 parent 变 NULL)。"""
+    uid = int(user["id"])
+    with connect() as db:
+        if not script_owned(db, script_id, uid):
+            return json_response({"ok": False, "error": "无权访问该剧本"}, status_code=403)
+        row = db.execute(
+            "SELECT parent_commit_id FROM script_commits WHERE id=%s AND script_id=%s",
+            (commit_id, script_id),
+        ).fetchone()
+        if not row:
+            return json_response({"ok": False, "error": "找不到该记录"}, status_code=404)
+        parent_id = row["parent_commit_id"]
+        # 防御:parent 若已不存在(外键本会置 NULL,双重保险)则回退到 NULL,
+        # 绝不把悬空 id 写进 head —— 那会让下一次记录写入撞外键失败。
+        if parent_id is not None:
+            alive = db.execute("SELECT 1 FROM script_commits WHERE id=%s", (parent_id,)).fetchone()
+            if not alive:
+                parent_id = None
+        head = db.execute("SELECT head_commit_id FROM scripts WHERE id=%s", (script_id,)).fetchone()
+        if head and head["head_commit_id"] is not None and int(head["head_commit_id"]) == int(commit_id):
+            db.execute(
+                "UPDATE scripts SET head_commit_id=%s, updated_at=now() WHERE id=%s",
+                (int(parent_id) if parent_id is not None else None, script_id),
+            )
+        db.execute("DELETE FROM script_commits WHERE id=%s AND script_id=%s", (commit_id, script_id))
+        db.commit()
+    return json_response({"ok": True, "deleted": commit_id})
+
+
 @router.get("/api/scripts/{script_id}/chapters/{chapter_index}/undoable")
 async def api_chapter_undoable(script_id: int, chapter_index: int, user=Depends(require_user)):
     """本章是否有可撤销的 AI 改动(给前端决定是否显示「撤销」)。"""
@@ -77,7 +142,9 @@ async def api_undo_chapter_edit(script_id: int, chapter_index: int, user=Depends
 
     确定性、作者主动触发(非 agent 工具,不指望 LLM)。恢复后标记该 commit 已撤销 + 写一条
     chapter_revert,故可连续往前逐次撤销。手动编辑走 CodeMirror 自带撤销,这里专治「AI 改了库
-    才发现不对」—— 与落库前的「改动预览」一前一后构成写作搭档的安全网。"""
+    才发现不对」—— 与落库前的「改动预览」一前一后构成写作搭档的安全网。
+
+    可逆:撤销前抓当前正文写进本条 chapter_revert 的快照,故「撤销」本身也能被「恢复到此前」退回。"""
     uid = int(user["id"])
     with connect() as db:
         if not script_owned(db, script_id, uid):
@@ -95,6 +162,8 @@ async def api_undo_chapter_edit(script_id: int, chapter_index: int, user=Depends
             return json_response({"ok": False, "error": "本章没有可撤销的 AI 改动"}, status_code=404)
         before = ((row["payload"] or {}).get("before") or {})
         commit_id = int(row["id"])
+        # 撤销前抓当前正文 → 写进本条 revert 的快照,让「撤销」本身可逆。
+        prior = _chapter_snapshot(db, script_id, chapter_index)
     # 恢复改前全文(走现成 update_chapter,自带 owner 校验 + word_count 同步)
     from platform_app.script_import import update_chapter
     bc = before.get("content")
@@ -116,7 +185,8 @@ async def api_undo_chapter_edit(script_id: int, chapter_index: int, user=Depends
             message=f"撤销章节 #{chapter_index} 的改动",
             payload={"table": "script_chapters", "op": "revert",
                      "ids": {"chapter_index": int(chapter_index)},
-                     "reverted_commit_id": commit_id},
+                     "reverted_commit_id": commit_id,
+                     "before": prior},
         )
         db.commit()
     return json_response({"ok": True, "chapter_index": int(chapter_index),
@@ -240,7 +310,12 @@ async def api_chapter_history(script_id: int, chapter_index: int, user=Depends(r
         rows = db.execute(
             """SELECT id, kind, message, created_at,
                       coalesce((payload->>'undone')::boolean, false) AS undone,
-                      (payload->'before' IS NOT NULL) AS has_before
+                      (payload->'before' IS NOT NULL) AS has_before,
+                      -- source: 'editor'=编辑器手动保存(含合并的连续编辑),其余为 AI 改动。
+                      -- save_count: 该条合并了几次保存(编辑器按编辑会话粒度合并;AI 恒 1)。
+                      -- AI 旧记录无这两个字段 → 默认 'ai'/1,向后兼容。
+                      coalesce(payload->>'source', 'ai') AS source,
+                      coalesce((payload->>'save_count')::int, 1) AS save_count
                FROM script_commits
                WHERE script_id=%s AND kind IN ('chapter_edit','chapter_revert','chapter_add')
                  AND coalesce(payload->'ids'->>'chapter_index','') = %s
@@ -254,7 +329,11 @@ async def api_chapter_history(script_id: int, chapter_index: int, user=Depends(r
 @router.post("/api/scripts/{script_id}/chapters/{chapter_index}/restore")
 async def api_chapter_restore(request: Request, script_id: int, chapter_index: int, user=Depends(require_user)):
     """把某章恢复到指定 commit 的【改前快照】(版本回滚)。body: {commit_id}。仅 owner。
-    与撤销同款安全网,但可回到历史任意一次改动之前,不止最近一次。"""
+    与撤销同款安全网,但可回到历史任意一次改动之前,不止最近一次。
+
+    可逆:恢复前抓当前正文写进本条 chapter_revert 的快照,故「恢复」本身也能被再次
+    「恢复到此前」退回(修复「点错了无法退回」)。目标可为 chapter_edit 或带快照的
+    chapter_revert(revert 链);旧的、无快照的记录仍以 409 拒绝。"""
     uid = int(user["id"])
     try:
         body = await request.json()
@@ -265,7 +344,8 @@ async def api_chapter_restore(request: Request, script_id: int, chapter_index: i
         if not script_owned(db, script_id, uid):
             return json_response({"ok": False, "error": "无权访问该剧本"}, status_code=403)
         row = db.execute(
-            "SELECT payload FROM script_commits WHERE id=%s AND script_id=%s AND kind='chapter_edit'",
+            "SELECT payload FROM script_commits WHERE id=%s AND script_id=%s "
+            "AND kind IN ('chapter_edit','chapter_revert')",
             (commit_id, script_id),
         ).fetchone()
         if not row:
@@ -273,6 +353,8 @@ async def api_chapter_restore(request: Request, script_id: int, chapter_index: i
         before = ((row["payload"] or {}).get("before") or {})
         if not before:
             return json_response({"ok": False, "error": "该版本未存改前快照,无法恢复"}, status_code=409)
+        # 恢复前抓当前正文 → 写进本条 revert 的快照,让「恢复」本身可逆。
+        prior = _chapter_snapshot(db, script_id, chapter_index)
     from platform_app.script_import import update_chapter
     bc = before.get("content")
     update_chapter(
@@ -288,7 +370,8 @@ async def api_chapter_restore(request: Request, script_id: int, chapter_index: i
                       message=f"恢复章节 #{chapter_index} 到版本 #{commit_id} 之前",
                       payload={"table": "script_chapters", "op": "revert",
                                "ids": {"chapter_index": int(chapter_index)},
-                               "reverted_commit_id": commit_id})
+                               "reverted_commit_id": commit_id,
+                               "before": prior})
         db.commit()
     return json_response({"ok": True, "chapter_index": int(chapter_index), "restored_from": commit_id})
 

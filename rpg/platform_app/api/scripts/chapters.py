@@ -5,12 +5,133 @@
 """
 from __future__ import annotations
 
+import os
+from datetime import datetime, timezone
+
 from fastapi import Depends, Request
 
 from ... import script_import
 from ...db import connect
 from .._deps import json_response, require_user, value_error_response
 from ._shared import router
+from core.logging import get_logger
+
+log = get_logger(__name__)
+
+# ── 章节编辑审计:写/合并 script_commits(kind=chapter_edit)─────────────────────
+# AI 改章节走 tools_dsl 的写工具(自带 commit);作者在编辑器里手改此前完全没有记录
+# → 章节「改动历史」列表永远为空。此处补写入侧。
+# 粒度 = 编辑会话:同一章连续保存(自动保存每 2.5s 空闲一次 + Ctrl+S 任意次)在
+# _CHAPTER_COMMIT_MERGE_MINUTES 窗口内合并为一条(只递增 save_count,不新增);
+# 停手超过窗口再编辑 → 开新记录,before 是这段编辑开始前的版本。
+# 设 0 = 关闭合并(每次保存各记一条;测试用)。
+_CHAPTER_COMMIT_MERGE_MINUTES = int(os.environ.get("RPG_CHAPTER_COMMIT_MERGE_MINUTES", "10"))
+# 快照护栏:超长正文不存 before.content(避免 commit jsonb 爆炸;与 AI 路径同口径)。
+_MAX_COMMIT_SNAPSHOT_CHARS = 100_000
+
+
+def _fetch_chapter_prior(script_id: int, chapter_index: int) -> dict | None:
+    """落库前抓本章当前 title/content/volume_title(即改动前的版本)。失败返回 None。"""
+    try:
+        with connect() as db:
+            row = db.execute(
+                "select title, content, volume_title from script_chapters "
+                "where script_id = %s and chapter_index = %s",
+                (script_id, chapter_index),
+            ).fetchone()
+        return dict(row) if row else None
+    except Exception:
+        return None
+
+
+def _within_merge_window(last_saved_iso, minutes: int) -> bool:
+    """上一条记录的 last_saved_at 是否仍在合并窗口内(滑动窗口)。解析失败视为不在窗口内。"""
+    if not last_saved_iso:
+        return False
+    try:
+        ts = datetime.fromisoformat(str(last_saved_iso))
+    except ValueError:
+        return False
+    if ts.tzinfo is None:
+        ts = ts.replace(tzinfo=timezone.utc)
+    return (datetime.now(timezone.utc) - ts).total_seconds() < minutes * 60
+
+
+def _record_chapter_edit_commit(*, script_id: int, user_id: int, chapter_index: int,
+                                body: dict, prior: dict | None) -> None:
+    """编辑器保存章节 → 写/合并 chapter_edit 记录(编辑会话粒度)。
+
+    失败静默(log.warning),绝不影响正文保存主流程 —— 与 AI 路径同款护栏。
+    payload 与 AI 路径(tools_dsl/command_tools_script_write/chapters.py)对齐,
+    另加 source/save_count/last_saved_at 三字段供合并判定与历史列表展示。
+    """
+    try:
+        changed = [k for k in ("title", "content", "volume_title") if body.get(k) is not None]
+        if not changed:
+            return
+        from platform_app.api.script_edit import _write_commit
+        from platform_app.perms import script_owned
+
+        before_content = str((prior or {}).get("content") or "")
+        snapshot_ok = bool(prior) and len(before_content) <= _MAX_COMMIT_SNAPSHOT_CHARS
+        now_iso = datetime.now(timezone.utc).isoformat()
+        with connect() as db:
+            if not script_owned(db, script_id, user_id):
+                return
+            # 编辑会话合并:该章【最后一条】记录必须就是本人在窗口内的 editor 记录,才合并
+            # (只递增计数,不新增)。任何插进来的记录 —— AI 改写/新增、撤销/恢复、他人的编辑
+            # —— 都打断会话 → 开新记录(否则新记录的 before 会指向错误的版本)。
+            if _CHAPTER_COMMIT_MERGE_MINUTES > 0:
+                row = db.execute(
+                    """select id, kind, author_user_id,
+                              coalesce(payload->>'source', '') as source,
+                              payload->>'last_saved_at' as last_saved
+                       from script_commits
+                       where script_id = %s
+                         and coalesce(payload->'ids'->>'chapter_index', '') = %s
+                       order by id desc limit 1""",
+                    (script_id, str(chapter_index)),
+                ).fetchone()
+                if (row
+                        and row["kind"] == "chapter_edit"
+                        and row["source"] == "editor"
+                        and int(row["author_user_id"] or 0) == int(user_id)
+                        and _within_merge_window(row["last_saved"], _CHAPTER_COMMIT_MERGE_MINUTES)):
+                    db.execute(
+                        """update script_commits set payload = jsonb_set(
+                             jsonb_set(payload, '{save_count}',
+                                       to_jsonb(coalesce((payload->>'save_count')::int, 1) + 1)),
+                             '{last_saved_at}', to_jsonb(%s::text))
+                           where id = %s""",
+                        (now_iso, int(row["id"])),
+                    )
+                    db.commit()
+                    return
+            _write_commit(
+                db, script_id=script_id, user_id=user_id,
+                kind="chapter_edit",
+                message=f"手动编辑章节 #{chapter_index}",
+                payload={
+                    "table": "script_chapters", "op": "edit",
+                    "ids": {"chapter_index": int(chapter_index)},
+                    "fields": changed,
+                    "before": {
+                        "title": (prior or {}).get("title"),
+                        "content": before_content if snapshot_ok else None,
+                        "volume_title": (prior or {}).get("volume_title"),
+                    } if prior else None,
+                    # undoable 恒 False:该闸门只服务 /undo(AI 改动的「撤销」按钮),
+                    # 手动编辑走编辑器自带 ⌘Z;/restore(恢复到此前)另走 before 非空闸。
+                    "undoable": False,
+                    "is_new": prior is None,
+                    "source": "editor",
+                    "save_count": 1,
+                    "last_saved_at": now_iso,
+                },
+            )
+            db.commit()
+    except Exception as exc:  # noqa: BLE001 — 审计失败不影响正文保存
+        log.warning(f"[chapters] 章节改动记录写入失败(正文已保存): {exc}")
 
 
 @router.get("/api/scripts/{script_id}/chapters")
@@ -84,22 +205,33 @@ async def api_chapter_update(request: Request, script_id: int, chapter_index: in
     """编辑单章 title/content/volume_title。
 
     body.base_updated_at(可选,乐观锁):与服务端 updated_at 不一致时 409+服务端当前版本,
-    前端转三方合并(编辑器 P0:AI 写库与未保存改动互相静默覆盖)。不传=覆盖语义不变。"""
+    前端转三方合并(编辑器 P0:AI 写库与未保存改动互相静默覆盖)。不传=覆盖语义不变。
+
+    落库成功后写一条 chapter_edit 审计(编辑会话粒度,见 _record_chapter_edit_commit);
+    审计写入失败不影响本次保存。"""
     body = await request.json()
+    # 改前快照必须在落库前抓:合并窗口内 before 始终是"这段编辑开始前"的版本。
+    prior = _fetch_chapter_prior(script_id, chapter_index)
     try:
-        return json_response(script_import.update_chapter(
+        result = script_import.update_chapter(
             user["id"], script_id, chapter_index,
             title=body.get("title"), content=body.get("content"),
             volume_title=body.get("volume_title"),
             base_updated_at=body.get("base_updated_at"),
-        ))
+        )
     except script_import.ChapterConflict as conflict:
+        # 冲突时正文未落库 → 不写审计(用户会走三方合并后重新保存)。
         return json_response(
             {"ok": False, "conflict": True, "error": "章节已被他方更新",
              "server_chapter": conflict.server_chapter},
             status_code=409)
     except ValueError as exc:
         return value_error_response(exc)
+    _record_chapter_edit_commit(
+        script_id=script_id, user_id=int(user["id"]),
+        chapter_index=chapter_index, body=body, prior=prior,
+    )
+    return json_response(result)
 
 
 @router.post("/api/scripts/blank")

@@ -500,6 +500,8 @@
       // 章节版本历史 + 回滚到任意历史版本(改前快照)。
       chapterHistory: (sid, ci) => GET(`${API_PREFIX}/scripts/${sid}/chapters/${ci}/history`),
       chapterRestore: (sid, ci, commitId) => POST(`${API_PREFIX}/scripts/${sid}/chapters/${ci}/restore`, { commit_id: commitId }),
+      // 删除单条历史记录(只删审计记录与快照,不动正文)。
+      commitDelete: (sid, commitId) => DEL(`${API_PREFIX}/scripts/${sid}/commits/${commitId}`),
       // 作者写作规范(.cursorrules 风,注入编辑器 agent)。
       writingRules: (sid) => GET(`${API_PREFIX}/scripts/${sid}/writing-rules`),
       saveWritingRules: (sid, rules) => PUT(`${API_PREFIX}/scripts/${sid}/writing-rules`, { rules }),
