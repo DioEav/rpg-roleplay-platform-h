@@ -5,7 +5,7 @@ import { useState as useStatePL, useEffect as useEffectPL } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Icon } from '../../game-icons.jsx';
 import { SettingsToggle } from '../../platform-app.jsx';
-import { getCaps as _getCapsImported } from '../catalog-helpers.js';
+import { getCaps as _getCapsImported, credentialToCatalogId } from '../catalog-helpers.js';
 import { plNavigate } from '../../router.js';
 import { CAP_LABEL } from '../../pages/settings.jsx';
 import { sourceLabel, fmtCtx, fmtPrice } from './models-catalog.js';
@@ -33,8 +33,26 @@ function ApiDetailPanel({ api, onEdit, onVisibility, onValidate, onDeleteKey, on
       try {
         const r = await window.api.account.usage(30);
         if (cancelled) return;
-        const byApi = (r?.by_api || r?.apis || []).find(x => (x.api_id || x.id) === api.id);
-        setUsage(byApi || {});
+        // 后端只给 by_model(每个 api_id × 模型一行),**没有**按供应商的汇总:
+        //   · /api/me/usage     → totals / by_model / by_scenario / recent_turns
+        //   · /api/admin/usage  → total / by_user / by_api / by_day   ← by_api 在这里
+        // 本页签要的是「本供应商」四个数,此前直接找 r.by_api / r.apis(管理员端点的形状),
+        // 用户端点上恒为 undefined → 一路落到 {} → 四项全渲染成「—」。
+        // 与用量页(dashboard)同一处理:自己按 api_id 滚一遍 by_model。
+        const byApi = {};
+        for (const row of (r?.by_model || [])) {
+          // 键必须归一:token_usage.api_id 存的是调用当时的原始写法(历史别名 AgentPlatform /
+          // AlibabaQwen / 显示名等,migration 67 只规范了凭据表、没管 token_usage),
+          // 而 api.id 是 catalog 侧 canonical(vertex_ai / dashscope),不归一历史行永远对不上。
+          const key = credentialToCatalogId(row.api_id || '');
+          if (!key) continue;
+          const cur = byApi[key] || (byApi[key] = { requests: 0, input_tokens: 0, output_tokens: 0, cost_usd: 0 });
+          cur.requests += Number(row.turns || 0);
+          cur.input_tokens += Number(row.input_tokens || 0);
+          cur.output_tokens += Number(row.output_tokens || 0);
+          cur.cost_usd += Number(row.cost_usd || 0);
+        }
+        setUsage(byApi[api.id] || {});
       } catch (_) { if (!cancelled) setUsage({}); }
     })();
     return () => { cancelled = true; };
