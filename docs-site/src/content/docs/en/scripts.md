@@ -119,13 +119,13 @@ Click **Fork** in the blue notice area at the top of the detail panel. The syste
 
 ### View Version History
 
-Click **Version History** at the top of the detail panel to open a right-side drawer listing all historical commits (with commit message, type, and timestamp).
+Click **Version History** at the top of the detail panel to open a right-side drawer listing edit records (commit message, type, author, timestamp; newest first, with **Load more** when there are many).
 
 What gets recorded: editing chapter text, adding/editing/removing worldbook entries, timeline anchors, and KB entities, plus Fork — one entry each.
 
 **Consecutive edits to chapter text are coalesced per "editing session"**: while you keep editing the same chapter (within 10 minutes by default) only one entry is kept, shown as "N saves"; editing again after a pause starts a new entry. The editor's autosave (every 2.5s) therefore does not flood the list.
 
-> The drawer's **Roll Back** button is not yet available (the backend replay engine is unimplemented, so the button is greyed out). For chapter-level rollback, use the **script editor**'s per-chapter **Edit history** → **Restore to before** — see the Script Editor docs.
+**Rollback**: for chapter-type records, the **Restore to before** action is available — it rolls that chapter's text back to before the record in question (the restore itself leaves a record, which you can restore again). Other types (worldbook / timeline anchors / KB entities / fork) have no per-version rollback endpoint yet, so their button is greyed out with an explanation. Script-wide "roll back to a version" is not implemented.
 
 ### Export a Script Package
 

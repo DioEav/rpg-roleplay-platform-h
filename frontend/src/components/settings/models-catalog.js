@@ -175,7 +175,8 @@ const PROVIDERS_CONFIG = [
   },
   {
     id: "xiaomi_mimo",   name: "MiMo (Xiaomi)",  kind: "openai_compat",
-    defaultBase: "https://chat.d.xiaomi.net/ai/api/v1",
+    // 小米开放平台正式域名,须与后端 catalog 的 base_url 逐字一致(provider-list-parity.test.js 锁)。
+    defaultBase: "https://api.xiaomimimo.com/v1",
     keyEnv: "XIAOMI_MIMO_API_KEY",
   },
   {

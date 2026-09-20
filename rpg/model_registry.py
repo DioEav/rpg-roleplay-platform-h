@@ -196,8 +196,9 @@ DEFAULT_MODEL_CATALOG: dict[str, Any] = {
             "kind": "openai_compat",
             "enabled": False,
             "credential_env": "MIMO_API_KEY",
-            "base_url": "",
-            "metadata": {"status": "preview", "note": "MiMo 公共 API 暂未开放，base_url 待小米发布后填入"},
+            # 空着的话 _migrate_catalog 无法替存量 DB 补值(它只在默认值非空时才回填),
+            # 配了 MiMo 的老库会一直路由到空地址 —— 所以这一条必须是实地址,不能留空串。
+            "base_url": "https://api.xiaomimimo.com/v1",
             "models": [],
         },
         {

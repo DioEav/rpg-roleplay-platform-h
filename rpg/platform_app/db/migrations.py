@@ -2376,6 +2376,20 @@ MIGRATIONS: list[tuple[int, str, list[str]]] = [
         "create index if not exists idx_provider_failures_ts on provider_failures(ts desc)",
         "create index if not exists idx_provider_failures_cat on provider_failures(category, ts desc)",
     ]),
+    (103, "backfill_mimo_base_url_override", [
+        # MiMo 的下拉默认 base_url 是内部灰度地址 chat.d.xiaomi.net,现更正为开放平台
+        # api.xiaomimimo.com。但用户点「添加 API Key」时,前端会把当时的下拉默认值一并存进
+        # **自己的** user_api_credentials.base_url_override —— 而读取口径是
+        # `cred.base_url_override || api.base_url`,用户级覆盖优先。也就是说不改这里的话,
+        # 改 catalog 默认值对已配过 MiMo 的存量用户完全无效,他们仍路由到旧地址。
+        #
+        # 只重写「与旧默认值逐字相同」的行:用户自己填过别的中转站地址的一律不动
+        # (rtrim 兼容前端可能带尾斜杠的写法)。
+        "update user_api_credentials "
+        "   set base_url_override = 'https://api.xiaomimimo.com/v1', updated_at = now() "
+        " where api_id = 'xiaomi_mimo' "
+        "   and rtrim(base_url_override, '/') = 'https://chat.d.xiaomi.net/ai/api/v1'",
+    ]),
 
 ]
 

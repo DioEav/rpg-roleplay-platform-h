@@ -48,9 +48,14 @@ def _chapter_snapshot(db, script_id: int, chapter_index: int) -> dict | None:
 async def api_list_commits(
     script_id: int,
     limit: int = 30,
+    cursor: int | None = None,
     user=Depends(require_user),
 ):
-    """列出 script 的 commit 历史（最新优先）。"""
+    """列出 script 的 commit 历史（最新优先），支持 cursor 翻页（按 id 递减）。
+
+    next_cursor=本页最后一条的 id，前端回传即取更早的一页（抽屉「加载更多」用）。
+    另返回 chapter_index / has_snapshot：抽屉据此判断该条能否用章节级「恢复到此前」回退
+    （剧本级 checkout 回放仍未实现，章节记录是最常见且已有精确回退的一类）。"""
     limit = max(1, min(int(limit), 200))
     with connect() as db:
         owned = db.execute(
@@ -60,24 +65,35 @@ async def api_list_commits(
         if not owned:
             return json_response({"ok": False, "error": "无权访问该剧本"}, status_code=403)
 
+        where_cursor = ""
+        params: list = [script_id]
+        if cursor:
+            where_cursor = " AND c.id < %s"
+            params.append(int(cursor))
+        params.append(limit + 1)  # 多取一条:判断是否还有更早的页
         rows = db.execute(
-            """
+            f"""
             SELECT c.id, c.parent_commit_id, c.kind, c.message,
                    c.is_checkpoint, c.created_at,
+                   c.payload->'ids'->>'chapter_index' AS chapter_index,
+                   (c.payload->'before'->>'content' IS NOT NULL) AS has_snapshot,
                    u.username AS author_username, u.display_name AS author_display_name
             FROM script_commits c
             LEFT JOIN users u ON u.id = c.author_user_id
-            WHERE c.script_id = %s
+            WHERE c.script_id = %s{where_cursor}
             ORDER BY c.id DESC
             LIMIT %s
             """,
-            (script_id, limit),
+            tuple(params),
         ).fetchall()
 
+    items = [dict(r) for r in rows[:limit]]
+    next_cursor = int(items[-1]["id"]) if (len(rows) > limit and items) else None
     return json_response({
         "ok": True,
-        "commits": [dict(r) for r in rows],
-        "count": len(rows),
+        "commits": items,
+        "count": len(items),
+        "next_cursor": next_cursor,
     })
 
 

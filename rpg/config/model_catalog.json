@@ -795,7 +795,7 @@
       "enabled": false,
       "credential_ref": "",
       "credential_env": "MIMO_API_KEY",
-      "base_url": "",
+      "base_url": "https://api.xiaomimimo.com/v1",
       "models": [
         {
           "id": "mimo-7b-rl",
