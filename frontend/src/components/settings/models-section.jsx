@@ -478,25 +478,32 @@ function ModelsSection() {
               }
             }
             window.__apiToast?.(addingApi ? t('settings.edit_api.add_ok') : t('settings.edit_api.save_ok'), { kind: "ok" });
-            const rows = await loadConfiguredApis();
-            const row = rows.find(a => a.id === catalogId) || {
-              id: catalogId,
-              name: payload.name || cfg?.name || catalogId,
-              base_url: payload.base_url,
-              key_set: true,
-              enabled: true,
-              models: [],
-            };
-            setSelectedApiId(catalogId);
-            await syncRemoteModels(row, { silent: false });
           } catch (e) {
             window.__apiToast?.(t('settings.edit_api.save_fail'), { kind: "danger", detail: e?.message });
           }
+          // 关闭弹框不排在下面两件事后面。凭证此刻已经落库、成功提示也已弹出,而 syncRemote 是
+          // 对该 provider 的**实时探测**(默认 15s 超时,对方不响应就挂满),等待窗口开着的弹框
+          // 是「已经提示添加成功、弹框却纹丝不动十几秒」。列表与探测改后台跑,完成后再补状态。
           setEditingApi(null); setAddingApi(false);
-          // 刷新让真实 key_set / key_hint 由后端权威
-          if (typeof window.__refreshPlatform === "function") {
-            try { await window.__refreshPlatform(); } catch (_) {}
-          }
+          (async () => {
+            try {
+              const rows = await loadConfiguredApis();
+              const row = rows.find(a => a.id === catalogId) || {
+                id: catalogId,
+                name: payload.name || cfg?.name || catalogId,
+                base_url: payload.base_url,
+                key_set: true,
+                enabled: true,
+                models: [],
+              };
+              setSelectedApiId(catalogId);
+              await syncRemoteModels(row, { silent: false });
+            } catch (_) {}
+            // 刷新让真实 key_set / key_hint 由后端权威
+            if (typeof window.__refreshPlatform === "function") {
+              try { await window.__refreshPlatform(); } catch (_) {}
+            }
+          })();
         }}
       />
       <VisibilityModal
