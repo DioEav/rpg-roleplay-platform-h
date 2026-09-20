@@ -108,9 +108,12 @@ async def api_delete_commit(script_id: int, commit_id: int, user=Depends(require
                 parent_id = None
         head = db.execute("SELECT head_commit_id FROM scripts WHERE id=%s", (script_id,)).fetchone()
         if head and head["head_commit_id"] is not None and int(head["head_commit_id"]) == int(commit_id):
+            # CAS(where head_commit_id=被删记录):并发写入把 head 推进到新记录后本更新影响 0 行
+            # → 不把 head 倒退回去(否则新记录成孤儿、fork 记错来源版本)。
+            # 刻意不动 scripts.updated_at:删历史记录不该让 KB 提取面板判定内容已变(stale)。
             db.execute(
-                "UPDATE scripts SET head_commit_id=%s, updated_at=now() WHERE id=%s",
-                (int(parent_id) if parent_id is not None else None, script_id),
+                "UPDATE scripts SET head_commit_id=%s WHERE id=%s AND head_commit_id=%s",
+                (int(parent_id) if parent_id is not None else None, script_id, int(commit_id)),
             )
         db.execute("DELETE FROM script_commits WHERE id=%s AND script_id=%s", (commit_id, script_id))
         db.commit()
@@ -167,12 +170,16 @@ async def api_undo_chapter_edit(script_id: int, chapter_index: int, user=Depends
     # 恢复改前全文(走现成 update_chapter,自带 owner 校验 + word_count 同步)
     from platform_app.script_import import update_chapter
     bc = before.get("content")
-    update_chapter(
-        uid, script_id, int(chapter_index),
-        title=(str(before["title"]) if before.get("title") is not None else None),
-        content=(str(bc) if bc is not None else None),
-        volume_title=(str(before["volume_title"]) if before.get("volume_title") is not None else None),
-    )
+    try:
+        update_chapter(
+            uid, script_id, int(chapter_index),
+            title=(str(before["title"]) if before.get("title") is not None else None),
+            content=(str(bc) if bc is not None else None),
+            volume_title=(str(before["volume_title"]) if before.get("volume_title") is not None else None),
+        )
+    except ValueError as exc:
+        # 章节已被删除等 → 400 而非 500(既有代码未捕获,此处加固)。
+        return value_error_response(exc)
     with connect() as db:
         if not script_owned(db, script_id, uid):
             return json_response({"ok": False, "error": "无权访问该剧本"}, status_code=403)
@@ -310,7 +317,9 @@ async def api_chapter_history(script_id: int, chapter_index: int, user=Depends(r
         rows = db.execute(
             """SELECT id, kind, message, created_at,
                       coalesce((payload->>'undone')::boolean, false) AS undone,
-                      (payload->'before' IS NOT NULL) AS has_before,
+                      -- has_before 收紧为「有正文快照」:超长正文不存 content(写入侧护栏)时,
+                      -- 只有 title/volume_title 的记录点了恢复不会动正文 → 前端不该给按钮(假成功)。
+                      (payload->'before'->>'content' IS NOT NULL) AS has_before,
                       -- source: 'editor'=编辑器手动保存(含合并的连续编辑),其余为 AI 改动。
                       -- save_count: 该条合并了几次保存(编辑器按编辑会话粒度合并;AI 恒 1)。
                       -- AI 旧记录无这两个字段 → 默认 'ai'/1,向后兼容。
@@ -344,25 +353,37 @@ async def api_chapter_restore(request: Request, script_id: int, chapter_index: i
         if not script_owned(db, script_id, uid):
             return json_response({"ok": False, "error": "无权访问该剧本"}, status_code=403)
         row = db.execute(
+            # 目标记录必须属于路径里的这一章:否则(commit id 可枚举,或历史因章号重排挂错)
+            # 会把别的章的 before 写进本章。
             "SELECT payload FROM script_commits WHERE id=%s AND script_id=%s "
-            "AND kind IN ('chapter_edit','chapter_revert')",
-            (commit_id, script_id),
+            "AND kind IN ('chapter_edit','chapter_revert') "
+            "AND coalesce(payload->'ids'->>'chapter_index','') = %s",
+            (commit_id, script_id, str(int(chapter_index))),
         ).fetchone()
         if not row:
             return json_response({"ok": False, "error": "找不到该版本"}, status_code=404)
         before = ((row["payload"] or {}).get("before") or {})
         if not before:
             return json_response({"ok": False, "error": "该版本未存改前快照,无法恢复"}, status_code=409)
+        if before.get("content") is None:
+            # 超长正文护栏(写入侧不存 content)→ 拒绝而非"只恢复标题":用户以为正文回退了、
+            # 实际没动,是假成功。前端 /history 的 has_before 同步收紧,不会给按钮。
+            return json_response(
+                {"ok": False, "error": "该版本未存正文快照(正文过长未保存),无法恢复正文"}, status_code=409)
         # 恢复前抓当前正文 → 写进本条 revert 的快照,让「恢复」本身可逆。
         prior = _chapter_snapshot(db, script_id, chapter_index)
     from platform_app.script_import import update_chapter
     bc = before.get("content")
-    update_chapter(
-        uid, script_id, int(chapter_index),
-        title=(str(before["title"]) if before.get("title") is not None else None),
-        content=(str(bc) if bc is not None else None),
-        volume_title=(str(before["volume_title"]) if before.get("volume_title") is not None else None),
-    )
+    try:
+        update_chapter(
+            uid, script_id, int(chapter_index),
+            title=(str(before["title"]) if before.get("title") is not None else None),
+            content=(str(bc) if bc is not None else None),
+            volume_title=(str(before["volume_title"]) if before.get("volume_title") is not None else None),
+        )
+    except ValueError as exc:
+        # 章节已被删除等 → 400 而非 500(既有代码未捕获,此处加固)。
+        return value_error_response(exc)
     with connect() as db:
         if not script_owned(db, script_id, uid):
             return json_response({"ok": False, "error": "无权访问该剧本"}, status_code=403)

@@ -36,13 +36,16 @@ function ChapterHistory({ scriptId, chapterIndex, onClose, onRestored }) {
   // 删除单条记录:只删审计记录与快照,正文不受影响;删后刷新列表。
   const del = async (v) => {
     if (busy) return;
-    const ok = await window.__confirm?.({
-      title: t('md_editor.history.delete_confirm', { defaultValue: '删除这条历史记录?' }),
-      message: t('md_editor.history.delete_confirm_msg', { defaultValue: '只删这条记录及其改前快照,不会改动正文。删除后无法恢复。' }),
-      danger: true,
-      confirmText: t('common.delete'),
-    });
-    if (!ok) return;
+    const ask = window.__confirm
+      ? window.__confirm({
+          title: t('md_editor.history.delete_confirm', { defaultValue: '删除这条历史记录?' }),
+          message: t('md_editor.history.delete_confirm_msg', { defaultValue: '只删这条记录及其改前快照,不会改动正文。删除后无法恢复。' }),
+          danger: true,
+          confirmText: t('common.delete'),
+        })
+      // 兜底:宿主没装 __confirm(单测/换壳)时退回原生 confirm,避免"点了没反应"的死按钮。
+      : Promise.resolve(window.confirm(t('md_editor.history.delete_confirm', { defaultValue: '删除这条历史记录?' })));
+    if (!await ask) return;
     setBusy(true);
     try {
       const r = await api().scripts.commitDelete(scriptId, v.id);
@@ -81,8 +84,9 @@ function ChapterHistory({ scriptId, chapterIndex, onClose, onRestored }) {
                     {/* 有改前快照且未被撤销 → 可恢复(手动编辑/AI 改写/带快照的恢复记录皆同) */}
                     {v.has_before && !v.undone
                       ? <button type="button" className="mde-history-restore" disabled={busy} onMouseDown={() => restore(v.id)}>{t('md_editor.history.restore', { defaultValue: '恢复到此前' })}</button>
-                      : <span className="mde-history-tag">{v.undone ? t('md_editor.history.undone', { defaultValue: '已撤销' }) : ''}</span>}
-                    <button type="button" className="mde-history-del" disabled={busy} onMouseDown={() => del(v)}>{t('md_editor.history.delete', { defaultValue: '删除' })}</button>
+                      : (v.undone ? <span className="mde-history-tag">{t('md_editor.history.undone', { defaultValue: '已撤销' })}</span> : null)}
+                    {/* 删除是高危操作:onClick(拖选划过不误触),确认后才能执行 */}
+                    <button type="button" className="mde-history-del" disabled={busy} onClick={() => del(v)}>{t('md_editor.history.delete', { defaultValue: '删除' })}</button>
                   </div>
                 </div>
               ))}

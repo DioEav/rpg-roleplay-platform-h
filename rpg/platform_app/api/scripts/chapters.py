@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import os
+import hashlib
 from datetime import datetime, timezone
 
 from fastapi import Depends, Request
@@ -40,8 +41,14 @@ def _fetch_chapter_prior(script_id: int, chapter_index: int) -> dict | None:
                 (script_id, chapter_index),
             ).fetchone()
         return dict(row) if row else None
-    except Exception:
+    except Exception as exc:  # noqa: BLE001 — 降级:该条记录不带快照,不影响正文保存
+        log.warning(f"[chapters] 抓改前快照失败(该条记录将不带快照): {exc}")
         return None
+
+
+def _content_hash(text) -> str:
+    """正文指纹(16 位十六进制)。用于合并前校验「中间没有别的写入」,防止串章。"""
+    return hashlib.sha256(str(text or "").encode("utf-8")).hexdigest()[:16]
 
 
 def _within_merge_window(last_saved_iso, minutes: int) -> bool:
@@ -58,12 +65,17 @@ def _within_merge_window(last_saved_iso, minutes: int) -> bool:
 
 
 def _record_chapter_edit_commit(*, script_id: int, user_id: int, chapter_index: int,
-                                body: dict, prior: dict | None) -> None:
+                                body: dict, prior: dict | None,
+                                after_content=None) -> None:
     """编辑器保存章节 → 写/合并 chapter_edit 记录(编辑会话粒度)。
 
     失败静默(log.warning),绝不影响正文保存主流程 —— 与 AI 路径同款护栏。
     payload 与 AI 路径(tools_dsl/command_tools_script_write/chapters.py)对齐,
-    另加 source/save_count/last_saved_at 三字段供合并判定与历史列表展示。
+    另加 source/save_count/last_saved_at/after_hash 四字段供合并判定与历史列表展示。
+
+    after_content: 本次保存后的正文(端点从 update_chapter 结果取)。合并前用它比对该记录
+    上次保存后的指纹 —— 结构操作(合并/拆分/删除/整本重切)不写 commit 却会重排 chapter_index,
+    少了这道校验就会把别的章的 before 快照并进本章 → 「恢复到此前」把别的章正文写进来。
     """
     try:
         changed = [k for k in ("title", "content", "volume_title") if body.get(k) is not None]
@@ -74,17 +86,22 @@ def _record_chapter_edit_commit(*, script_id: int, user_id: int, chapter_index: 
 
         before_content = str((prior or {}).get("content") or "")
         snapshot_ok = bool(prior) and len(before_content) <= _MAX_COMMIT_SNAPSHOT_CHARS
+        # 拿不到 after 时退回 prior(等价于"不合并",安全方向;最多多几条记录,不会串章)。
+        prior_hash = _content_hash(before_content)
+        after_hash = _content_hash(after_content if after_content is not None else before_content)
         now_iso = datetime.now(timezone.utc).isoformat()
         with connect() as db:
             if not script_owned(db, script_id, user_id):
                 return
-            # 编辑会话合并:该章【最后一条】记录必须就是本人在窗口内的 editor 记录,才合并
-            # (只递增计数,不新增)。任何插进来的记录 —— AI 改写/新增、撤销/恢复、他人的编辑
-            # —— 都打断会话 → 开新记录(否则新记录的 before 会指向错误的版本)。
+            # 编辑会话合并:该章【最后一条】记录必须就是本人在窗口内的 editor 记录,且
+            # 正文指纹连续(本次保存前的正文 == 它上次保存后的正文),才合并(只递增计数)。
+            # 任何插进来的记录 —— AI 改写/新增、撤销/恢复、他人的编辑 —— 都打断会话;
+            # 不走 commit 的正文写入(结构操作换章等)由 after_hash 兜住。
             if _CHAPTER_COMMIT_MERGE_MINUTES > 0:
                 row = db.execute(
                     """select id, kind, author_user_id,
                               coalesce(payload->>'source', '') as source,
+                              coalesce(payload->>'after_hash', '') as after_hash,
                               payload->>'last_saved_at' as last_saved
                        from script_commits
                        where script_id = %s
@@ -96,17 +113,23 @@ def _record_chapter_edit_commit(*, script_id: int, user_id: int, chapter_index: 
                         and row["kind"] == "chapter_edit"
                         and row["source"] == "editor"
                         and int(row["author_user_id"] or 0) == int(user_id)
+                        and row["after_hash"] == prior_hash
                         and _within_merge_window(row["last_saved"], _CHAPTER_COMMIT_MERGE_MINUTES)):
-                    db.execute(
+                    cur = db.execute(
                         """update script_commits set payload = jsonb_set(
-                             jsonb_set(payload, '{save_count}',
-                                       to_jsonb(coalesce((payload->>'save_count')::int, 1) + 1)),
-                             '{last_saved_at}', to_jsonb(%s::text))
+                             jsonb_set(
+                               jsonb_set(payload, '{save_count}',
+                                         to_jsonb(coalesce((payload->>'save_count')::int, 1) + 1)),
+                               '{last_saved_at}', to_jsonb(%s::text)),
+                             '{after_hash}', to_jsonb(%s::text))
                            where id = %s""",
-                        (now_iso, int(row["id"])),
+                        (now_iso, after_hash, int(row["id"])),
                     )
-                    db.commit()
-                    return
+                    if cur.rowcount:
+                        db.commit()
+                        return
+                    # 影响 0 行(记录刚被并发删除等)→ 回滚后落回新写,别让这次保存完全没审计。
+                    db.rollback()
             _write_commit(
                 db, script_id=script_id, user_id=user_id,
                 kind="chapter_edit",
@@ -127,6 +150,7 @@ def _record_chapter_edit_commit(*, script_id: int, user_id: int, chapter_index: 
                     "source": "editor",
                     "save_count": 1,
                     "last_saved_at": now_iso,
+                    "after_hash": after_hash,
                 },
             )
             db.commit()
@@ -230,6 +254,8 @@ async def api_chapter_update(request: Request, script_id: int, chapter_index: in
     _record_chapter_edit_commit(
         script_id=script_id, user_id=int(user["id"]),
         chapter_index=chapter_index, body=body, prior=prior,
+        # 保存后的正文 → 写进记录的 after_hash,供下次合并前校验"中间没有别的写入"(防串章)。
+        after_content=((result or {}).get("chapter") or {}).get("content"),
     )
     return json_response(result)
 
