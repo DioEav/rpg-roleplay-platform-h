@@ -190,12 +190,9 @@ async function hydratePlatform() {
     // /api/auth/me 本身失败（一般是后端挂了）也按匿名处理，宁可空着
     platform.user = anonymizeUser(platform.user);
   }
+  // 匿名(含 auth/me 失败)也拉 platform.info:本地模式下它对匿名可用(database/stats 展示)。
   try {
-    const info = await window.api.platform.info();
-    if (info) {
-      if (info.database) platform.database = { ...platform.database, ...info.database };
-      if (info.stats) platform.stats = { ...platform.stats, ...info.stats };
-    }
+    mergePlatformInfo(platform, await window.api.platform.info());
   } catch (e) { /* keep baseline */ }
   // 未登录就别打需要登录的业务接口：/api/scripts、/api/saves、/api/library
   // 这些在匿名访问下必 401，DevTools 控制台会刷红，影响审计噪音和登录页体验。
@@ -209,34 +206,21 @@ async function hydratePlatform() {
   // 登录态禁止保留 designer baseline：接口慢/失败时宁可显示空态或 loading，
   // 也不能把示例剧本、示例存档、示例统计误渲染成用户数据。
   Object.assign(platform, emptyPlatformFallback(platform));
+  // 登录后:三份业务列表互不依赖 → 并行(此前顺序 await,总耗时=三次往返之和)。
+  // 刻意**不**把 platform.info 并进这批:info 在上面门控前已经拉过(匿名/登录共用一次),
+  // 它的 database 已合并、stats 会被下方派生值覆盖 —— 再拉一次纯属双倍请求、零贡献。
+  // try/catch 保住「hydratePlatform 永不 throw」的旧不变量:它一旦 reject,bootstrap 的
+  // Promise.all 会 reject → RPG_DATA_READY 永不 resolve → splash 永驻(黑屏级事故)。
   try {
-    const scripts = await window.api.scripts.list();
-    // task 24：后端走 page_payload 返 {items, page}；旧代码只看 .scripts 漏掉新条目。
-    // 统一兼容形态：数组 / {items} / {scripts}。
-    const scriptList = Array.isArray(scripts) ? scripts : (scripts?.items || scripts?.scripts || []);
-    platform.scripts = scriptList.map(normalizeScript);
-  } catch (e) { platform.scripts = []; }
-  try {
-    const saves = await window.api.saves.list();
-    // task 24: 同 scripts，兼容 {items} / {saves} / 数组
-    const list = Array.isArray(saves) ? saves : (saves?.items || saves?.saves || []);
-    // 登录用户 → 真实 saves，哪怕是空数组也要覆盖（防止 mock 11/12/13/14 残留）
-    platform.saves = list.map(normalizeSave);
-  } catch (e) { platform.saves = []; }
-  try {
-    const lib = await window.api.library.list({ path: "" });
-    const entries = (lib && (lib.entries || lib.items)) || [];
-    if (entries.length) {
-      platform.recent_assets = entries.slice(0, 8).map((e) => ({
-        name: e.name || e.path || "未命名",
-        size: e.size || 0,
-        kind: e.kind || guessKind(e.name),
-        at: fmtAgo(e.updated_at || e.mtime),
-      }));
-    } else {
-      platform.recent_assets = [];
-    }
-  } catch (e) { platform.recent_assets = []; }
+    const lists = await fetchUserLists(window.api);
+    platform.scripts = lists.scripts;
+    platform.saves = lists.saves;
+    platform.recent_assets = lists.recent_assets;
+  } catch (e) {
+    platform.scripts = [];
+    platform.saves = [];
+    platform.recent_assets = [];
+  }
   // task 12：把统计派生成「真实数据 + 缺失标 null」，不再回退到 mock 12/38/67/21.4K。
   // ProfilePage 读这里的 stats；缺的字段（branches 没汇总接口、api_calls 需 usage 接口）置 null，
   // 渲染层判断 null → 显示「—」而不是 mock 数字。
@@ -251,6 +235,47 @@ async function hydratePlatform() {
     api_calls: null,               // 真实总调用要走 /api/me/usage，本页不强行拉
   };
   return { platform, authed };
+}
+
+/** /api/platform 的 database/stats 合并进 platform(匿名与登录两条路共用)。 */
+function mergePlatformInfo(platform, info) {
+  if (!info) return;
+  if (info.database) platform.database = { ...platform.database, ...info.database };
+  if (info.stats) platform.stats = { ...platform.stats, ...info.stats };
+}
+
+/** 登录用户的三份业务列表:并行拉取 + 形态归一 + 失败各自落空数组(互不拖垮)。
+ *  契约:**永不 reject**,且任一列表的负载畸形(非数组/含 null 项)只让它自己落空 ——
+ *  三份列表的归一逐项独立 try/catch,坏一份不拖垮另外两份(与旧版逐段 try/catch 同语义)。
+ *  抽成纯函数便于单测并发性与隔离性(hydratePlatform 所在模块 import 即自动 bootstrap)。 */
+export async function fetchUserLists(api) {
+  const call = (fn) => Promise.resolve().then(fn).catch(() => null);
+  const [scripts, saves, lib] = await Promise.all([
+    call(() => api.scripts.list()),
+    call(() => api.saves.list()),
+    call(() => api.library.list({ path: "" })),
+  ]);
+  // 单份列表的归一:raw 兼容 数组 / {items} / {命名键};非数组或含 null 项一律剔除。
+  const toObjects = (raw, keys) => {
+    if (raw == null || typeof raw !== "object") return [];
+    const arr = Array.isArray(raw) ? raw : (keys.map((k) => raw[k]).find(Array.isArray) || []);
+    return arr.filter((x) => x && typeof x === "object");
+  };
+  const out = { scripts: [], saves: [], recent_assets: [] };
+  try { out.scripts = toObjects(scripts, ["items", "scripts"]).map(normalizeScript); } catch (_) {}
+  try { out.saves = toObjects(saves, ["items", "saves"]).map(normalizeSave); } catch (_) {}
+  try {
+    const entries = toObjects(lib, ["entries", "items"]);
+    out.recent_assets = entries.length
+      ? entries.slice(0, 8).map((e) => ({
+          name: e.name || e.path || "未命名",
+          size: e.size || 0,
+          kind: e.kind || guessKind(e.name),
+          at: fmtAgo(e.updated_at || e.mtime),
+        }))
+      : [];
+  } catch (_) {}
+  return out;
 }
 
 function guessKind(name) {
@@ -432,7 +457,14 @@ async function bootstrap() {
     readyResolvers.forEach((r) => r({ online: false, authed: false }));
     return;
   }
-  const [{ platform, authed }, state] = await Promise.all([hydratePlatform(), hydrateGameState()]);
+  const t0 = performance.now();
+  let tPlatformMs = 0, tStateMs = 0;
+  // 两线并行:平台组(auth→platform→scripts/saves/library 并行) vs 游戏状态(/api/state,单请求最重)。
+  const platformP = hydratePlatform().then((r) => { tPlatformMs = Math.round(performance.now() - t0); return r; });
+  const stateP = hydrateGameState().then((r) => { tStateMs = Math.round(performance.now() - t0); return r; });
+  const [{ platform, authed }, state] = await Promise.all([platformP, stateP]);
+  // 启动打点:量化 splash 门控耗时 + 暴露下一瓶颈(state 长期独大 → 该做 /api/state 瘦身或分阶段挂载)
+  try { console.info(`[data-loader] boot: platform 组 ${tPlatformMs}ms | state ${tStateMs}ms | 总 ${Math.round(performance.now() - t0)}ms`); } catch (_) {}
   window.MOCK_PLATFORM = platform;
   window.MOCK_STATE = state;
   // 让 mount 脚本可同步读到登录态（不必 await 整个 ready Promise）
