@@ -347,10 +347,57 @@ async def lifespan(app: FastAPI):
     except Exception:
         log.exception("[startup] rath ticker 启动失败(不影响主服务)")
 
+    # 7. 后处理 worker 自检:启动查一次 + 每 10 分钟复检。
+    #    image_gen / acceptance_verifier / black_swan 只入队到 chat_postproc_tasks,由**独立
+    #    进程** scripts/run_postproc_worker.py 消费(不属于后端,dev.sh/compose/k8s/桌面端都没起)。
+    #    缺它的时候任务永远 pending、界面永远「生成中」,而全程没有任何报错 —— 用户只能猜。
+    #    这里把「到点超时仍未被消费」翻成一条带条数、最老时长和启动命令的告警。
+    _postproc_watch_task = None
+
+    def _check_postproc_once(stage: str) -> None:
+        try:
+            from platform_app.postproc_health import check_postproc_worker, describe_postproc_health
+            _h = check_postproc_worker()
+            if not _h.get("ok"):
+                log.warning("[%s] %s", stage, describe_postproc_health(_h))
+            elif _h.get("checked"):
+                log.info("[%s] postproc 队列无积压", stage)
+        except Exception:
+            log.exception("[%s] postproc 自检失败(不影响主服务)", stage)
+
+    _check_postproc_once("startup")
+
+    async def _postproc_watch():
+        import asyncio as _aio
+        _last_ok = True
+        while True:
+            try:
+                await _aio.sleep(600)
+                from platform_app.postproc_health import check_postproc_worker, describe_postproc_health
+                _h = await _aio.to_thread(check_postproc_worker)
+                if not _h.get("ok"):
+                    # 每轮都告警(10 分钟一条,不算噪音):worker 掉线后要持续可见,直到有人处理。
+                    log.warning("[postproc-health] %s", describe_postproc_health(_h))
+                    _last_ok = False
+                elif not _last_ok:
+                    log.info("[postproc-health] 已恢复:队列无积压")
+                    _last_ok = True
+            except _aio.CancelledError:
+                raise
+            except Exception as exc:
+                log.warning("[postproc-health] 复检失败(非致命): %s", exc)
+
+    try:
+        import asyncio as _asyncio3
+        _postproc_watch_task = _asyncio3.create_task(_postproc_watch())
+        app.state._postproc_watch_task = _postproc_watch_task
+    except Exception:
+        log.exception("[startup] postproc 复检任务启动失败(不影响主服务)")
+
     yield
 
     # ── shutdown ──────────────────────────────────────────────────────────
-    _bg_tasks = [t for t in (_redis_listener_task, _rath_ticker_task) if t is not None]
+    _bg_tasks = [t for t in (_redis_listener_task, _rath_ticker_task, _postproc_watch_task) if t is not None]
     for _t in _bg_tasks:
         try:
             _t.cancel()

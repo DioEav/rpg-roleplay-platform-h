@@ -174,10 +174,15 @@ services:
       dockerfile: deploy/Dockerfile
     container_name: rpg-cron
     restart: unless-stopped
+    # ⚠️ 模块前缀必须匹配镜像的 WORKDIR(deploy/Dockerfile 里是 /app/rpg):
+    # 从 /app/rpg 只有顶层写法能导 —— 代码在 /app/rpg/scripts/,容器里不存在 `rpg` 这个包
+    # (也没有 PYTHONPATH 兜底)。写成 `-m rpg.scripts.run_cron` 会 ModuleNotFoundError,而循环里
+    # 的 sleep 86400 会让它**每天静默空转一次**(不重启、不报错),即 cron 等于没跑。
+    # 与 deploy/test-server/docker-compose.yml 的写法保持一致。
     command:
       - "/bin/sh"
       - "-c"
-      - "while true; do python -m rpg.scripts.run_cron all; sleep 86400; done"
+      - "while true; do python -m scripts.run_cron all; sleep 86400; done"
     depends_on:
       pgbouncer:
         condition: service_healthy

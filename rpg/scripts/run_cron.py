@@ -1,9 +1,8 @@
 """CLI 入口 — 手动触发 cron 任务（供 dev 测试 + docker cron service）.
 
-用法（cwd 必须在 rpg/，与后端 uvicorn app:app 一致的裸模块约定）:
-    python -m scripts.run_cron hard_delete
-    python -m scripts.run_cron prune_audit
-    python -m scripts.run_cron all
+用法（两种 cwd 都支持，见下方 sys.path 引导）:
+    cd rpg && python -m scripts.run_cron all          # 与后端 uvicorn app:app 同款裸模块约定
+    python -m rpg.scripts.run_cron all                 # 仓库根(生产 systemd/compose 用这条)
 
 每次运行后写一行到 admin_audit_log，记录执行结果。
 """
@@ -11,6 +10,16 @@ from __future__ import annotations
 
 import logging
 import sys
+from pathlib import Path
+
+# 把 rpg/ 放进 sys.path —— 没有这一步,只有「cwd=rpg/」能跑:模块体内既有顶层绝对导入
+# (`platform_app.*` / `core.*` / `cron.*`,需要 rpg/ 在路径上),又有 `rpg.*` 前缀导入
+# (需要仓库根在路径上),而 cwd 只能是一个。结果是从仓库根执行文档里那条
+# `python -m rpg.scripts.run_cron` 会在 main() 里 ModuleNotFoundError: platform_app 崩掉
+# (deploy/bare-metal 的 ExecStart 正是这么写的)。与 run_postproc_worker.py 同一套引导。
+_RPG_DIR = Path(__file__).resolve().parent.parent
+if str(_RPG_DIR) not in sys.path:
+    sys.path.insert(0, str(_RPG_DIR))
 
 logging.basicConfig(
     level=logging.INFO,
@@ -29,7 +38,15 @@ def _write_audit(db, action: str, details: dict) -> None:
     (调用方 6 处均传 result dict,永不 None)。cron「失败不阻断」语义由本 try/except 保留。
     """
     try:
-        from rpg.platform_app.api.admin._shared import _write_audit as _admin_write_audit
+        # 双导入,与本文件 cmd_prune_retention / cmd_phase_digest_backfill 同款:`rpg.*` 只在
+        # 仓库根可导,cwd=rpg/ 时必须退到顶层写法。此前这里**没有**兜底,于是从 rpg/ 跑
+        # (文档与 dev 的主用法)每个 job 都在这里抛 ModuleNotFoundError → 被下面的 except 吞成
+        # 一条 ERROR 日志 → **审计日志一条都不落库**,而 job 本身照常成功(用户实测 7 个 job
+        # 各打一条 failed to write admin_audit_log)。
+        try:
+            from rpg.platform_app.api.admin._shared import _write_audit as _admin_write_audit
+        except ModuleNotFoundError:
+            from platform_app.api.admin._shared import _write_audit as _admin_write_audit
         _admin_write_audit(
             db,
             actor={"id": None, "username": "cron"},

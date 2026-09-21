@@ -381,9 +381,15 @@ User=rpg
 Group=rpg
 WorkingDirectory=/opt/rpg-roleplay/rpg
 # 直连 5432！LISTEN/NOTIFY 不能过 PgBouncer 6432
+# 注:EnvironmentFile 在 Environment 之后生效 → .env 里的 DATABASE_URL 会覆盖上面这行,
+#     所以 .env 必须是直连 5432 的地址(写成 6432 时 worker 会按设计立刻崩并打印明确报错)。
 Environment="DATABASE_URL=postgresql://rpg:PASSWORD@127.0.0.1:5432/rpg"
 EnvironmentFile=/opt/rpg-roleplay/rpg/.env
-ExecStart=/opt/rpg-roleplay/rpg/.venv/bin/python -m rpg.scripts.run_postproc_worker
+# 模块前缀必须匹配 WorkingDirectory:代码在 <cwd>/scripts/,没有 `rpg` 这个包。
+# 写成 `-m rpg.scripts.run_postproc_worker` 会 ModuleNotFoundError,叠加 Restart=always
+# 就是每 5 秒重启一次的循环(实测:cwd=rpg/ 下 `-m rpg.scripts...` 必报 No module named 'rpg';
+# 该写法只在 cwd=仓库根时成立)。
+ExecStart=/opt/rpg-roleplay/rpg/.venv/bin/python -m scripts.run_postproc_worker
 Restart=always
 RestartSec=5
 StandardOutput=journal

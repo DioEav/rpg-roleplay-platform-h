@@ -3,9 +3,12 @@
 不能走 PgBouncer(LISTEN/NOTIFY 会话级)。
 必须直连 Postgres :5432。DATABASE_URL 不含 :5432 时启动即崩,明确报错。
 
-启动:
+启动（两种 cwd 都支持 —— 模块体内会把 rpg/ 加进 sys.path,两种写法各自要求不同的 cwd,
+写成 `-m rpg.scripts.*` 却把 cwd 设成 rpg/ 会 ModuleNotFoundError,反之亦然）:
+    cd rpg && DATABASE_URL=postgresql://rpg:PASS@127.0.0.1:5432/rpg \\
+        .venv/bin/python -m scripts.run_postproc_worker
     DATABASE_URL=postgresql://rpg:PASS@127.0.0.1:5432/rpg \\
-        .venv/bin/python -m rpg.scripts.run_postproc_worker
+        rpg/.venv/bin/python -m rpg.scripts.run_postproc_worker     # cwd=仓库根
 
 或由 systemd rpg-postproc.service 管理(见 deploy/bare-metal/README.md §7.5)。
 """

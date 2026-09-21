@@ -57,13 +57,25 @@ async def index():
 
 @router.get("/api/health")
 async def api_health() -> JSONResponse:
-    """Liveness probe — 检查 DB 连通性。无需鉴权，供 k8s/nginx/监控调用。"""
+    """Liveness probe — 检查 DB 连通性。无需鉴权，供 k8s/nginx/监控调用。
+
+    另带 postproc_worker 一栏:队列里有没有「到点超时仍未被消费」的任务(= 独立进程
+    run_postproc_worker 没在跑)。**它不参与 ok**——本端点是存活探针,运维看门狗会照它重启
+    后端;队列积压不是后端病了(重启后端也修不好),所以只报告不判定。
+    """
     from core.version import app_version
     try:
         from platform_app.db import connect
         with connect() as db:
             db.execute("SELECT 1")
-        return json_response({"ok": True, "db": "ok", "app_version": app_version()})
+        postproc = {"ok": True, "checked": False}
+        try:
+            import asyncio as _asyncio
+            from platform_app.postproc_health import check_postproc_worker
+            postproc = await _asyncio.to_thread(check_postproc_worker)  # 同步 DB 查询,别压事件循环
+        except Exception as exc:
+            postproc = {"ok": True, "checked": False, "error": str(exc)[:200]}
+        return json_response({"ok": True, "db": "ok", "app_version": app_version(), "postproc_worker": postproc})
     except Exception as exc:
         return json_response(
             {"ok": False, "db": "error", "detail": str(exc)[:200], "app_version": app_version()},
