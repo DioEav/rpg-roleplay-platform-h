@@ -10,6 +10,21 @@ from state import strip_json_state_ops, strip_leaked_scaffold, strip_meta_tool_p
 from ._common import PipelineContext, SSEEvent, log
 
 
+def _content_block_reason(gm) -> str:
+    """本轮 provider 报的 finish_reason,且确实属于内容过滤拦截;否则返回 ""。
+
+    空回复分支专用:被拦时正文通常是空的,于是根本走不到 build_usage_payload(那片日志与
+    前端提示在 return 之后)。这里自己读一次,让「为什么是空回复」有个确切答案。
+    """
+    try:
+        from agents.gm.content_policy import CONTENT_BLOCK_REASONS
+
+        fr = str(getattr(getattr(gm, "_backend", None), "last_usage", {}).get("finish_reason") or "")
+        return fr if fr.upper() in CONTENT_BLOCK_REASONS else ""
+    except Exception:
+        return ""
+
+
 async def persist_turn_phase(
     ctx: PipelineContext,
     *,
@@ -107,6 +122,9 @@ async def persist_turn_phase(
     # task 31/27: /set 命令已在 Phase 1 持久化 (directive_updates 非空),
     # 此时 GM 返空是正常的 — 不应 error，直接 done。
     if not visible_response.strip():
+        # 空回复最常见的成因之一就是 provider 的内容过滤(task 128 的注释已点名),而 finish_reason
+        # 只在这条路径上才拿得到 —— 下面的 usage/告警都在 return 之后,走不到这里。
+        _blk = _content_block_reason(gm)
         if ctx.directive_updates:
             # /set 已落盘，GM 空响应无需报错
             yield ("done", {"status": payload_fn(api_user), "interrupted": False, "empty": True})
@@ -116,9 +134,14 @@ async def persist_turn_phase(
         else:
             log.warning(f"[chat] WARN: GM 返回空响应, len(raw)={len(response)} "
                         f"user_msg='{message_for_model[:80]}', save_id={ctx.active_save_id}")
+            if _blk:
+                # 给玩家的具体解释由 _stop_reason_notice 以 agent 事件发出(那是既有通道),
+                # 这里只留痕,并把原因透出去供排查/前端按需使用。
+                log.warning("[chat] GM 空响应且 finish_reason=%s(provider 内容过滤拦下)", _blk)
             yield ("error", {
                 "message": "GM 没生成内容(可能触发了模型的安全过滤,或者上下文出错)。请尝试换个说法重新发送。",
                 "kind": "empty_response",
+                "finish_reason": _blk,
             })
             yield ("done", {"status": payload_fn(api_user), "interrupted": False, "empty": True})
         return

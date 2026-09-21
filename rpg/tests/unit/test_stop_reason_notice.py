@@ -49,6 +49,20 @@ def test_content_filter_explains_it_was_a_policy_block():
     assert "换" in msg, "得给可行动的下一步"
 
 
+@pytest.mark.parametrize("fr", ["SAFETY", "PROHIBITED_CONTENT", "BLOCKLIST", "JAILBREAK",
+                                "IMAGE_SAFETY", "REFUSAL", "refusal", "safety"])
+def test_every_providers_block_reason_is_explained(fr):
+    """各家命名不同(Gemini SAFETY/JAILBREAK…、Anthropic refusal、OpenAI 兼容 content_filter)。
+
+    以前只认 content_filter → Claude/Gemini 拒答时玩家只看到一句没头没尾的回绝,
+    而这条提示存在的意义正是解释这件事。大小写不敏感(各家写法不一致)。
+    """
+    out = _stop_reason_notice(_ctx(fr))
+    assert len(out) == 1, f"{fr} 没有被识别为内容拦截"
+    assert out[0][0] == "stop_reason"
+    assert "不是剧情" in out[0][1]
+
+
 def test_length_explains_truncation():
     out = _stop_reason_notice(_ctx("length"))
     assert len(out) == 1

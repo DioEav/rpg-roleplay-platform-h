@@ -44,8 +44,12 @@ def _is_temperature_rejected(exc: Exception) -> bool:
 
 # create() 里「我们主动加的、provider 未必认」的顶层 kwargs。extra_body 里还装着
 # top_k / repetition_penalty / thinking,一并由 _strip_sampling 处理。
+#
+# seed/stop 也在这个名单里:它们是 OpenAI 标准字段,但不是**所有**模型都收 —— SDK 文档明写
+# 「stop:Not supported with latest reasoning models o3 and o4-mini」。漏了它俩,o3 用户
+# 一旦在设置页填了停用词就会整轮 400,而且退参自愈也救不回来。
 _OPTIONAL_TUNING_KEYS = ("temperature", "top_p", "frequency_penalty", "presence_penalty",
-                         "extra_body", "reasoning_effort")
+                         "seed", "stop", "extra_body", "reasoning_effort")
 
 
 def _is_bad_request(exc: Exception) -> bool:
@@ -59,8 +63,7 @@ def _is_bad_request(exc: Exception) -> bool:
 
 def _strip_sampling(kwargs: dict) -> None:
     """就地剥掉所有可选调参(含 extra_body 里的 top_k/repetition_penalty/thinking)→ 退回模型默认。"""
-    for _sp in ("temperature", "top_p", "frequency_penalty", "presence_penalty", "extra_body",
-                "reasoning_effort"):
+    for _sp in _OPTIONAL_TUNING_KEYS:
         kwargs.pop(_sp, None)
 
 
@@ -163,6 +166,11 @@ class _OpenAICompatBackend:
             gen = {}
         out: dict[str, Any] = {"temperature": gen.get("temperature", default_temperature)}
         for k in ("top_p", "frequency_penalty", "presence_penalty"):
+            if k in gen:
+                out[k] = gen[k]
+        # seed / stop 是 OpenAI 标准**顶层**字段(与 top_k/repetition_penalty 那种非标准、
+        # 得塞 extra_body 的不同),所以直接放顶层。
+        for k in ("seed", "stop"):
             if k in gen:
                 out[k] = gen[k]
         extra: dict[str, Any] = {}

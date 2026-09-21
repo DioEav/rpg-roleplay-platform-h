@@ -1512,6 +1512,11 @@ def _persist_chat_turn(
             log.warning(f"[chat] save_phase_manager hook failed: {_pm_err}")
 
 
+# 服务端内容过滤把这一轮拦下时的 finish_reason —— 定义收在 agents.gm.content_policy:
+# 空响应分支(chat_pipeline.persist)也要用同一份,免得两处各写一套然后漂移。
+from agents.gm.content_policy import CONTENT_BLOCK_REASONS as _CONTENT_BLOCK_REASONS  # noqa: E402
+
+
 def _build_usage_payload(
     api_user: dict[str, Any] | None,
     gm: GameMaster,
@@ -1545,6 +1550,14 @@ def _build_usage_payload(
                     persist_user_id or "?",
                     active_save_id or "?",
                     gm._backend.model_name,
+                )
+            elif finish_reason.upper() in _CONTENT_BLOCK_REASONS:
+                # 被 provider 的内容过滤拦下:输出会短甚至为空。日志留痕供排查,用户可见的提示
+                # 在前端 on_usage(那张卡片里没有 finish_reason 的中文解释,只显示 token/成本)。
+                log.warning(
+                    "[chat] GM output blocked by provider content filter (finish_reason=%s) "
+                    "user_id=%s model=%s",
+                    finish_reason, persist_user_id or "?", gm._backend.model_name,
                 )
             usage_row = usage_mod.record_usage(
                 user_id=persist_user_id,

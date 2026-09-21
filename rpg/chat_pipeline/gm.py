@@ -898,16 +898,28 @@ def _stop_reason_notice(ctx) -> list[tuple[str, str]]:
 
     判据是 provider 的 finish_reason(确定性信号),不是猜正文 —— 短回复既可能是拒答、
     也可能是正常的一句话叙事,只有 finish_reason 分得清。
+
+    内容拦截用 agents.gm.content_policy.CONTENT_BLOCK_REASONS 这份共享集合:各家命名不同
+    (Gemini = SAFETY/PROHIBITED_CONTENT/BLOCKLIST/JAILBREAK…、OpenAI 兼容 = content_filter、
+    Anthropic = refusal)。以前只认 content_filter,于是 Claude/Gemini 拒答时玩家只看到
+    一句没头没尾的回绝,而这条提示本来就是给他解释这件事的。
     """
     try:
         fr = str(((getattr(getattr(ctx, "gm", None), "_backend", None) or None)
                   and getattr(ctx.gm._backend, "last_usage", {}) or {}).get("finish_reason") or "")
     except Exception:
         return []
-    if fr == "content_filter":
-        return [("stop_reason", "这一轮被所用模型的内容策略挡下了 —— 上面那句是模型自己的回绝,"
-                                "不是剧情。可以换个说法重述,或在「设置 → 模型」里换一个对该题材更宽松的模型。")]
     if fr == "length":
         return [("stop_reason", "这一轮写到长度上限被截断了,结尾可能不完整。"
                                 "可以直接说「继续」让它接着写,或在设置里调高单轮输出上限。")]
+    try:
+        from agents.gm.content_policy import CONTENT_BLOCK_REASONS
+    except Exception:
+        CONTENT_BLOCK_REASONS = frozenset({"CONTENT_FILTER"})
+    if fr.upper() in CONTENT_BLOCK_REASONS:
+        # 文案沿用 v1.84.0 定稿的那句(「不是剧情」「给可行动的下一步」都被测试锁着),
+        # 本次只扩大**识别范围**,不改措辞;末尾加一句指向新上线的内容尺度档位。
+        return [("stop_reason", "这一轮被所用模型的内容策略挡下了 —— 上面那句是模型自己的回绝,"
+                                "不是剧情。可以换个说法重述,或在「设置 → 模型」里换一个对该题材更宽松的模型;"
+                                "若反复出现,也可在「设置 → 模型参数 → 内容尺度」调整档位。")]
     return []

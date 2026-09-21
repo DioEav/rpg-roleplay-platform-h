@@ -128,8 +128,7 @@ const STREAM_CHUNKS = [
 ];
 
 function App() {
-  const { t } = useTranslation();
-  // 旧 useTweaks/setTweak 用法迁出(tweaks-panel.jsx 已删,只是设计原型工具);
+  const { t } = useTranslation();  // 旧 useTweaks/setTweak 用法迁出(tweaks-panel.jsx 已删,只是设计原型工具);
   // 这里仅消费默认值,改成普通常量即可。
   const tweaks = TWEAK_DEFAULTS;
   const openTweaks = () => window.postMessage({ type: '__activate_edit_mode' }, '*');
@@ -958,6 +957,7 @@ function App() {
           if (!isCurrentRun()) return;
           // #11: 后端在 done 前发独立 usage 事件(input/output/cached/reasoning tokens
           // + context 占用 + cost_usd),存起来给输入框下方 footer 显示。
+          // 内容被拦时的可读解释走后端 agent 事件(_stop_reason_notice),不在这里重复提示。
           logEvent('usage', data);
           if (data) setLastUsage(data);
         },

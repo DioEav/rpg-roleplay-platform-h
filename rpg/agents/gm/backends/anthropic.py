@@ -124,8 +124,12 @@ class _AnthropicBackend:
             return None
 
     def _sampling_extra(self, has_thinking: bool) -> dict:
-        """反馈#93:用户生成参数预设(temperature/top_p/top_k)。只带用户显式设过的键。
-        Extended Thinking 开启时 Anthropic 限制采样参数(temperature 须为默认)→ 全跳过最稳。"""
+        """反馈#93:用户生成参数预设(temperature/top_p/top_k/stop)。
+        只带用户显式设过的键。Extended Thinking 开启时 Anthropic 限制采样参数
+        (temperature 须为默认)→ 全跳过最稳。
+
+        seed 刻意不发:Anthropic 的 messages.create **没有**这个字段(OpenAI / Gemini 才有),
+        发了就是非法参数。stop 在这家叫 stop_sequences 且只接受数组。"""
         if has_thinking:
             return {}
         try:
@@ -137,6 +141,8 @@ class _AnthropicBackend:
         for k in ("temperature", "top_p", "top_k"):
             if k in gen:
                 out[k] = gen[k]
+        if gen.get("stop"):
+            out["stop_sequences"] = list(gen["stop"])
         return out
 
     def call(self, system: str, messages: list[dict], max_tokens: int) -> str:
@@ -287,6 +293,10 @@ class _AnthropicBackend:
             # thinking 模型 max_tokens 必须容下 budget(留输出余量),否则 SDK 报错。
             max_tokens = max(max_tokens, int(_thinking["budget_tokens"]) + 1024)
         _extra = {"thinking": _thinking} if _thinking else {}
+        # 工具循环热路径也必须带上用户的采样参数 —— 此前这里只取 thinking,于是「有工具可用」的
+        # 回合里 temperature/top_p/top_k/stop 全部静默失效(call()/stream() 都接了,
+        # _sampling_extra 偏偏在这个入口漏了)。
+        _extra.update(self._sampling_extra(bool(_thinking)))
         with self.client.messages.stream(
             model=self.model_name,
             max_tokens=max_tokens,

@@ -8,6 +8,7 @@ import re
 import threading
 import time
 from collections.abc import Iterator
+from itertools import chain
 from pathlib import Path
 from typing import Any
 
@@ -43,22 +44,91 @@ def _resolve_thinking_budget(user_id: int | None, model_id: str | None) -> int:
     return _resolve_budget(user_id, "vertex_ai", model_id or "")
 
 
+# 拒收 safety_settings 的 (api_id, model, user_id) 记忆。与 openai_compat._fixed_temp_combos
+# 同一模式:进程内缓存,多 worker 各自学习(最坏情况是多发一次失败请求)。不同代际 Gemini 对
+# BLOCK_NONE / OFF 的支持不一致 —— 有的直接 400,不该让用户选的尺度整轮崩掉。
+#
+# **键里必须带 user_id**:只用 (api_id, model) 的话,一个用户的 400 会让同 worker 上所有用户
+# 都不再发 safety_settings —— 包括把档位设在「禁止」(最严阈值)的人,等于平台悄悄放弃了他们
+# 选的那层保护。带上 user 后互相隔离,代价只是每个用户各自多一次退参重试。
+_SAFETY_REJECTED: set[tuple[str, str, int | None]] = set()
+# 上限保护:键含 user_id,理论上随用户数增长。超限就整体清空 —— 代价只是下一个用户
+# 各自多撞一次 400 再退参,不值得为此上 LRU。
+_SAFETY_REJECTED_MAX = 4096
+
+
+def _remember_safety_rejected(key: tuple[str, str, int | None]) -> None:
+    if len(_SAFETY_REJECTED) >= _SAFETY_REJECTED_MAX:
+        _SAFETY_REJECTED.clear()
+    _SAFETY_REJECTED.add(key)
+
+
+def _is_bad_request_vertex(exc: Exception) -> bool:
+    """是不是 400(google.genai 的 ClientError)。"""
+    try:
+        from google.genai.errors import ClientError
+    except ImportError:
+        return False
+    return isinstance(exc, ClientError) and int(getattr(exc, "code", 0) or 0) == 400
+
+
+def _user_gen_config(user_id: int | None, model_name: str) -> dict[str, Any]:
+    """叙事调用的用户级生成参数片段:采样参数 + NSFW 安全过滤阈值。
+
+    只放用户显式设过的键;未设 → {},行为与接线前完全一致(零变化)。
+    seed / stop 是 GenerateContentConfig 的原生字段(停用词在这家叫 stop_sequences,只收数组)。
+    safety_settings 只含 SEXUALLY_EXPLICIT 一条 —— 见 agents/gm/content_policy。
+    """
+    out: dict[str, Any] = {}
+    try:
+        from ._gen_params import resolve_gen_params
+
+        gen = resolve_gen_params(user_id)
+    except Exception:
+        gen = {}
+    for key in ("temperature", "top_p", "top_k"):
+        if key in gen:
+            out[key] = gen[key]
+    if "seed" in gen:
+        out["seed"] = gen["seed"]
+    if gen.get("stop"):
+        out["stop_sequences"] = list(gen["stop"])
+    try:
+        from ..content_policy import safety_settings_for_user
+
+        safety = safety_settings_for_user(user_id)
+    except Exception:
+        safety = None
+    if safety and ("vertex_ai", model_name, user_id) not in _SAFETY_REJECTED:
+        out["safety_settings"] = safety
+    return out
+
+
 def _finish_reason_normalized(resp) -> str | None:
-    """从响应 / 流式 chunk 的 candidates[0].finish_reason 取截断信号。
+    """从响应 / 流式 chunk 取截断或拦截信号。
 
     MAX_TOKENS 归一为 "length"(与 openai finish_reason / anthropic stop_reason 对齐;
-    app.py 的截断告警只认 == "length");其余(STOP / SAFETY / RECITATION …)透传其名。
-    取不到 / 无候选返回 None。流式末 chunk 通常同时带 usage_metadata 与 finish_reason。"""
+    app.py 的截断告警只认 == "length");其余(STOP / SAFETY / RECITATION / JAILBREAK …)透传其名。
+    取不到 / 无候选返回 None。流式末 chunk 通常同时带 usage_metadata 与 finish_reason。
+
+    **提示词被拦时 candidates 是空的**(不是输出被拦),唯一信号是 prompt_feedback.block_reason ——
+    不读它,「输入触发安全过滤」这类拦截就完全没有痕迹,用户只看到空回复。
+    """
     try:
         cands = getattr(resp, "candidates", None) or []
-        if not cands:
-            return None
-        fr = getattr(cands[0], "finish_reason", None)
-        if not fr:
-            return None
-        name = getattr(fr, "name", None) or str(fr)
-        name = str(name).rsplit(".", 1)[-1].upper()  # enum → 裸名(去 "FinishReason." 前缀)
-        return "length" if name == "MAX_TOKENS" else name
+        if cands:
+            fr = getattr(cands[0], "finish_reason", None)
+            if fr:
+                name = getattr(fr, "name", None) or str(fr)
+                name = str(name).rsplit(".", 1)[-1].upper()  # enum → 裸名(去 "FinishReason." 前缀)
+                return "length" if name == "MAX_TOKENS" else name
+        fb = getattr(resp, "prompt_feedback", None)
+        reason = getattr(fb, "block_reason", None) if fb else None
+        if reason:
+            name = getattr(reason, "name", None) or str(reason)
+            name = str(name).rsplit(".", 1)[-1].upper()
+            return None if name.endswith("UNSPECIFIED") else name
+        return None
     except Exception:
         return None
 
@@ -211,6 +281,50 @@ class _VertexBackend:
             log.debug("[vertex] _prefix_cache_name error (%s)", exc)
             return None
 
+    def _safety_key(self) -> tuple[str, str, int | None]:
+        """safety_settings 被拒的记忆键(见 _SAFETY_REJECTED 的说明:必须带 user_id)。"""
+        return ("vertex_ai", self.model_name, self.user_id)
+
+    def _open_stream(self, *, contents, cfg: dict[str, Any], types) -> Iterator[Any]:
+        """开流并**预取第一个 chunk**,带 safety_settings 的 400 兜底。
+
+        为什么要预取:google-genai 的 generate_content_stream 是生成器函数(内部 `yield from`),
+        请求在第一次 next() 时才发出 —— 把 try/except 包在调用点根本抓不到 400。预取到的第一块
+        必须交还给调用方,不能丢。
+
+        只在"我们确实发了 safety_settings 且对方 400"时退参重开一次;重开再失败就直接上抛
+        (说明 400 另有原因),那种情况**不记忆** —— 否则会永久吃掉用户选的尺度。
+        """
+        client = self.client.models
+
+        def _open(cfg_now: dict[str, Any]):
+            stream = client.generate_content_stream(
+                model=self.model_name, contents=contents,
+                config=types.GenerateContentConfig(**cfg_now),
+            )
+            return iter(stream)
+
+        it = _open(cfg)
+        try:
+            first = next(it)
+        except StopIteration:
+            return iter(())
+        except Exception as exc:
+            if "safety_settings" not in cfg or not _is_bad_request_vertex(exc):
+                raise
+            cfg.pop("safety_settings", None)
+            log.info("[vertex] %s 拒收 safety_settings(400)→ 去掉后重开流", self.model_name)
+            retry_it = _open(cfg)
+            try:
+                first = next(retry_it)
+            except StopIteration:
+                # 重开返回 200 但零 chunk:与首轮同款处理,返回空流而不是让 StopIteration
+                # 从生成器里逃出去(PEP 479 会把它变成 RuntimeError,整轮报一个看不懂的错)。
+                return iter(())
+            _remember_safety_rejected(self._safety_key())
+            return chain([first], retry_it)
+        return chain([first], it)
+
     def call(self, system: str, messages: list[dict], max_tokens: int) -> str:
         self._ensure_available()
         from google.genai import types
@@ -226,15 +340,9 @@ class _VertexBackend:
             ),
             "http_options": types.HttpOptions(timeout=_VERTEX_TIMEOUT_SECONDS * 1000),
         }
-        # 反馈#93:接入用户生成参数预设(只覆盖设过的键;未设沿用默认 0.9,零行为变化)。
-        try:
-            from ._gen_params import resolve_gen_params
-            _gen = resolve_gen_params(self.user_id)
-        except Exception:
-            _gen = {}
-        for _gk in ("temperature", "top_p", "top_k"):
-            if _gk in _gen:
-                _cfg[_gk] = _gen[_gk]
+        # 反馈#93 + NSFW:用户级生成参数(采样 + 安全过滤阈值)。只覆盖设过的键 —— 未设时
+        # 沿用上面的默认 0.9 / 不发 safety_settings,存量用户零行为变化。
+        _cfg.update(_user_gen_config(self.user_id, self.model_name))
         # 显式缓存:命中则以 cached_content 引用前缀(system 在 cache 内,request 不再带 system_instruction)
         if _cache_name:
             _cfg["cached_content"] = _cache_name
@@ -252,6 +360,19 @@ class _VertexBackend:
                 break
             except Exception as exc:
                 last_exc = exc
+                # 400 + 我们发了 safety_settings:该模型不收这个阈值(不同代际 Gemini 对
+                # BLOCK_NONE / OFF 的支持不一致)。去掉后重试一次,成功才记忆该组合;
+                # 重试再失败会原样上抛,不记忆 —— 那种 400 另有原因,记忆会永久吃掉用户的尺度。
+                if "safety_settings" in _cfg and _is_bad_request_vertex(exc):
+                    _cfg.pop("safety_settings", None)
+                    log.info("[vertex] %s 拒收 safety_settings(400)→ 去掉后重试", self.model_name)
+                    resp = self.client.models.generate_content(
+                        model=self.model_name,
+                        contents=contents,
+                        config=types.GenerateContentConfig(**_cfg),
+                    )
+                    _remember_safety_rejected(self._safety_key())
+                    break
                 if attempt < _MAX_RETRIES and _is_retryable_vertex(exc):
                     log.warning(f"[vertex] call attempt {attempt+1} failed ({exc}), retrying…")
                     time.sleep(1.0)
@@ -280,6 +401,10 @@ class _VertexBackend:
     def _capture_usage(self, resp) -> None:
         meta = getattr(resp, "usage_metadata", None)
         if not meta:
+            # 没有 usage 也要采 finish_reason:提示词被安全过滤拦下时,candidates 为空、
+            # usage_metadata 也不存在,唯一信号就是 prompt_feedback.block_reason ——
+            # 以前这里直接 return,于是「为什么这轮是空回复」在链路上完全没有痕迹。
+            self._capture_finish_reason(resp)
             return
         prompt = int(getattr(meta, "prompt_token_count", 0) or 0)
         candidates = int(getattr(meta, "candidates_token_count", 0) or 0)
@@ -293,8 +418,11 @@ class _VertexBackend:
             "reasoning_tokens": thoughts,
             "total_tokens": total,
         }
-        # 截断信号:openai 侧一直采 finish_reason,vertex 之前完全不采 → 上游 GM 输出被
-        # max_output_tokens 截断时 app.py 的截断告警对 Gemini 恒静默。归一为 length 补齐。
+        self._capture_finish_reason(resp)
+
+    def _capture_finish_reason(self, resp) -> None:
+        """截断/拦截信号:openai 侧一直采 finish_reason,vertex 之前完全不采 → 上游 GM 输出被
+        max_output_tokens 截断时 app.py 的截断告警对 Gemini 恒静默。归一为 length 补齐。"""
         fr = _finish_reason_normalized(resp)
         if fr:
             self.last_usage["finish_reason"] = fr
@@ -340,23 +468,22 @@ class _VertexBackend:
         from google.genai import types
 
         contents = self._to_contents(messages, types)
-        config = types.GenerateContentConfig(
-            system_instruction=system,
-            max_output_tokens=max(max_tokens, 2048),
-            temperature=0.9,
+        _cfg: dict[str, Any] = {
+            "system_instruction": system,
+            "max_output_tokens": max(max_tokens, 2048),
+            "temperature": 0.9,
             # 按用户 effort(ModelPopover 思考深度)。原硬编码 0 是死设置:call() 已按用户
             # budget 生效,唯独流式(实际游玩热路径)恒 0 → UI「思考深度」对 Gemini 流式无效。
-            thinking_config=types.ThinkingConfig(
+            "thinking_config": types.ThinkingConfig(
                 thinking_budget=_resolve_thinking_budget(self.user_id, self.model_name),
             ),
-        )
-        for chunk in self.client.models.generate_content_stream(
-            model=self.model_name,
-            contents=contents,
-            config=config,
-        ):
-            if getattr(chunk, "usage_metadata", None):
-                self._capture_usage(chunk)
+        }
+        # 用户级生成参数 + NSFW 安全过滤(只覆盖设过的键)
+        _cfg.update(_user_gen_config(self.user_id, self.model_name))
+        for chunk in self._open_stream(contents=contents, cfg=_cfg, types=types):
+            # 不再用 usage_metadata 做前置判断:提示词被安全过滤拦下时整条流都不带 usage,
+            # 唯一信号是 prompt_feedback.block_reason —— 滤掉就再也拿不到「为什么是空回复」。
+            self._capture_usage(chunk)
             # 纯文本流(Iterator[str])无法承载 reasoning 事件,故思考部分(part.thought=True)在此
             # 丢弃(与 openai_compat 纯 stream() 丢 reasoning_content 一致),绝不当正文 yield 污染叙事。
             # 需要展示思考流的是 stream_with_mcp_loop(下方以 {"type":"reasoning"} 事件单独 yield)。
@@ -477,26 +604,20 @@ class _VertexBackend:
             # thinking_budget 按用户 effort(ModelPopover);原两条流式分支硬编码 0 = 死设置。
             # thinking_config 是每请求生成参数,与显式缓存(缓存的是 system+tools)互不冲突。
             _budget = _resolve_thinking_budget(self.user_id, self.model_name)
+            _cfg: dict[str, Any] = {
+                "max_output_tokens": max(max_tokens, 2048),
+                "temperature": 0.9,
+                "thinking_config": types.ThinkingConfig(thinking_budget=_budget),
+            }
             if _cache_name:
-                config = types.GenerateContentConfig(
-                    cached_content=_cache_name,
-                    max_output_tokens=max(max_tokens, 2048),
-                    temperature=0.9,
-                    thinking_config=types.ThinkingConfig(thinking_budget=_budget),
-                )
+                _cfg["cached_content"] = _cache_name
             else:
-                config = types.GenerateContentConfig(
-                    system_instruction=system,
-                    max_output_tokens=max(max_tokens, 2048),
-                    temperature=0.9,
-                    tools=tools_param,
-                    thinking_config=types.ThinkingConfig(thinking_budget=_budget),
-                )
-            for chunk in self.client.models.generate_content_stream(  # type: ignore[assignment]
-                model=self.model_name, contents=contents, config=config,
-            ):
-                if getattr(chunk, "usage_metadata", None):
-                    self._capture_usage(chunk)
+                _cfg["system_instruction"] = system
+                _cfg["tools"] = tools_param
+            # 用户级生成参数 + NSFW 安全过滤(只覆盖设过的键)
+            _cfg.update(_user_gen_config(self.user_id, self.model_name))
+            for chunk in self._open_stream(contents=contents, cfg=_cfg, types=types):
+                self._capture_usage(chunk)  # 同上:没有 usage 的 chunk 也要采 finish_reason
                 # parts 走候选[0]
                 cands = getattr(chunk, "candidates", None) or []
                 if not cands:

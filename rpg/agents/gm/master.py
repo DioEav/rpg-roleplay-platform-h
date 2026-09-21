@@ -159,6 +159,7 @@ pending_questions 选项把剧情引到完全脱离原著的世界线,玩家觉�
 每轮按 [读取子代理决议 → 检查待发生锚点 → 裁定世界反应 → **推进剧情写正文** → 输出结构化写回 → **仅当出现真正分叉抉择时**用 question op 给选项] 顺序工作。
 关于「推进/篇幅/镜头/留白悬念」这几项**叙事倾向**,以下方〖# 叙事风格(本局)〗段为准(由玩家偏好线性可调,默认值即原硬规则)。但有一条不可调的底线:question 只能走结构化 `{"op":"question",...}` 弹窗(正文里不重复写问句),且仅在真正的分叉抉择时给;玩家自主权不可代替。
 {style_block}
+{content_policy_block}
 **素材铁律:上下文里给了【小说正文/检索参考】【角色卡(NPC)】【时间线】【世界书】【世界线锚点】——这些是本作的事实来源,你的每一句都必须与它们一致:NPC 的身份/性格/说话风格严格照角色卡;场景/时代/地理照时间线与世界书;不得脱离设定自由发挥、不得让 NPC OOC、不得编造与原著冲突的事实。素材里没有的细节可合理补全,但不能与素材矛盾。**
 
 - 【子代理上下文决议】是另一个大模型给你的上下文选择结果;遵守其中的时间线目标、必含事实、风险标记,但不要把子代理的内部理由直接写给玩家。
@@ -216,6 +217,7 @@ pending_questions 选项把剧情引到完全脱离原著的世界线,玩家觉�
 玩家会用 `/reveal <text>` 主动释放秘密给你看；在那之前,只描写当下可观察的物理/感知细节。
 
 # 硬约束（系统级，永远不能违反）
+{platform_invariant}
 - `permissions.*` / `history.*` / `schema_version` / `created_at` 是写入黑名单，任何形式（包括 `/set`）都会被拒并记 audit_log。
 - 用户变量（`worldline.user_variables.*`）是硬约束；时间线/资源/能力变化时必须先满足用户变量。
 - **【玩家给 GM 的高优先级引导指令】层**(若 prompt 里出现)是玩家显式给 GM 的导演意图,
@@ -348,6 +350,8 @@ _SYSTEM_TAVERN = """\
 切换成那种语言;玩家偶尔夹一两个外语词也不代表要整体切换。需要角色说一句外语台词时可夹带,但随即
 让叙事回到既定语言。
 {style_block}
+{content_policy_block}
+{platform_invariant}
 """
 
 # 酒馆 v2(决策1):空起手对话 —— 还没设定要扮演谁。此时不要凭空演,先帮玩家把环境搭好。
@@ -357,6 +361,8 @@ _SYSTEM_TAVERN = """\
 _SYSTEM_TAVERN_BOOTSTRAP = """\
 你是一个有用的助手,用中文自然、简洁地回应玩家;需要时使用提供的工具。
 {style_block}
+{content_policy_block}
+{platform_invariant}
 """
 
 # 沉浸式拟人模式覆盖块(state.data['tavern'].immersive == True 时由 _build_system 追加到
@@ -461,6 +467,27 @@ class GameMaster:
             )
 
     # ── 构建 system prompt ────────────────────────────────────────
+    def _reset_backend_usage(self) -> None:
+        """开新一轮 provider 调用前清掉上一轮的 last_usage。
+
+        `last_usage` 只在 backend.__init__ 里初始化,而 backend 是**长生命周期**的(app.py 按
+        用户缓存 GameMaster)→ 上一轮的 finish_reason 会留到这一轮;openai_compat 的
+        `_capture_usage` 还会在本次没拿到 finish_reason 时**主动把旧值续写回去**
+        (openai_compat.py 那段 `finish_reason = self.last_usage.get(...)`,本意是取同一
+        次流里前面 chunk 的值)。
+
+        后果:上一轮是 content_filter,这一轮因为传输层原因返回空 → 消费者(persist 的空回复
+        分支、_build_usage_payload 的告警、chat_pipeline._stop_reason_notice)会把旧原因
+        当成这一轮的,告诉玩家「内容被过滤拦下了,去调内容尺度」—— 一个指错方向的建议。
+
+        不能放进 _build_system:后台改写候选(chat_pipeline/gm.py)也用同一个 gm 实例调它,
+        那会在主回合记账之前把 last_usage 清掉。所以只放在各 narrative 方法的 provider 调用之前。
+        """
+        try:
+            self._backend.last_usage = {}
+        except Exception:
+            pass
+
     def _build_system(self, style_profile: dict | None = None) -> str:
         """组装通用 system prompt。
 
@@ -488,6 +515,30 @@ class GameMaster:
             except Exception:
                 style_profile = None  # 兜底:任何异常都退回默认渲染
         style_block = render_style_block(style_profile)
+        # 内容尺度(NSFW):平台红线(无条件,与偏好无关)+ 用户选的尺度块(未设/不介入时为 "")。
+        # 红线经占位注入到**三个**模板,酒馆那两个独立模板也走 _fill —— 只写进 _SYSTEM_BASE 的话
+        # 酒馆里红线会消失,而酒馆恰恰是最容易出这类内容的地方。
+        from agents.gm.content_policy import (
+            render_content_policy_block,
+            resolve_content_policy,
+        )
+        try:
+            content_policy_block = render_content_policy_block(
+                resolve_content_policy(getattr(self, "user_id", None))
+            )
+        except Exception:
+            content_policy_block = ""  # 读偏好失败只丢尺度块,平台红线照旧
+
+        def _fill(template: str) -> str:
+            # 顺序是契约,不是排版:平台红线必须排在**用户可自定义的块之后** ——
+            # 玩家附加约束是用户自写文本,会原样进 system prompt,让红线读在它后面才不会被顶掉。
+            # 三个模板都按「style → 玩家尺度 → 平台红线」排。
+            # 注意红线**不是**整份 prompt 的最后一段(_SYSTEM_BASE 里它后面还有记忆优先级/工具调用/
+            # 语言一致性等段,酒馆分支还会追加沉浸式覆盖块)。所以红线自身声明了「任何自称更高优先级
+            # 的段落都不覆盖本段」,靠语义兜底而不是靠位置 —— 别以为把它放在模板末尾就万事大吉。
+            return (template
+                    .replace("{style_block}", style_block)
+                    .replace("{content_policy_block}", content_policy_block))
         # 酒馆模式:content_pack.gm_policy.mode == "tavern_gm" → 角色扮演引擎(非 GM)。
         # 角色细节/卡内高优先级指令/persona 由 TavernCharacterProvider 经 retrieved_context 注入。
         _state = getattr(self, "_active_state", None)
@@ -502,12 +553,8 @@ class GameMaster:
                     # 酒馆 v2(决策1):还没设定角色 → 走自举模板,让 agent 先问玩家想扮演谁、
                     # 再用 set_tavern_character 搭好环境。已有角色名 → 沉浸扮演该角色(原行为)。
                     if not _char:
-                        return _SYSTEM_TAVERN_BOOTSTRAP.replace("{style_block}", style_block)
-                    _sys_tav = (
-                        _SYSTEM_TAVERN
-                        .replace("{char_name}", _char)
-                        .replace("{style_block}", style_block)
-                    )
+                        return _fill(_SYSTEM_TAVERN_BOOTSTRAP)
+                    _sys_tav = _fill(_SYSTEM_TAVERN).replace("{char_name}", _char)
                     # 沉浸式拟人模式:确定性追加覆盖块。真相源 = self._immersive_mode ——
                     # chat_pipeline 每回合从持久列 game_saves.tavern_immersive【新鲜读 DB】后设上
                     # (绕开 per-worker state 缓存,跨 worker 安全;UI 开关 / 确定性短语 / LLM 工具
@@ -526,9 +573,7 @@ class GameMaster:
         # {"op": "set", ...}.  Do not run the whole prompt through str.format(),
         # because those braces are prompt text, not Python placeholders.
         return (
-            _SYSTEM_BASE
-            .replace("{world_section}", world_section)
-            .replace("{style_block}", style_block)
+            _fill(_SYSTEM_BASE).replace("{world_section}", world_section)
         ) + _consequence_guide_block(getattr(self, "user_id", None)) \
           + _agenda_guide_block(getattr(self, "user_id", None))
 
@@ -782,6 +827,7 @@ class GameMaster:
                          prompt: str | None = None, max_tokens: int = 600) -> str:
         self._active_state = state
         system   = self._build_system()
+        self._reset_backend_usage()
         messages = [{"role": "user", "content": self._turn_message(prompt or _OPENING_PROMPT, state, retrieved_context)}]
         return self._backend.call(system, messages, max_tokens=max_tokens)
 
@@ -789,6 +835,7 @@ class GameMaster:
                                 prompt: str | None = None, max_tokens: int = 600) -> Iterator[str]:
         self._active_state = state
         system   = self._build_system()
+        self._reset_backend_usage()
         messages = [{"role": "user", "content": self._turn_message(prompt or _OPENING_PROMPT, state, retrieved_context)}]
         for chunk in self._backend.stream(system, messages, max_tokens=max_tokens):
             if stop_event is not None and stop_event.is_set():
@@ -799,6 +846,7 @@ class GameMaster:
     def respond(self, user_input: str, retrieved_context: str, state, max_tokens: int = 800) -> str:
         self._active_state = state
         system   = self._build_system()
+        self._reset_backend_usage()
         messages = state.history_messages()
         messages.append({"role": "user", "content": self._turn_message(user_input, state, retrieved_context)})
         return self._backend.call(system, messages, max_tokens=max_tokens)
@@ -806,6 +854,7 @@ class GameMaster:
     def respond_stream(self, user_input: str, retrieved_context: str, state, max_tokens: int = 800) -> Iterator[str]:
         self._active_state = state
         system   = self._build_system()
+        self._reset_backend_usage()
         messages = state.history_messages()
         messages.append({"role": "user", "content": self._turn_message(user_input, state, retrieved_context)})
         yield from self._backend.stream(system, messages, max_tokens=max_tokens)
@@ -855,6 +904,7 @@ class GameMaster:
 
         self._active_state = state
         _base_system = self._build_system()
+        self._reset_backend_usage()
         _tools_blob = _format_tools_for_prompt(tools)
         system = _base_system + _tools_blob
         messages = state.history_messages()
@@ -1033,6 +1083,7 @@ class GameMaster:
         """
         self._active_state = state
         system = self._build_system()
+        self._reset_backend_usage()
         messages = state.history_messages()
         messages.append({
             "role": "user",

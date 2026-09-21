@@ -25,6 +25,9 @@ const MP_PRESETS = {
 const readPref = readScopedPref;
 const readNumPref = readNumberPref;
 
+// 内容尺度档位白名单 —— 必须与后端 agents/gm/content_policy.MODES 一字不差。
+const NSFW_MODES = ['block', 'soft', 'open', 'explicit', 'none'];
+
 function ModelParamsSection() {
   const { t } = useTranslation();
   const save = usePrefSave('settings');
@@ -32,7 +35,6 @@ function ModelParamsSection() {
   const [params, setParams] = useState(MP_DEFAULTS);
   const [nsfw, setNsfw] = useState({ mode:'soft', intensity:0.5, extra_prompt:'' });
   const [effort, setEffort] = useState('medium');
-  const [advanced, setAdvanced] = useState(false);
   const [showJson, setShowJson] = useState(false);
 
   useEffect(() => {
@@ -50,11 +52,18 @@ function ModelParamsSection() {
         const p = String(readPref(prefs, 'preset', 'balanced') || 'balanced');
         if (['balanced','conservative','creative','deterministic','custom'].includes(p)) setPreset(p);
         setParams(next);
-        setAdvanced(next.mirostat_mode !== 'off');
-        const nsfwMode = String(readPref(prefs,'nsfw_mode', readPref(prefs,'nsfw',{}).mode||'soft') || 'soft');
-        const nsfwIntensity = Number(readPref(prefs,'nsfw_intensity', readPref(prefs,'nsfw',{}).intensity ?? 0.5));
+        const legacyNsfw = readPref(prefs, 'nsfw', null) || {};   // 旧版嵌套对象;可能存成 null
+        // 与桌面端 / 后端 content_policy.resolve_content_policy 同规则(见那里的说明)
+        const nsfwGroupTouched =
+          ['nsfw_mode','nsfw_intensity','nsfw_extra_prompt'].some((k) => readPref(prefs, k, undefined) !== undefined)
+          || Object.keys(legacyNsfw).length > 0;
+        const rawNsfwMode = String(readPref(prefs, 'nsfw_mode', legacyNsfw.mode ?? '') ?? '').trim().toLowerCase();
+        const nsfwMode = NSFW_MODES.includes(rawNsfwMode)
+          ? rawNsfwMode
+          : (rawNsfwMode ? 'none' : (nsfwGroupTouched ? 'soft' : 'none'));
+        const nsfwIntensity = Number(readPref(prefs,'nsfw_intensity', legacyNsfw.intensity ?? 0.5));
         setNsfw({
-          mode: ['block','soft','open','explicit'].includes(nsfwMode) ? nsfwMode : 'soft',
+          mode: nsfwMode,
           intensity: Number.isFinite(nsfwIntensity) ? nsfwIntensity : 0.5,
           extra_prompt: String(readPref(prefs,'nsfw_extra_prompt','') || ''),
         });
@@ -150,43 +159,39 @@ function ModelParamsSection() {
       {/* NSFW */}
       <MField label={t('mobile.settings.modelparams.content_filter')}>
         <Seg
-          options={[['block',t('mobile.settings.modelparams.nsfw_block')],['soft',t('mobile.settings.modelparams.nsfw_soft')],['open',t('mobile.settings.modelparams.nsfw_open')],['explicit',t('mobile.settings.modelparams.nsfw_explicit')]]}
+          options={[['block',t('mobile.settings.modelparams.nsfw_block')],['soft',t('mobile.settings.modelparams.nsfw_soft')],['open',t('mobile.settings.modelparams.nsfw_open')],['explicit',t('mobile.settings.modelparams.nsfw_explicit')],['none',t('mobile.settings.modelparams.nsfw_none')]]}
           value={nsfw.mode}
           onChange={(v) => updateNsfw({ mode: v })}
         />
       </MField>
 
-      {nsfw.mode !== 'block' && (
-        <MSlider label={t('mobile.settings.modelparams.nsfw_intensity')} desc={t('mobile.settings.modelparams.nsfw_intensity_desc')}
-          value={nsfw.intensity} min={0} max={1} step={0.05}
-          onChange={(v) => updateNsfw({ intensity: v })} />
-      )}
-
-      <MField label={t('mobile.settings.modelparams.nsfw_extra_prompt')} desc={t('mobile.settings.modelparams.nsfw_extra_prompt_desc')}>
-        <input className="pl-input" value={nsfw.extra_prompt}
-          onChange={(e) => updateNsfw({ extra_prompt: e.target.value })}
-          placeholder="All characters must be 18+" />
-      </MField>
-
-      {/* Mirostat */}
-      <div className="pl-setrow">
-        <div className="pl-setrow-tx"><strong>{t('mobile.settings.modelparams.mirostat')}</strong><span>{t('mobile.settings.modelparams.mirostat_desc')}</span></div>
-        <Toggle on={advanced} onChange={setAdvanced} />
-      </div>
-      {advanced && (
+      {nsfw.mode === 'none' ? (
+        <div style={{ fontSize: 12, color: 'var(--muted)', lineHeight: 1.6 }}>
+          {t('mobile.settings.modelparams.nsfw_none_hint')}
+        </div>
+      ) : (
         <>
-          <MField label={t('mobile.settings.modelparams.mirostat_mode')}>
-            <Seg options={[['off',t('mobile.settings.modelparams.mirostat_off')],['v1','v1'],['v2','v2']]} value={params.mirostat_mode}
-              onChange={(v) => u('mirostat_mode', v)} />
+          {/* 强度实际是二值语义(后端按 >0.5 二选一措辞) → 分段按钮而非滑块;写规范值 0/1 */}
+          {nsfw.mode !== 'block' && (
+            <MField label={t('mobile.settings.modelparams.nsfw_intensity')} desc={t('mobile.settings.modelparams.nsfw_intensity_desc')}>
+              <Seg
+                options={[['low',t('mobile.settings.modelparams.nsfw_intensity_low')],['high',t('mobile.settings.modelparams.nsfw_intensity_high')]]}
+                value={nsfw.intensity > 0.5 ? 'high' : 'low'}
+                onChange={(v) => updateNsfw({ intensity: v === 'high' ? 1 : 0 })} />
+            </MField>
+          )}
+
+          <MField label={t('mobile.settings.modelparams.nsfw_extra_prompt')} desc={t('mobile.settings.modelparams.nsfw_extra_prompt_desc')}>
+            <input className="pl-input" value={nsfw.extra_prompt}
+              onChange={(e) => updateNsfw({ extra_prompt: e.target.value })}
+              placeholder="All characters must be 18+" />
           </MField>
-          <MSlider label="Mirostat τ (tau)" desc={t('mobile.settings.modelparams.mirostat_tau_desc')}
-            value={params.mirostat_tau} min={0} max={10} step={0.1}
-            onChange={(v) => u('mirostat_tau', v)} />
-          <MSlider label="Mirostat η (eta)" desc={t('mobile.settings.modelparams.mirostat_eta_desc')}
-            value={params.mirostat_eta} min={0} max={1} step={0.01}
-            onChange={(v) => u('mirostat_eta', v)} />
         </>
       )}
+
+      {/* Mirostat 控件已整段移除(2026-09):平台从加载起就没有任何后端读者,且 OpenAI 兼容
+          协议不透传 mirostat 字段 —— 「对部分本地模型有效」的旧文案不成立。历史存过 mirostat_*
+          偏好的键仍在库里,无任何效果。i18n 键(mirostat*)保留,便于将来接原生直连通道复用。 */}
 
       {/* JSON 预览 */}
       <div style={{ marginTop: 8 }}>
@@ -194,20 +199,40 @@ function ModelParamsSection() {
           <Icon name={showJson ? 'chevron_up' : 'chevron_down'} size={14} /> {showJson ? t('mobile.settings.common.collapse') : t('mobile.settings.modelparams.view_json')}
         </button>
         {showJson && (
-          <pre className="quote mono" style={{ fontSize: 11, marginTop: 8, overflowX: 'auto' }}>
-            {JSON.stringify({
+          <div>
+            {/* 按真正去向分组,而不是一个扁平 JSON —— 见桌面端同处的说明。 */}
+            <MobilePreviewGroup title={t('mobile.settings.modelparams.preview_sent')} note={t('mobile.settings.modelparams.preview_sent_note')} data={{
               temperature: params.temperature, top_p: params.top_p, top_k: params.top_k,
               repetition_penalty: params.repetition_penalty, frequency_penalty: params.frequency_penalty,
-              presence_penalty: params.presence_penalty, max_tokens: params.max_tokens,
-              context_size: params.context_size, seed: params.seed,
+              presence_penalty: params.presence_penalty,
+              seed: params.seed >= 0 ? params.seed : null,
               stop: params.stop.split('|').filter(Boolean),
-              nsfw: nsfw.mode==='block' ? null : { mode:nsfw.mode, intensity:nsfw.intensity, extra:nsfw.extra_prompt },
-              ...(advanced ? { mirostat_mode:params.mirostat_mode, mirostat_tau:params.mirostat_tau, mirostat_eta:params.mirostat_eta } : {}),
-            }, null, 2)}
-          </pre>
+            }} />
+            <MobilePreviewGroup title={t('mobile.settings.modelparams.preview_local')} data={{
+              max_tokens: params.max_tokens, context_size: params.context_size,
+            }} />
+            <MobilePreviewGroup title={t('mobile.settings.modelparams.preview_prompt')} data={{
+              mode: nsfw.mode, intensity: nsfw.intensity, extra_prompt: nsfw.extra_prompt,
+            }} />
+          </div>
         )}
       </div>
     </>
+  );
+}
+
+/* 预览里的一个分组(标题 + 该组 JSON)。分组与桌面端 components/settings/modelparams-section.jsx
+   的 PreviewGroup 同构:同一页参数的去向不同(发请求 / 改本站行为 / 走提示词 / 不适用),
+   混在一个 JSON 里会让人以为它们都会发给模型。 */
+function MobilePreviewGroup({ title, data, note }) {
+  return (
+    <div style={{ marginTop: 8 }}>
+      <div className="mono" style={{ fontSize: 11, color: 'var(--muted-2)', marginBottom: 4 }}>{title}</div>
+      <pre className="quote mono" style={{ fontSize: 11, marginTop: 0, overflowX: 'auto' }}>
+        {JSON.stringify(data, null, 2)}
+      </pre>
+      {note ? <div style={{ fontSize: 11, color: 'var(--muted-2)', marginTop: 4 }}>{note}</div> : null}
+    </div>
   );
 }
 

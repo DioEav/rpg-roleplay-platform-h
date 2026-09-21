@@ -6,12 +6,16 @@ import { useAutoSave } from '../../platform-app.jsx';
 import { readScopedPref, readNumberPref } from '../../lib/prefs.js';
 import { SetGroup, SetRow, SetSelect } from './shared.jsx';
 import CSSpaceBetween from '@cloudscape-design/components/space-between';
+import CSBox from '@cloudscape-design/components/box';
 import CSInput from '@cloudscape-design/components/input';
 import CSButton from '@cloudscape-design/components/button';
 import CSToggle from '@cloudscape-design/components/toggle';
 
-const MODEL_PARAM_DEFAULTS = {
-  temperature: 0.78,
+// 内容尺度档位白名单 —— 必须与后端 agents/gm/content_policy.MODES 一字不差。
+// 漏一档的后果不是"显示不对"而是"行为与显示不一致":存过该档的用户下次打开会被静默换档。
+const NSFW_MODES = ["block", "soft", "open", "explicit", "none"];
+
+const MODEL_PARAM_DEFAULTS = {  temperature: 0.78,
   top_p: 0.92,
   top_k: 40,
   repetition_penalty: 1.15,
@@ -93,7 +97,6 @@ function ModelParamsSection() {
   }, []);
   const showReasoningEffort = selectedModelCaps.includes("reasoning");
   const [params, setParams] = useStatePL(MODEL_PARAM_DEFAULTS);
-  const [advanced, setAdvanced] = useStatePL(false);
   useEffectPL(() => {
     let cancelled = false;
     (async () => {
@@ -112,13 +115,22 @@ function ModelParamsSection() {
         const nextPreset = String(readScopedPref(prefs, "preset", "balanced") || "balanced");
         if (PRESETS.some((p) => p.key === nextPreset)) setPreset(nextPreset);
         setParams(nextParams);
-        setAdvanced(nextParams.mirostat_mode !== "off");
 
         const legacyNsfw = readScopedPref(prefs, "nsfw", null) || {};
-        const nsfwMode = String(readScopedPref(prefs, "nsfw_mode", legacyNsfw.mode || "soft") || "soft");
+        // 档位归一与后端 content_policy.resolve_content_policy 同规则(认不出的值一律不放宽):
+        //   · 整组三个键都没设过 → none:「不介入」是当前真实行为(后端什么都不发)
+        //   · 设过但没写 mode     → soft:界面历史上的显示默认
+        //   · 写了 mode 但认不出  → none:绝不假装某个档位在生效
+        const nsfwGroupTouched =
+          ["nsfw_mode", "nsfw_intensity", "nsfw_extra_prompt"].some((k) => readScopedPref(prefs, k, undefined) !== undefined)
+          || Object.keys(legacyNsfw).length > 0;
+        const rawNsfwMode = String(readScopedPref(prefs, "nsfw_mode", legacyNsfw.mode ?? "") ?? "").trim().toLowerCase();
+        const nsfwMode = NSFW_MODES.includes(rawNsfwMode)
+          ? rawNsfwMode
+          : (rawNsfwMode ? "none" : (nsfwGroupTouched ? "soft" : "none"));
         const nsfwIntensity = Number(readScopedPref(prefs, "nsfw_intensity", legacyNsfw.intensity ?? 0.5));
         setNsfw({
-          mode: ["block", "soft", "open", "explicit"].includes(nsfwMode) ? nsfwMode : "soft",
+          mode: nsfwMode,
           intensity: Number.isFinite(nsfwIntensity) ? nsfwIntensity : 0.5,
           extra_prompt: String(readScopedPref(prefs, "nsfw_extra_prompt", legacyNsfw.extra_prompt || legacyNsfw.extra || "") || ""),
         });
@@ -279,66 +291,85 @@ function ModelParamsSection() {
           <CSButton variant={nsfw.mode === "soft" ? "primary" : "normal"} onClick={() => updateNsfw({ mode: "soft" })}>{t('settings.modelparams.nsfw_soft')}</CSButton>
           <CSButton variant={nsfw.mode === "open" ? "primary" : "normal"} onClick={() => updateNsfw({ mode: "open" })}>{t('settings.modelparams.nsfw_open')}</CSButton>
           <CSButton variant={nsfw.mode === "explicit" ? "primary" : "normal"} onClick={() => updateNsfw({ mode: "explicit" })}>{t('settings.modelparams.nsfw_explicit')}</CSButton>
+          {/* 第 5 档:平台完全不介入 —— 不发提示词块,也不动 provider 的安全过滤,
+              GM 内容完全由模型默认决定(所以适用于任何模型)。也是「从未设置过」的默认语义。 */}
+          <CSButton variant={nsfw.mode === "none" ? "primary" : "normal"} onClick={() => updateNsfw({ mode: "none" })}>{t('settings.modelparams.nsfw_none')}</CSButton>
         </CSSpaceBetween>
       </SetRow>
 
-      {nsfw.mode !== "block" && (
-        <ParamSlider label={t('settings.modelparams.nsfw_intensity')} desc={t('settings.modelparams.nsfw_intensity_desc')}
-          value={nsfw.intensity} min={0} max={1} step={0.05} unit=""
-          onChange={(v) => updateNsfw({ intensity: v })} />
-      )}
-
-      <SetRow label={t('settings.modelparams.nsfw_extra')} description={t('settings.modelparams.nsfw_extra_desc')}>
-        <CSInput value={nsfw.extra_prompt}
-          onChange={({ detail }) => updateNsfw({ extra_prompt: detail.value })}
-          placeholder="All characters must be 18+ · No extreme gore" />
-      </SetRow>
-
-      <SetRow label={t('settings.modelparams.mirostat')} description={t('settings.modelparams.mirostat_desc')}>
-        <CSToggle checked={advanced} onChange={({ detail }) => setAdvanced(detail.checked)}>
-          {advanced ? t('settings.modelparams.mirostat_on') : t('settings.modelparams.mirostat_off')}
-        </CSToggle>
-      </SetRow>
-
-      {advanced && (
+      {nsfw.mode === "none" ? (
+        <CSBox color="text-body-secondary" fontSize="body-s">{t('settings.modelparams.nsfw_none_hint')}</CSBox>
+      ) : (
         <>
-          <SetRow label={t('settings.modelparams.mirostat_mode')} description={t('settings.modelparams.mirostat_mode_desc')}>
-            <CSSpaceBetween direction="horizontal" size="xs">
-              {["off", "v1", "v2"].map(m => (
-                <CSButton key={m} variant={params.mirostat_mode === m ? "primary" : "normal"}
-                  onClick={() => u("mirostat_mode", m)}>{m === "off" ? t('settings.modelparams.mirostat_off_btn') : m}</CSButton>
-              ))}
-            </CSSpaceBetween>
+          {/* 强度实际是二值语义(后端按 >0.5 二选一措辞),用滑块会让人以为 0.3/0.45 有区别。
+              按钮写规范值 0/1;历史存值按同一阈值自动落到对应按钮。 */}
+          {nsfw.mode !== "block" && (
+            <SetRow label={t('settings.modelparams.nsfw_intensity')} description={t('settings.modelparams.nsfw_intensity_desc')}>
+              <CSSpaceBetween direction="horizontal" size="xs">
+                <CSButton variant={nsfw.intensity > 0.5 ? "normal" : "primary"} onClick={() => updateNsfw({ intensity: 0 })}>{t('settings.modelparams.nsfw_intensity_low')}</CSButton>
+                <CSButton variant={nsfw.intensity > 0.5 ? "primary" : "normal"} onClick={() => updateNsfw({ intensity: 1 })}>{t('settings.modelparams.nsfw_intensity_high')}</CSButton>
+              </CSSpaceBetween>
+            </SetRow>
+          )}
+
+          <SetRow label={t('settings.modelparams.nsfw_extra')} description={t('settings.modelparams.nsfw_extra_desc')}>
+            <CSInput value={nsfw.extra_prompt}
+              onChange={({ detail }) => updateNsfw({ extra_prompt: detail.value })}
+              placeholder="All characters must be 18+ · No extreme gore" />
           </SetRow>
-          <ParamSlider label="Mirostat τ (tau)" desc="Target perplexity; 5 is a common value" value={params.mirostat_tau} min={0} max={10} step={0.1} unit="" onChange={(v) => u("mirostat_tau", v)} />
-          <ParamSlider label="Mirostat η (eta)" desc="Learning rate" value={params.mirostat_eta} min={0} max={1} step={0.01} unit="" onChange={(v) => u("mirostat_eta", v)} />
         </>
       )}
 
+      {/* Mirostat 控件已整段移除(2026-09):它在平台从加载起就没有任何后端读者,且 OpenAI 兼容
+          协议不透传 mirostat 字段 —— 界面曾经承诺「对部分本地模型有效」是不成立的(本地模型也走
+          OpenAI 兼容层)。历史存过 mirostat_* 偏好的用户:键仍在库里,无任何效果,无需清理。
+          若将来接 llama.cpp / Ollama 原生直连通道,i18n 键(mirostat*)仍保留可复用。 */}
+
       <SetRow label={t('settings.modelparams.preview_json')} description={t('settings.modelparams.preview_json_desc')}>
-        <pre className="mono" style={{
-          margin: 0, padding: "10px 12px",
-          background: "var(--bg-deep)", border: "1px solid var(--line-soft)",
-          borderRadius: "var(--r-2)", fontSize: 11, lineHeight: 1.6, color: "var(--text-quiet)",
-          overflow: "auto", maxHeight: 180,
-        }}>
-{JSON.stringify({
-  temperature: params.temperature,
-  top_p: params.top_p,
-  top_k: params.top_k,
-  repetition_penalty: params.repetition_penalty,
-  frequency_penalty: params.frequency_penalty,
-  presence_penalty: params.presence_penalty,
-  max_tokens: params.max_tokens,
-  context_size: params.context_size,
-  seed: params.seed,
-  stop: params.stop.split("|").filter(Boolean),
-  nsfw: nsfw.mode === "block" ? null : { mode: nsfw.mode, intensity: nsfw.intensity, extra: nsfw.extra_prompt },
-  ...(advanced ? { mirostat_mode: params.mirostat_mode, mirostat_tau: params.mirostat_tau, mirostat_eta: params.mirostat_eta } : {})
-}, null, 2)}
-        </pre>
+        <div>
+          {/* 分组不是装饰:同一页里的参数去向完全不同 —— 有的真进请求体,有的只改本站行为,
+              有的走提示词,还有的在本架构里根本没有通道。此前一个扁平 JSON 把它们混在一起,
+              配上「发送给 API 的实际采样参数」这句说明,等于对用户撒谎。 */}
+          <PreviewGroup title={t('settings.modelparams.preview_sent')} note={t('settings.modelparams.preview_sent_note')} data={{
+            temperature: params.temperature,
+            top_p: params.top_p,
+            top_k: params.top_k,
+            repetition_penalty: params.repetition_penalty,
+            frequency_penalty: params.frequency_penalty,
+            presence_penalty: params.presence_penalty,
+            seed: params.seed >= 0 ? params.seed : null,
+            stop: params.stop.split("|").filter(Boolean),
+          }} />
+          <PreviewGroup title={t('settings.modelparams.preview_local')} data={{
+            max_tokens: params.max_tokens,
+            context_size: params.context_size,
+            request_timeout: reqTimeout,
+          }} />
+          <PreviewGroup title={t('settings.modelparams.preview_prompt')} data={{
+            mode: nsfw.mode,
+            intensity: nsfw.intensity,
+            extra_prompt: nsfw.extra_prompt,
+          }} />
+        </div>
       </SetRow>
     </SetGroup>
+  );
+}
+
+function PreviewGroup({ title, data, note }) {
+  return (
+    <div style={{ marginBottom: 10 }}>
+      <div className="mono" style={{ fontSize: 11, color: "var(--text-quiet)", marginBottom: 4 }}>{title}</div>
+      <pre className="mono" style={{
+        margin: 0, padding: "10px 12px",
+        background: "var(--bg-deep)", border: "1px solid var(--line-soft)",
+        borderRadius: "var(--r-2)", fontSize: 11, lineHeight: 1.6, color: "var(--text-quiet)",
+        overflow: "auto", maxHeight: 180,
+      }}>
+{JSON.stringify(data, null, 2)}
+      </pre>
+      {note ? <div style={{ fontSize: 11, color: "var(--text-quiet)", marginTop: 4 }}>{note}</div> : null}
+    </div>
   );
 }
 
