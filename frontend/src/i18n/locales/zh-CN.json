@@ -7447,6 +7447,8 @@
     "popover_loading": "加载模型中…",
     "popover_no_match": "没有匹配「{{query}}」的模型",
     "popover_no_models": "没有可用模型（先配 API key）",
+    "popover_no_models_for_provider": "没有可用模型 —— 你的 key 对应的供应商当前没有可显示的模型（可能已在模型管理隐藏、目录为空或尚未同步）。可切换其它供应商，或到 设置 → 模型管理 检查/同步。",
+    "syncing_hint": "正在同步最新模型列表…",
     "popover_search_placeholder": "搜索模型…",
     "price_free": "免费",
     "provider_empty": "还没配 API key",

@@ -25,7 +25,11 @@ const _SNAPSHOT_KEY = 'agent_picker_snapshot_v1';
 let _shared = null;    // { ts, models, creds, prefs } — 最近一次成功结果(内存)
 let _inflight = null;  // 进行中的共享拉取(single-flight)
 
-function _snapshotFresh(s) { return !!s && (Date.now() - s.ts) < _PICKER_TTL_MS; }
+function _snapshotFresh(s) {
+  // 只有「完整」快照(目录+凭据都成功)才允许充当新鲜数据 —— 残缺快照(models 腿失败)
+  // 若被当作新鲜,会让选择器拿着空目录空转 5 分钟还显示误导文案。
+  return !!s && s.models != null && s.creds != null && (Date.now() - s.ts) < _PICKER_TTL_MS;
+}
 function _readLocalSnapshot() {
   try {
     const s = lsGetJSON(_SNAPSHOT_KEY);
@@ -43,8 +47,13 @@ async function _fetchShared() {
   ]);
   if (!models && !creds) throw new Error('model catalog & credentials unavailable');
   const snap = { ts: Date.now(), models, creds, prefs: (profile && profile.preferences) || {} };
-  _shared = snap;
-  if (models && creds) { try { lsSetJSON(_SNAPSHOT_KEY, snap); } catch (_) {} }  // 部分失败不落盘
+  // 只有【完整】结果(目录+凭据都成功)才允许进内存/LocaStorage 快照 —— 残缺结果一旦被
+  // _snapshotFresh 当成新鲜,选择器会拿着空目录空转整个 TTL 还显示误导文案。部分结果
+  // 仍然返回给调用方上屏(有多少画多少),但下一次挂载会重新拉取。
+  if (models && creds) {
+    _shared = snap;
+    try { lsSetJSON(_SNAPSHOT_KEY, snap); } catch (_) {}
+  }
   return snap;
 }
 
@@ -187,6 +196,7 @@ export default function AgentModelPicker({
   const [popQuery, setPopQuery] = useState('');       // popover 搜索词
   const [loaded, setLoaded] = useState(false);        // 模型/凭据首拉是否完成(区分「加载中」与「真的没模型」)
   const [loadError, setLoadError] = useState(false);  // 目录+凭据【双双】拉取失败 → 错误态+重试(不再假扮"没配 key")
+  const [syncing, setSyncing] = useState(false);      // stale 快照已上屏、后台校真进行中 → 提示"列表可能马上更新"
   const popRef = useState(() => React.createRef())[0];
   const popTriggerRef = useState(() => React.createRef())[0];
 
@@ -321,20 +331,28 @@ export default function AgentModelPicker({
         // 先画快照并置 loaded —— 表单立即用 stale 数据上屏(这就是"即时上屏"),
         // 后台校真完成后 applyData(authoritative) 平滑更新到最新。
         setLoaded(true);
+        setSyncing(true);   // stale 在屏 → 挂"同步中"提示,校真结束(成败皆)摘除
         applyData(cached.models, cached.creds, cached.prefs, { authoritative: false });
       }
       if (_shared && _snapshotFresh(_shared)) {
-        if (!cancelled) { setLoaded(true); setLoadError(false); }
+        if (!cancelled) { setLoaded(true); setLoadError(false); setSyncing(false); }
         return;
       }
       try {
         const s = await _getShared();
         if (cancelled) return;
+        setSyncing(false);
+        if (!s.models) {
+          // 目录这一腿失败(凭据可能成功):诚实地进错误态+重试,而不是拿着空目录
+          // 显示「没有可显示的模型」—— 那会把"加载不完整"伪装成"供应商没模型"。
+          setLoadError(true);
+          return;
+        }
         setLoadError(false);
         applyData(s.models, s.creds, s.prefs, { authoritative: true });
       } catch (_) {
         // 有 stale 快照在屏就不吓用户(后台刷新失败,保留旧画面);从零失败才亮错误态
-        if (!cancelled && !cached) setLoadError(true);
+        if (!cancelled) { if (!cached) setLoadError(true); setSyncing(false); }
       } finally {
         if (!cancelled) setLoaded(true);
       }
@@ -569,6 +587,9 @@ export default function AgentModelPicker({
           </div>
         </CSFormField>
       </CSColumnLayout>
+      {syncing && (
+        <div className="muted-2" style={{ fontSize: 11, padding: '2px 0' }}>{t('agent_picker.syncing_hint')}</div>
+      )}
     </>
   );
 
@@ -673,7 +694,8 @@ export default function AgentModelPicker({
               loadError ? t('agent_picker.load_failed')
                 : !loaded ? t('agent_picker.popover_loading')
                 : q ? t('agent_picker.popover_no_match', { query: popQuery })
-                : t('agent_picker.popover_no_models')
+                : credApiIds.size === 0 ? t('agent_picker.popover_no_models')
+                : t('agent_picker.popover_no_models_for_provider')
             }</li>
           )}
           {filtered.map((m) => {
@@ -718,6 +740,11 @@ export default function AgentModelPicker({
               </li>
             );
           })}
+          {syncing && (
+            <li className="amp-pop-empty" style={{ padding: '4px 10px', fontSize: 11.5 }}>
+              {t('agent_picker.syncing_hint')}
+            </li>
+          )}
         </ul>
       </div>
     );

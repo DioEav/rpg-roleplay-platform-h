@@ -7450,6 +7450,8 @@
     "popover_loading": "Loading models…",
     "popover_no_match": "No models matching \"{{query}}\"",
     "popover_no_models": "No models available (configure an API key first)",
+    "popover_no_models_for_provider": "No models available — the providers your keys belong to currently show no models (they may be hidden in Model Management, the catalog is empty, or a sync has not run yet). Switch providers, or check/sync under Settings → Model Management.",
+    "syncing_hint": "Syncing the latest model list…",
     "popover_search_placeholder": "Search models…",
     "price_free": "Free",
     "provider_empty": "No API key configured",

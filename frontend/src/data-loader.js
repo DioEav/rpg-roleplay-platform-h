@@ -163,7 +163,7 @@ async function hydratePlatform() {
   const platform = deepCopy(baseline().platform);
   let authed = false;
   try {
-    const me = await window.api.auth.me();
+    const me = await _timed('auth.me', () => window.api.auth.me());
     if (me && me.user) {
       authed = true;
       // base:同一 P0 根修的配套加固 —— baseline().platform 兜底为 {} 后 platform.user
@@ -192,7 +192,7 @@ async function hydratePlatform() {
   }
   // 匿名(含 auth/me 失败)也拉 platform.info:本地模式下它对匿名可用(database/stats 展示)。
   try {
-    mergePlatformInfo(platform, await window.api.platform.info());
+    mergePlatformInfo(platform, await _timed('platform.info', () => window.api.platform.info()));
   } catch (e) { /* keep baseline */ }
   // 未登录就别打需要登录的业务接口：/api/scripts、/api/saves、/api/library
   // 这些在匿名访问下必 401，DevTools 控制台会刷红，影响审计噪音和登录页体验。
@@ -244,16 +244,24 @@ function mergePlatformInfo(platform, info) {
   if (info.stats) platform.stats = { ...platform.stats, ...info.stats };
 }
 
+async function _timed(label, fn) {
+  const t0 = performance.now();
+  try {
+    return await Promise.resolve().then(fn).catch(() => null);
+  } finally {
+    try { console.info(`[data-loader] ${label} ${Math.round(performance.now() - t0)}ms`); } catch (_) {}
+  }
+}
+
 /** 登录用户的三份业务列表:并行拉取 + 形态归一 + 失败各自落空数组(互不拖垮)。
  *  契约:**永不 reject**,且任一列表的负载畸形(非数组/含 null 项)只让它自己落空 ——
  *  三份列表的归一逐项独立 try/catch,坏一份不拖垮另外两份(与旧版逐段 try/catch 同语义)。
  *  抽成纯函数便于单测并发性与隔离性(hydratePlatform 所在模块 import 即自动 bootstrap)。 */
 export async function fetchUserLists(api) {
-  const call = (fn) => Promise.resolve().then(fn).catch(() => null);
   const [scripts, saves, lib] = await Promise.all([
-    call(() => api.scripts.list()),
-    call(() => api.saves.list()),
-    call(() => api.library.list({ path: "" })),
+    _timed('scripts.list', () => api.scripts.list()),
+    _timed('saves.list', () => api.saves.list()),
+    _timed('library.list', () => api.library.list({ path: "" })),
   ]);
   // 单份列表的归一:raw 兼容 数组 / {items} / {命名键};非数组或含 null 项一律剔除。
   const toObjects = (raw, keys) => {
