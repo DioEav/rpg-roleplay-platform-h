@@ -128,6 +128,57 @@ def _format_tools_for_prompt(tools: list[dict[str, Any]]) -> str:
     return "\n".join(lines)
 
 
+_MARKER_NAME_KEYS = ("tool", "name", "tool_name", "function_name")
+_MARKER_ARG_KEYS = ("arguments", "args", "parameters", "params", "input")
+_MARKER_FORMAT = '<<TOOL_CALL>>{"server_id":"...","tool":"...","arguments":{...}}<<END_TOOL_CALL>>'
+
+
+def parse_tool_marker(raw: str, tools: list[dict[str, Any]] | None = None) -> tuple[str, str, dict[str, Any]]:
+    """<<TOOL_CALL>> 里的 JSON → (server_id, tool, arguments)。解析不了抛 ValueError(信息给模型看)。
+
+    约定格式是 {"server_id","tool","arguments"},但模型没被告知或记混时,常写成 OpenAI 的
+    {"name","arguments"} / {"function":{"name","arguments"}}、或把清单里的 `server/tool` 整个塞进
+    tool。以前只认 tool 字段 → 工具名为空 → 助手面板一排「未知工具」,模型收到的报错也不说缺什么,
+    就一直重试(群反馈截图:ui_describe / ask_user_choice 参数都对,名字全丢)。
+    """
+    # 函数内导入,理由同 _openai_text_marker_loop
+    from agents.gm.backends._dsml import resolve_tool_ref
+
+    data = json.loads((raw or "").strip())
+    if not isinstance(data, dict):
+        raise ValueError("工具调用必须是一个 JSON 对象")
+    fn = data.get("function")
+    if isinstance(fn, dict):
+        data = {**fn, **{k: v for k, v in data.items() if k != "function"}}
+    elif isinstance(fn, str) and "name" not in data:
+        data = {**data, "name": fn}
+    name = next((str(data[k]).strip() for k in _MARKER_NAME_KEYS
+                 if isinstance(data.get(k), str) and data[k].strip()), "")
+    if not name:
+        raise ValueError(f"缺少工具名(tool 字段)。格式:{_MARKER_FORMAT}")
+    args: Any = next((data[k] for k in _MARKER_ARG_KEYS if data.get(k) not in (None, "")), {})
+    if isinstance(args, str):
+        try:
+            args = json.loads(args)
+        except Exception:
+            args = {}
+    if not isinstance(args, dict):
+        args = {}
+    server_id = str(data.get("server_id") or data.get("server") or "").strip()
+    if not server_id:
+        server_id, name = resolve_tool_ref(name, tools)
+    else:
+        for sep in ("/", "__"):
+            if name.startswith(server_id + sep):
+                name = name[len(server_id) + len(sep):]
+                break
+    return server_id, name, args
+
+
+def _marker_retry_hint(exc: Exception) -> str:
+    return f"【系统】上一条工具调用无法执行:{exc}。请按 {_MARKER_FORMAT} 重新生成,或放弃工具调用。"
+
+
 def _openai_text_marker_loop(
     backend, system, messages, mcp_tools, max_iterations, max_tokens, mcp_call,
 ) -> Iterator[dict[str, Any]]:
@@ -185,16 +236,11 @@ def _openai_text_marker_loop(
                 in_tool = False
                 tool_invoked = True
                 try:
-                    tool_data = json.loads(tool_json_raw.strip())
-                    server_id = str(tool_data.get("server_id", ""))
-                    tool_name = str(tool_data.get("tool", ""))
-                    arguments = tool_data.get("arguments") or {}
-                    if not isinstance(arguments, dict):
-                        arguments = {}
+                    server_id, tool_name, arguments = parse_tool_marker(tool_json_raw, mcp_tools)
                 except Exception as exc:
-                    yield {"type": "tool_error", "error": f"工具调用 JSON 解析失败: {exc}", "raw": tool_json_raw[:200]}
+                    yield {"type": "tool_error", "error": f"工具调用解析失败: {exc}", "raw": tool_json_raw[:200]}
                     messages.append({"role": "assistant", "content": accumulated_text + START + tool_json_raw + END})
-                    messages.append({"role": "user", "content": "【系统】上一条工具调用 JSON 解析失败，请重新生成或放弃工具调用。"})
+                    messages.append({"role": "user", "content": _marker_retry_hint(exc)})
                     accumulated_text = ""
                     break
                 yield {"type": "tool_call", "server_id": server_id, "tool": tool_name, "arguments": arguments}

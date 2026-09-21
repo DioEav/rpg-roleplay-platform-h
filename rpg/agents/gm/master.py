@@ -7,7 +7,12 @@ from pathlib import Path
 from typing import Any
 
 from agents.gm.backends import _AnthropicBackend, _OpenAICompatBackend, _VertexBackend
-from agents.gm.helpers import _anthropic_curator_tool_use, _format_tools_for_prompt
+from agents.gm.helpers import (
+    _anthropic_curator_tool_use,
+    _format_tools_for_prompt,
+    _marker_retry_hint,
+    parse_tool_marker,
+)
 from core.logging import get_logger
 
 log = get_logger(__name__)
@@ -925,21 +930,16 @@ class GameMaster:
                     in_tool = False
                     tool_invoked = True
                     try:
-                        tool_data = json.loads(tool_json_raw.strip())
-                        server_id = str(tool_data.get("server_id", ""))
-                        tool_name = str(tool_data.get("tool", ""))
-                        arguments = tool_data.get("arguments") or {}
-                        if not isinstance(arguments, dict):
-                            arguments = {}
+                        server_id, tool_name, arguments = parse_tool_marker(tool_json_raw, tools)
                     except Exception as exc:
                         yield {
                             "type": "tool_error",
-                            "error": f"工具调用 JSON 解析失败: {exc}",
+                            "error": f"工具调用解析失败: {exc}",
                             "raw": tool_json_raw[:200],
                         }
-                        # 失败也插回一条 user 消息，让 GM 自纠
+                        # 失败也插回一条 user 消息，让 GM 自纠(带上缺什么,不然模型只会原样重试)
                         messages.append({"role": "assistant", "content": accumulated_text + START + tool_json_raw + END})
-                        messages.append({"role": "user", "content": "【系统】上一条工具调用 JSON 解析失败，请重新生成或放弃工具调用。"})
+                        messages.append({"role": "user", "content": _marker_retry_hint(exc)})
                         accumulated_text = ""
                         break
                     yield {

@@ -662,10 +662,15 @@ class _OpenAICompatBackend:
                     "type": "tool_call", "server_id": server_id,
                     "tool": tool_name, "arguments": args,
                 }
-                try:
-                    result = mcp_call(server_id, tool_name, args)
-                except Exception as exc:
-                    result = {"ok": False, "error": f"call_tool 异常: {exc}"}
+                if not tool_name:
+                    # 个别中转站流式回传 tool_calls 时丢了 function.name。别拿空名去路由(只会得到
+                    # 一句「未知工具」,用户以为缺了什么要装),直接告诉模型缺的是名字。
+                    result = {"ok": False, "error": "这次工具调用没有工具名,未执行。请带上工具名重新调用。"}
+                else:
+                    try:
+                        result = mcp_call(server_id, tool_name, args)
+                    except Exception as exc:
+                        result = {"ok": False, "error": f"call_tool 异常: {exc}"}
                 yield {
                     "type": "tool_result", "ok": bool(result.get("ok")),
                     "result": result.get("result"), "error": result.get("error"),
