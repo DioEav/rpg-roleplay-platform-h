@@ -126,8 +126,15 @@ async def api_state_events(
                 try:
                     event = await _asyncio.wait_for(queue.get(), timeout=25.0)
                 except TimeoutError:
-                    # 25 秒没动静就发 keepalive,防 proxy 切连接
-                    yield f": keepalive {int(time.time())}\n\n"
+                    # 25 秒没动静就发 keepalive,防 proxy 切连接。
+                    # 用**具名事件**而不是 SSE 注释(`: keepalive`):EventSource 没有任何 API 能观察
+                    # 注释,而前端 watchdog 只认「收到过事件」→ 空闲连接每 45s 被判死强断重连,
+                    # 表现为日志里周期性重复的 GET /api/state_events。具名事件只多几个字节,
+                    # 不处理它的客户端照旧忽略:既保住防切流的作用,也让前端能当成存活信号。
+                    yield (
+                        "event: keepalive\n"
+                        f"data: {json.dumps({'ts': time.time()}, ensure_ascii=False)}\n\n"
+                    )
                     continue
                 yield f"event: state_change\ndata: {event.to_sse_data()}\n\n"
         finally:

@@ -208,6 +208,34 @@ def _reap_stuck_running(conn: psycopg.Connection) -> None:
         log.exception("[postproc] reap stuck-running failed")
 
 
+def _reap_stuck_images(conn: psycopg.Connection) -> None:
+    """回收永远到不了终态的 ai_images 行 —— 前端 2s 轮询的出口。
+
+    上面 _reap_stuck_running 只管 chat_postproc_tasks,而前端轮询的是 **ai_images 那一行**
+    (GET /api/images/{id} → status)。两边的回收范围不重合,于是这些情况会把记录永久留在
+    非终态:worker 被 kill / 服务重启后任务耗尽重试(队列行标 failed,图片行没人管)、
+    写 done 失败、取消检查查询失败。前端只认 done/failed/cancelled,记录不变就永远 2s 打一次
+    (用户报「界面关了,后端还在一直 GET /api/images/1」)。
+
+    两个阈值分开:已经进 generating 的不该拖过 15 分钟(实际耗时秒级,LLM 工具路径阻塞上限
+    90s),而 pending 可能只是队列积压,给 60 分钟。用 created_at(ai_images 没有 updated_at)。
+    幂等:只扫非终态行;update_image_record 另有 `status <> 'cancelled'` 守卫,取消不会被盖。
+    """
+    try:
+        n = conn.execute(
+            "UPDATE ai_images SET status='failed', "
+            "  error = CASE WHEN status = 'generating' "
+            "               THEN '生成超时未完成(worker 中断或服务重启),请重试' "
+            "               ELSE '任务长时间未处理,请重试' END "
+            "WHERE (status = 'generating' AND created_at < now() - interval '15 minutes') "
+            "   OR (status = 'pending'    AND created_at < now() - interval '60 minutes')"
+        ).rowcount
+        if n:
+            log.warning("[postproc] reaped %d stuck ai_images row(s) (marked failed)", n)
+    except Exception:
+        log.exception("[postproc] reap stuck ai_images failed")
+
+
 async def consume(conn: psycopg.Connection) -> None:
     """主循环:LISTEN/NOTIFY + 兜底 30s poll。autocommit 连接,每次 DML 单句提交。"""
     global _last_reap_at
@@ -215,12 +243,14 @@ async def consume(conn: psycopg.Connection) -> None:
     conn.execute("LISTEN chat_postproc_new")
     log.info("[postproc] worker ready, LISTEN chat_postproc_new")
     _reap_stuck_running(conn)  # 启动即回收上次崩溃残留的 running
+    _reap_stuck_images(conn)   # 同上:上次崩溃残留的 ai_images 非终态行
     _last_reap_at = _time.monotonic()
 
     while True:
         now = _time.monotonic()
         if now - _last_reap_at >= _REAP_INTERVAL:
             _reap_stuck_running(conn)
+            _reap_stuck_images(conn)
             _last_reap_at = _time.monotonic()
         # 不用 FOR UPDATE SKIP LOCKED — 认领路径已改为 _process_one 里的 CAS UPDATE...RETURNING。
         # SELECT 只是候选行扫描，实际认领由 CAS 原子完成；多 worker 同时读到同一行时，

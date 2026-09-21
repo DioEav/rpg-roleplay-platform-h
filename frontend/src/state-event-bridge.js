@@ -28,6 +28,7 @@
   let connectedAt = 0;
   let lastEventAt = 0;
   let watchdogTimer = null;
+  let reconnectTimer = null;
 
   const WATCHDOG_INTERVAL = 10_000;  // 每 10s 检查一次
   const WATCHDOG_TIMEOUT  = 45_000;  // 45s 无事件 → 强制重连
@@ -56,6 +57,7 @@
 
   function connect() {
     if (stopped) return;
+    cancelReconnect();   // 本次尝试接管排队的重连,避免叠加建连
     if (es) { try { es.close(); } catch (_) {} es = null; }
     try {
       es = new EventSource(URL, { withCredentials: true });
@@ -69,6 +71,11 @@
     es.addEventListener("hello", (ev) => {
       backoff = 1000;
       connectedAt = Date.now();
+      touchLastEvent();
+    });
+    // 后端每 25s 发一条具名 keepalive(此前是 SSE 注释,而 EventSource 观察不到注释)。
+    // 只更新时间戳,不派发任何 CustomEvent —— 它的唯一用途就是别让 watchdog 把空闲连接判死。
+    es.addEventListener("keepalive", () => {
       touchLastEvent();
     });
     es.addEventListener("state_change", (ev) => {
@@ -97,9 +104,19 @@
 
   function scheduleReconnect() {
     if (stopped) return;
+    // 去重 + 留 handle:error / watchdog / 构造失败三条路径都可能排重连,此前没有句柄能清,
+    // 于是切到后台(隐藏即断连)之后,排队中的那次仍会在隐藏标签页里把连接建回来。
+    if (reconnectTimer !== null) return;
     const delay = Math.min(30_000, backoff);
     backoff = Math.min(30_000, backoff * 2);
-    setTimeout(connect, delay);
+    reconnectTimer = setTimeout(() => {
+      reconnectTimer = null;
+      connect();
+    }, delay);
+  }
+
+  function cancelReconnect() {
+    if (reconnectTimer !== null) { clearTimeout(reconnectTimer); reconnectTimer = null; }
   }
 
   function start() {
@@ -111,6 +128,7 @@
   function stop() {
     stopped = true;
     stopWatchdog();
+    cancelReconnect();
     if (es) { try { es.close(); } catch (_) {} es = null; }
   }
 
@@ -119,6 +137,7 @@
     if (document.visibilityState === "hidden") {
       // 停连接但保留 stopped=false 让 visible 时自动重连
       stopWatchdog();
+      cancelReconnect();   // 排队中的重连也要清:否则它会在隐藏标签页里把连接建回来
       if (es) { try { es.close(); } catch (_) {} es = null; }
     } else if (document.visibilityState === "visible") {
       if (window.RPG_AUTH && window.RPG_AUTH.authed && !es && !stopped) {

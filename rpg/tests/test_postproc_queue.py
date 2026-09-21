@@ -394,5 +394,49 @@ class TestAsyncModeAppliesJsonOps(unittest.IsolatedAsyncioTestCase):
         mock_enqueue.assert_called_once()
 
 
+# ---------------------------------------------------------------------------
+# ai_images 回收(前端 2s 轮询的出口)
+# ---------------------------------------------------------------------------
+
+class TestReapStuckImages(unittest.TestCase):
+
+    def test_marks_both_non_terminal_states_with_separate_thresholds(self):
+        """回收器必须同时覆盖 generating / pending,且两者阈值分开。
+
+        上面 _reap_stuck_running 只管 chat_postproc_tasks,而前端轮询的是 **ai_images** 那一行
+        (GET /api/images/{id} → status)。范围不重合 → worker 被 kill / 服务重启后图片行没人管,
+        永远停在非终态,前端 2s 轮询没有任何出口(用户报「界面关了后端还在一直 GET /api/images/1」)。
+        """
+        from scripts.run_postproc_worker import _reap_stuck_images
+
+        conn = _make_db()
+        _reap_stuck_images(conn)
+
+        self.assertEqual(conn.execute.call_count, 1, "回收应是单条 UPDATE(幂等、一次往返)")
+        sql = str(conn.execute.call_args[0][0])
+        self.assertIn("ai_images", sql)
+        self.assertIn("status='failed'", sql)
+        # 只动非终态;cancelled 不能被回收器改写(update_image_record 另有 `status <> 'cancelled'` 守卫)
+        self.assertNotIn("cancelled", sql)
+        # 必须写可读的 error,前端会把 r.error 直接显示给用户
+        self.assertIn("error", sql.split("WHERE")[0])
+        # 两个阈值分开:已开始生成的不该拖过 15 分钟;pending 可能只是排队积压,给 60 分钟。
+        # (只在 WHERE 段里找,别被 CASE 里那个同名的 status = 'generating' 匹配上)
+        where = sql.split("WHERE", 1)[1]
+        self.assertRegex(where, r"status\s*=\s*'generating'[\s\S]*?interval\s*'15 minutes'")
+        self.assertRegex(where, r"status\s*=\s*'pending'[\s\S]*?interval\s*'60 minutes'")
+
+    def test_reap_is_wired_at_startup_and_periodically(self):
+        """回收必须挂进 worker 的启动 + 周期两条路径,否则等于没接。"""
+        from pathlib import Path
+        src = (Path(__file__).resolve().parents[1] / "scripts" / "run_postproc_worker.py").read_text(
+            encoding="utf-8"
+        )
+        self.assertGreaterEqual(
+            src.count("_reap_stuck_images(conn)"), 2,
+            "启动即回收 + 每 _REAP_INTERVAL 一次,两处都要调",
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

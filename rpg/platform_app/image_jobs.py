@@ -283,12 +283,19 @@ async def handle_image_gen(payload: dict[str, Any]) -> None:
             log.info("[image_jobs] image_id=%s 生图完成前已被用户取消,丢弃结果", image_id)
             return
     except Exception as _cexc:
-        log.warning("[image_jobs] cancel-check DB error image_id=%s, 跳过写回以防覆盖取消: %s", image_id, _cexc)
+        # 查不到状态 ≠ 用户取消。原来这里直接 return:记录会永久停在 generating,前端那个
+        # 2s 轮询没有任何出口(只认 done/failed/cancelled)。宁可标 failed 让用户看到「请重试」,
+        # 也不能把一个永远不会有结果的记录留在「生成中」。
+        log.warning("[image_jobs] cancel-check DB error image_id=%s: %s", image_id, _cexc)
+        _fail(image_id, "cancel_check_error: 无法确认任务状态,已按失败收尾")
         return
     try:
         update_image_record(image_id, "done", url=url)
     except Exception as exc:
-        log.warning("[image_jobs] update done failed image_id=%s: %s", image_id, exc)
+        # 同理:写 done 失败若只记日志,记录会永远停在 generating → 前端轮询永不结束。
+        log.exception("[image_jobs] update done failed image_id=%s", image_id)
+        _fail(image_id, f"update_done_error: {exc}")
+        return
 
     # 5b. 登记 user_assets（失败只 log，不影响生图结果）
     try:

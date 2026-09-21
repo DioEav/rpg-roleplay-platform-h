@@ -123,4 +123,56 @@ describe('useImageGeneration', () => {
     await act(async () => { await vi.advanceTimersByTimeAsync(10000); });
     expect(get.mock.calls.length).toBe(callsAfterGen); // 没有新增轮询
   });
+
+  /* ── 以下三条对应「后端一直在打 GET /api/images/N」的收口 ────────────────── */
+
+  it('cancelled 是终态:停止轮询并报错', async () => {
+    // 后端取消接口 / wait_for_image 都把 cancelled 当终态,前端此前只认 done/failed →
+    // 移动端取消过的图在桌面端会被永远 2s 轮询(状态不会再变)。后端写入的 error =「用户取消」。
+    const get = vi.fn(async () => ({ status: 'cancelled', error: '用户取消' }));
+    setApi({ generate: vi.fn(async () => ({ image_id: 'imgX' })), get });
+    const { result } = renderHook(() => useImageGeneration({}));
+    await act(async () => { await result.current.generate({ prompt: 'p' }, {}); });
+    await act(async () => { await vi.advanceTimersByTimeAsync(20000); });
+    expect(get).toHaveBeenCalledTimes(1);
+    expect(result.current.error).toBe('用户取消');
+    expect(result.current.generating).toBe(false);
+  });
+
+  it('僵尸回归:请求在途时 stop(),响应回来不得复活轮询链', async () => {
+    // 关闭弹窗/卸载发生在请求 in-flight 时:stop() 只 clearTimeout 清不到它,而响应回来时
+    // 陈旧守卫(此前只看 genIdRef)仍然通过 → 又挂上新的 timeout,链条活在一个已死组件的 ref 里,
+    // 之后再也无人能 stop。这正是「界面早关了,后端还在一直 GET」。
+    let resolveInflight = null;
+    let calls = 0;
+    const get = vi.fn(() => {
+      calls += 1;
+      if (calls === 1) return Promise.resolve({ status: 'pending' });
+      return new Promise((res) => { resolveInflight = res; });   // 第 2 次:挂住不回
+    });
+    setApi({ generate: vi.fn(async () => ({ image_id: 'imgZ' })), get });
+    const { result } = renderHook(() => useImageGeneration({}));
+    await act(async () => { await result.current.generate({ prompt: 'p' }, {}); });   // 第 1 次: pending
+    await act(async () => { await vi.advanceTimersByTimeAsync(2000); });             // 第 2 次: 发出并挂住
+    expect(get).toHaveBeenCalledTimes(2);
+
+    act(() => { result.current.stop(); });                                          // 关弹窗 / 卸载
+    await act(async () => { resolveInflight({ status: 'pending' }); });             // 迟到的响应
+
+    await act(async () => { await vi.advanceTimersByTimeAsync(60000); });
+    expect(get).toHaveBeenCalledTimes(2);   // 旧实现会在这里变成 3、4、5…
+  });
+
+  it('轮询超过上限必须停止并报错(兜住永远到不了终态的记录)', async () => {
+    const get = vi.fn(async () => ({ status: 'pending' }));
+    setApi({ generate: vi.fn(async () => ({ image_id: 'imgT' })), get });
+    const { result } = renderHook(() => useImageGeneration({}));
+    await act(async () => {
+      await result.current.generate({ prompt: 'p' }, { maxPollAttempts: 3 });
+    });
+    await act(async () => { await vi.advanceTimersByTimeAsync(30000); });
+    expect(get).toHaveBeenCalledTimes(3);
+    expect(result.current.error).toBe('生图超时:未能确认结果');
+    expect(result.current.generating).toBe(false);
+  });
 });
