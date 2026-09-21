@@ -2,7 +2,7 @@
 import React from 'react';
 import { useState as useStatePL, useEffect as useEffectPL } from 'react';
 import { useTranslation } from 'react-i18next';
-import AgentModelPicker from '../AgentModelPicker.jsx';
+import AgentModelPicker, { getSharedPickerPrefs } from '../AgentModelPicker.jsx';
 import { useAutoSave } from '../../platform-app.jsx';
 import { MODULES as AGENT_MODULES, MODULE_GROUPS, FEATURES as AGENT_FEATURES } from '../../agent-modules.js';
 import { SetGroup, SetRow } from './shared.jsx';
@@ -111,13 +111,15 @@ function ModuleModelsSection() {
   const platformVertexAllowed = !!(embedderStatus && embedderStatus.platform_fallback_available);
 
   // 一次性读取特性偏好(各开关初值),避免每个 FeatureToggle 各拉一次 profile。
+  // 走 AgentModelPicker 的共享快照 —— 与页内 16 个 picker 共用同一次拉取(此前这里单独
+  // 发一个重型 /api/me/profile,16 picker 又各发一个 = 17 个)。
   const [featPrefs, setFeatPrefs] = useStatePL({});
   useEffectPL(() => {
     let cancelled = false;
     (async () => {
       try {
-        const profile = await window.api.account.profile();
-        if (!cancelled && profile && profile.preferences) setFeatPrefs(profile.preferences);
+        const prefs = await getSharedPickerPrefs();
+        if (!cancelled && prefs) setFeatPrefs(prefs);
       } catch (_) {}
     })();
     return () => { cancelled = true; };
@@ -140,7 +142,9 @@ function ModuleModelsSection() {
         fallbackPrefix={mod.fallbackPrefix || null}
         platformVertexAllowed={mod.id === "embedder" ? platformVertexAllowed : false}
         variant="bare"
-        configHash="apis"
+        // 「去配 key」跳转目标 = 设置 → 模型管理。此前误写成 "apis"(「开发接口」文档页),
+        // 用户点按钮被带去一份 HTTP 接口表,与配 key 毫无关系(用户上报的症状 ②)。
+        configHash="settings-models"
       />
       {mod.id === 'embedder' && embedderStatus && (
         <div style={{ marginTop: 6 }}>

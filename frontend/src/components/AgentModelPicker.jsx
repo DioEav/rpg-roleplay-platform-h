@@ -10,6 +10,69 @@ import CSAlert from '@cloudscape-design/components/alert';
 import CSButton from '@cloudscape-design/components/button';
 import { credApiIdSet } from './catalog-helpers.js';
 import { plGoto } from '../router.js';
+import { lsGetJSON, lsSetJSON, lsRemove } from '../lib/storage.js';
+
+/* ── 共享数据快照:single-flight + 内存/localStorage stale-while-revalidate ─────
+   背景:模块模型页挂 16 个 picker,过去每个各自拉 profile + models + credentials
+   ≈ 49 请求/次进入(其中 17 个是重型的 /api/me/profile,内含 token_usage 聚合),
+   且前后端零缓存 → 每次进页白屏等待、已保存选择迟迟不上屏。
+   现在:N 个实例共用一次拉取(single-flight),成功结果存内存 + localStorage;
+   重新挂载先画快照(即时上屏),再按 TTL 决定是否后台校真。
+   只缓存目录元数据 / 哪些供应商配过 key 的布尔 / 模块→模型偏好 —— 不含任何密钥
+   (credentials.list 本身只回元数据,见 user_credentials.list_credentials)。 */
+const _PICKER_TTL_MS = 5 * 60 * 1000;
+const _SNAPSHOT_KEY = 'agent_picker_snapshot_v1';
+let _shared = null;    // { ts, models, creds, prefs } — 最近一次成功结果(内存)
+let _inflight = null;  // 进行中的共享拉取(single-flight)
+
+function _snapshotFresh(s) { return !!s && (Date.now() - s.ts) < _PICKER_TTL_MS; }
+function _readLocalSnapshot() {
+  try {
+    const s = lsGetJSON(_SNAPSHOT_KEY);
+    return (s && s.ts && s.models != null && s.creds != null) ? s : null;  // 坏档当没有
+  } catch (_) { return null; }
+}
+
+async function _fetchShared() {
+  // 逐项 catch:某一项失败不拖垮其它两项(与旧的每项 .catch(() => ({})) 等价);
+  // 只有目录和凭据【双双】失败才算失败 → 上层进错误态(可重试),而不是假扮"没配 key"。
+  const [profile, models, creds] = await Promise.all([
+    window.api.account.profile().catch(() => null),
+    window.api.models.list().catch(() => null),
+    window.api.credentials.list().catch(() => null),
+  ]);
+  if (!models && !creds) throw new Error('model catalog & credentials unavailable');
+  const snap = { ts: Date.now(), models, creds, prefs: (profile && profile.preferences) || {} };
+  _shared = snap;
+  if (models && creds) { try { lsSetJSON(_SNAPSHOT_KEY, snap); } catch (_) {} }  // 部分失败不落盘
+  return snap;
+}
+
+function _getShared() {
+  if (_inflight) return _inflight;
+  _inflight = _fetchShared().finally(() => { _inflight = null; });
+  return _inflight;
+}
+
+/** 凭据增删后清快照(rpg-credentials-updated 监听器调用);下个挂载/重拉会重新取数。 */
+export function invalidatePickerSnapshot() {
+  _shared = null;
+  try { lsRemove(_SNAPSHOT_KEY); } catch (_) {}
+}
+
+/** 测试专用:连 _inflight 一起清,避免「永不 resolve」桩把 single-flight 泄漏进下一个用例。 */
+export function _resetPickerStoreForTests() {
+  _shared = null;
+  _inflight = null;
+  try { lsRemove(_SNAPSHOT_KEY); } catch (_) {}
+}
+
+/** 供本组件以外的调用方(如 module-models-section)复用同一份 preferences,不再各拉一次重型 profile。 */
+export async function getSharedPickerPrefs() {
+  if (_shared && _snapshotFresh(_shared)) return _shared.prefs;
+  try { return (await _getShared()).prefs; }
+  catch (_) { return (_shared && _shared.prefs) || {}; }
+}
 
 // ── variant="popover" 紧凑浮层样式(只注一次;复用与旧 ModelPopover 同源的视觉 token) ──
 const AMP_POP_STYLE_ID = 'amp-pop-styles-v1';
@@ -123,42 +186,38 @@ export default function AgentModelPicker({
   const [popOpen, setPopOpen] = useState(false);      // variant="popover" 浮层开关
   const [popQuery, setPopQuery] = useState('');       // popover 搜索词
   const [loaded, setLoaded] = useState(false);        // 模型/凭据首拉是否完成(区分「加载中」与「真的没模型」)
+  const [loadError, setLoadError] = useState(false);  // 目录+凭据【双双】拉取失败 → 错误态+重试(不再假扮"没配 key")
   const popRef = useState(() => React.createRef())[0];
   const popTriggerRef = useState(() => React.createRef())[0];
 
   // 换/删 API Key 后(api-client 广播 rpg-credentials-updated)重拉 API/模型/凭据列表,
   // 让下拉里能选的 provider/模型与当前 key 同步。
   useEffect(() => {
-    const bump = () => setReloadTick((x) => x + 1);
+    const bump = () => { invalidatePickerSnapshot(); setReloadTick((x) => x + 1); };
     window.addEventListener('rpg-credentials-updated', bump);
     return () => window.removeEventListener('rpg-credentials-updated', bump);
   }, []);
 
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      try {
-        const [profile, models, creds] = await Promise.all([
-          window.api.account.profile().catch(() => ({})),
-          window.api.models.list().catch(() => ({})),
-          window.api.credentials.list().catch(() => ({ items: [] })),
-        ]);
-        if (cancelled) return;
-        const list = models?.models?.apis || (Array.isArray(models?.apis) ? models.apis : []) || [];
+  // 数据应用:把一份 {models, creds, prefs} 推导成选中态。推导逻辑与旧版逐行一致(机械搬家)。
+  // authoritative=false(stale 快照先画)时:不做 onChange('init') 回声、不做 persistOnMount 写回 ——
+  // 游戏内浮层据此不关闭/不刷新,临时值也绝不落库。
+  const applyData = (modelsData, credsData, prefsData, { authoritative = true } = {}) => {
+    {
+        const list = modelsData?.models?.apis || (Array.isArray(modelsData?.apis) ? modelsData.apis : []) || [];
         setApis(Array.isArray(list) ? list : []);
         // AgentPlatform 是 Vertex 的 SA 凭证 — UI 里归一成 vertex_ai（与后端 canonical 一致）
         // 局部 ids 供下方 eligible()/Array.from(ids) 用 —— 此前直接引用未声明的 `ids` 会抛
         // ReferenceError,被本块外层 catch 静默吞掉,导致挂载时 setApiId/setModel/onChange(init)
         // 整段不执行(无偏好场景下选择器空着、回显失败)。必须用已构建的 Set。
-        const ids = credApiIdSet(creds);
+        const ids = credApiIdSet(credsData);
         setCredApiIds(ids);
         // 后端 selected 是全局默认模型（由 /api/models 返回）；
         // defaultModel prop 若未传（null），就从 selected 取。
-        const backendSelected = models?.selected;
+        const backendSelected = modelsData?.selected;
         const resolvedDefaultModel = defaultModel
           || (backendSelected && (backendSelected.real_name || backendSelected.model_id))
           || '';
-        const p = (profile && profile.preferences) || {};
+        const p = prefsData || {};
         // ── dict-shape(sub_agent / console)读取:dictKey = { api_id, model } ──
         let prefApi, prefModel;
         if (persistShape === 'dict' && dictKey) {
@@ -235,19 +294,50 @@ export default function AgentModelPicker({
         // 把解析出的当前 provider+model 告知父组件(父拿它提交),与展示完全一致,不依赖 persistOnMount。
         // source='init':这是「挂载时解析出的当前模型回声」,不是用户真的换了模型 ——
         // 游戏内浮层据此【不关闭/不刷新】(否则一打开就被这条回声关掉,见 game-composer / MobileGame)。
-        if (chosenApi && chosenModel) onChange && onChange(chosenApi, chosenModel, 'init');
+        if (authoritative && chosenApi && chosenModel) onChange && onChange(chosenApi, chosenModel, 'init');
         // 无偏好时把解析出的一致默认写回(仅当 provider+model 都有效),避免"显示一套、后端用另一套"。
         // persistOnMount 只对 flat shape 有意义(dict/models_select/allowInherit 不在挂载时强写)。
-        if (persistOnMount && persistShape === 'flat' && !allowInherit
+        // stale 快照先画(authoritative=false)时不写回 —— 临时值绝不落库。
+        if (authoritative && persistOnMount && persistShape === 'flat' && !allowInherit
             && chosenApi && chosenModel && !(prefApi && prefModel)) {
-          try {
-            await window.api.account.preferences({
-              [`${prefPrefix}.api_id`]: chosenApi,
-              [`${prefPrefix}.model_real_name`]: chosenModel,
-            });
-          } catch (_) { /* 静默 */ }
+          window.api.account.preferences({
+            [`${prefPrefix}.api_id`]: chosenApi,
+            [`${prefPrefix}.model_real_name`]: chosenModel,
+          }).catch(() => { /* 静默 */ });
         }
-      } catch (_) {} finally { if (!cancelled) setLoaded(true); }
+      }
+  };
+
+  // 挂载/重拉三步:① 先画缓存(内存或 localStorage)→ 已保存选择即时上屏,不等网络;
+  // ② 内存快照还新鲜 → 0 请求直达(本会话内切页面即此路径);③ 过期/没有 → 拉新
+  // (single-flight,同页 N 实例共享一次)。失败且没有任何缓存可画 → 错误态+重试,
+  // 不再像旧版那样把异常吞成「尚未配置任何 API key」的永久空状态。
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const cached = _shared || _readLocalSnapshot();
+      if (cached) {
+        setLoadError(false);
+        // 先画快照并置 loaded —— 表单立即用 stale 数据上屏(这就是"即时上屏"),
+        // 后台校真完成后 applyData(authoritative) 平滑更新到最新。
+        setLoaded(true);
+        applyData(cached.models, cached.creds, cached.prefs, { authoritative: false });
+      }
+      if (_shared && _snapshotFresh(_shared)) {
+        if (!cancelled) { setLoaded(true); setLoadError(false); }
+        return;
+      }
+      try {
+        const s = await _getShared();
+        if (cancelled) return;
+        setLoadError(false);
+        applyData(s.models, s.creds, s.prefs, { authoritative: true });
+      } catch (_) {
+        // 有 stale 快照在屏就不吓用户(后台刷新失败,保留旧画面);从零失败才亮错误态
+        if (!cancelled && !cached) setLoadError(true);
+      } finally {
+        if (!cancelled) setLoaded(true);
+      }
     })();
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -385,8 +475,10 @@ export default function AgentModelPicker({
   const INHERIT = '__inherit__';
   const knownModelVals = new Set(modelOptions.map((o) => o.value));
   const isCustomModel = !inherit && customSel || (!inherit && modelOptions.length > 0 && !!model && !knownModelVals.has(model));
-  // 是否展示「未配 key」告警:无任何凭据 且 没有平台 vertex 兜底可用。
-  const showNoKeyAlert = credApiIds.size === 0 && !(platformVertexEmbedding && providerOptions.length > 0);
+  // 是否展示「未配 key」告警:加载【完成】且无任何凭据 且 没有平台 vertex 兜底可用。
+  // loaded 前置是本次修复的核心:旧版从首帧起就把"加载中"渲染成"没配 key"(闪错误)。
+  const showNoKeyAlert = loaded && !loadError && credApiIds.size === 0
+    && !(platformVertexEmbedding && providerOptions.length > 0);
 
   const noProviders = providerOptions.length === 0;
   // Model 下拉项:首项可选「跟随主 GM」(allowInherit),末项「自定义…」。
@@ -405,7 +497,7 @@ export default function AgentModelPicker({
             : (model ? { value: model, label: model } : null);
         })();
 
-  const body = (
+  const readyForm = (
     <>
       {showNoKeyAlert && (
         <CSAlert type="warning" header={t('agent_picker.no_key_alert_header')} action={
@@ -477,6 +569,29 @@ export default function AgentModelPicker({
           </div>
         </CSFormField>
       </CSColumnLayout>
+    </>
+  );
+
+  // 三态渲染:① 加载失败 → 错误条 + 重试(不再假扮"没配 key"的永久死路);
+  // ② 加载中 → 一行轻量占位,表单整体不渲染(杜绝"禁用下拉"的假象);
+  // ③ 就绪 → 告警 + 表单(readyForm,内部与旧版逐行一致)。
+  const body = (
+    <>
+      {loadError && (
+        <CSAlert
+          type="error"
+          header={t('agent_picker.load_failed')}
+          action={(
+            <CSButton iconName="refresh" onClick={() => { setLoadError(false); setReloadTick((x) => x + 1); }}>
+              {t('agent_picker.retry')}
+            </CSButton>
+          )}
+        />
+      )}
+      {!loaded && !loadError && (
+        <div className="muted-2" style={{ fontSize: 12, padding: '2px 0' }}>{t('agent_picker.loading')}</div>
+      )}
+      {loaded && !loadError && readyForm}
     </>
   );
 
@@ -555,7 +670,8 @@ export default function AgentModelPicker({
         <ul className="amp-pop-list">
           {filtered.length === 0 && (
             <li className="amp-pop-empty">{
-              !loaded ? t('agent_picker.popover_loading')
+              loadError ? t('agent_picker.load_failed')
+                : !loaded ? t('agent_picker.popover_loading')
                 : q ? t('agent_picker.popover_no_match', { query: popQuery })
                 : t('agent_picker.popover_no_models')
             }</li>
