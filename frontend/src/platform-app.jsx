@@ -218,7 +218,7 @@ const getCSModules = (t) => [
   { id: 'account', label: t('platform.nav.account'), group: t('platform.nav.group_system'),
     pages: ['me', 'me-edit', 'me-settings', 'settings', 'settings-models',
       'settings-modelparams', 'settings-modules', 'settings-memory', 'settings-permissions',
-      'settings-account', 'settings-danger'],
+      'settings-account'],
     sub: [
       { text: t('platform.nav.me'),                  href: '#me' },
       { text: t('platform.nav.me_edit'),              href: '#me-edit' },
@@ -230,7 +230,7 @@ const getCSModules = (t) => [
       { text: t('platform.nav.settings_memory'),      href: '#settings-memory' },
       { text: t('platform.nav.settings_permissions'), href: '#settings-permissions' },
       { text: t('platform.nav.settings_account', { defaultValue: '账号与数据迁移' }), href: '#settings-account' },
-      { text: t('platform.nav.settings_danger'),      href: '#settings-danger' },
+      // 「高危」(settings-danger) 入口已隐藏(2026-09);组件保留,恢复 = 加回本行 + pages 数组。
     ] },
   // 系统管理:仅 admin 角色可见/可访问(adminOnly)。部署配置等站点级设置从用户
   // 「设置 & 账户」中拆出,独立成网站管理功能页,三道鉴权(菜单隐藏 + 路由 AdminGuard + 后端 403)。

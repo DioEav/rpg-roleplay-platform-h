@@ -96,6 +96,9 @@ function ModelParamsSection() {
     return () => { cancelled = true; };
   }, []);
   const showReasoningEffort = selectedModelCaps.includes("reasoning");
+  // Reasoning Effort 已整体隐藏(2026-09):它写 settings.reasoning_effort,后端没有任何读取者(未接线),
+  // 真正管思考深度的是下方 Extended Thinking 开关。恢复显示 / 接线时把 false 改回 true。
+  const SHOW_REASONING_EFFORT = false;
   const [params, setParams] = useStatePL(MODEL_PARAM_DEFAULTS);
   useEffectPL(() => {
     let cancelled = false;
@@ -195,7 +198,7 @@ function ModelParamsSection() {
         value={params.temperature} min={0} max={2} step={0.05} unit=""
         onChange={(v) => { setPreset("custom"); u("temperature", v); }} />
 
-      {showReasoningEffort && (
+      {SHOW_REASONING_EFFORT && showReasoningEffort && (
         <SetRow label={t('settings.modelparams.reasoning_effort')} description={t('settings.modelparams.reasoning_desc')}>
           <CSSpaceBetween direction="horizontal" size="xs">
             {["low", "medium", "high"].map(lv => (

@@ -1,6 +1,7 @@
 /* MobileSettings.jsx — 移动端设置页(单文件,内部 section 状态切换)
    覆盖路由: settings / settings-models / settings-modelparams / settings-modules
-            / settings-memory / settings-permissions / settings-account / settings-danger
+            / settings-memory / settings-permissions / settings-account
+   (settings-danger 高危区块已隐藏(2026-09);组件 ../settings/danger-section.jsx 保留可恢复)
    铁律:零 Cloudscape / 零电脑端 UI 复用;数据层全接 window.api.* 真实接口。
    ──────────────────────────────────────────────────────────────────────── */
 import React, { useState, useEffect } from 'react';
@@ -26,7 +27,7 @@ const SECTIONS = [
   { id:'memory',        icon:'memory',    tone:'' },
   { id:'permissions',   icon:'shield',    tone:'ok' },
   { id:'account',       icon:'user',      tone:'' },
-  { id:'danger',        icon:'warn',      tone:'warn' },
+  // 'danger' 入口已隐藏(2026-09),DangerSection 组件保留可恢复
 ];
 
 // 把路由 id 映射到 section id
@@ -38,7 +39,7 @@ const ROUTE_MAP = {
   'settings-memory':        'memory',
   'settings-permissions':   'permissions',
   'settings-account':       'account',
-  'settings-danger':        'danger',
+  // 'settings-danger' 路由已隐藏:落到未匹配 → 回 hub
 };
 
 export function MobileSettings({ nav }) {
@@ -121,7 +122,7 @@ export function MobileSettings({ nav }) {
               {section === 'memory'       && <MemorySection />}
               {section === 'permissions'  && <PermissionsSection nav={nav} />}
               {section === 'account'      && <AccountSection nav={nav} />}
-              {section === 'danger'       && <DangerSection nav={nav} />}
+              {/* 'danger' 区块已隐藏:DangerSection 组件保留(import 已摘除) */}
             </div>
           </div>
         </>

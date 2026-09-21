@@ -90,7 +90,7 @@ function UnifiedSearch({ open, onClose, setPage }) {
     { id: "models",      label: tSearch('platform.nav.settings_models'),       parent: settingsLabel, hash: "settings", keywords: "openai anthropic models api" },
     { id: "memory",      label: tSearch('platform.nav.settings_memory'),       parent: settingsLabel, hash: "settings", keywords: "memory recall context" },
     { id: "permissions", label: tSearch('platform.nav.settings_permissions'),  parent: settingsLabel, hash: "settings", keywords: "permission write structured" },
-    { id: "danger",      label: tSearch('platform.nav.settings_danger'),       parent: settingsLabel, hash: "settings", keywords: "danger reset delete" },
+    // 「高危」入口已隐藏,不再作为可搜索目的地
     // 部署配置已拆到「系统管理」,仅 admin 可见
     ...(isAdmin ? [
       { id: "deploy",        label: tSearch('platform.nav.admin_deploy'),        parent: adminLabel, hash: "admin-deploy",        keywords: "host port cors upload deploy admin" },

@@ -47,7 +47,8 @@ function SettingsPage({ section: sectionProp } = {}) {
     { id: "permissions", label: t('settings.nav.permissions'), icon: "lock" },
     { id: "deploy",      label: t('settings.nav.deploy'),      icon: "world" },
     { id: "account",     label: t('settings.nav.account'),     icon: "user" },
-    { id: "danger",      label: t('settings.nav.danger'),      icon: "warn" },
+    // 「高危」区块已隐藏(2026-09,应运营要求):DangerSection 组件与 i18n 原样保留,
+    // 恢复 = 把 danger 加回 SECTIONS 并渲染 <DangerSection />。清空存档仍可走后端 CLI。
   ];
   // task 57：助手 navigate_to_setting 触发 cap-navigate-subsection 事件
   // (settings.permissions → section="permissions"，settings.api → section="models")
@@ -89,7 +90,7 @@ function SettingsPage({ section: sectionProp } = {}) {
       {section === "permissions" && <PermSection />}
       {section === "deploy" && <DeploySection />}
       {section === "account" && <AccountSection />}
-      {section === "danger" && <DangerSection />}
+      {/* 「高危」区块已隐藏:见上方 SECTIONS 处注释 */}
     </CSSpaceBetween>
   );
 }

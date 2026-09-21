@@ -28,6 +28,9 @@ const readNumPref = readNumberPref;
 // 内容尺度档位白名单 —— 必须与后端 agents/gm/content_policy.MODES 一字不差。
 const NSFW_MODES = ['block', 'soft', 'open', 'explicit', 'none'];
 
+// 推理强度已整体隐藏(2026-09):reasoning_effort 后端未接线(无读取者);恢复显示时改回 true。
+const SHOW_REASONING_EFFORT = false;
+
 function ModelParamsSection() {
   const { t } = useTranslation();
   const save = usePrefSave('settings');
@@ -102,14 +105,16 @@ function ModelParamsSection() {
         value={params.temperature} min={0} max={2} step={0.05}
         onChange={(v) => { setPreset('custom'); u('temperature', v); }} />
 
-      {/* 推理强度 */}
-      <MField label={t('mobile.settings.modelparams.reasoning_effort')} desc={t('mobile.settings.modelparams.reasoning_effort_desc')}>
-        <Seg
-          options={[['low',t('mobile.settings.modelparams.effort_low')],['medium',t('mobile.settings.modelparams.effort_medium')],['high',t('mobile.settings.modelparams.effort_high')]]}
-          value={effort}
-          onChange={(v) => { setEffort(v); save('reasoning_effort', v); }}
-        />
-      </MField>
+      {/* 推理强度 — 已隐藏(2026-09):后端未接线,思考深度由「每模型思考开关」管 */}
+      {SHOW_REASONING_EFFORT && (
+        <MField label={t('mobile.settings.modelparams.reasoning_effort')} desc={t('mobile.settings.modelparams.reasoning_effort_desc')}>
+          <Seg
+            options={[['low',t('mobile.settings.modelparams.effort_low')],['medium',t('mobile.settings.modelparams.effort_medium')],['high',t('mobile.settings.modelparams.effort_high')]]}
+            value={effort}
+            onChange={(v) => { setEffort(v); save('reasoning_effort', v); }}
+          />
+        </MField>
+      )}
 
       <MSlider label="Top-p" desc={t('mobile.settings.modelparams.top_p_desc')}
         value={params.top_p} min={0} max={1} step={0.01}
