@@ -100,6 +100,30 @@ def _normalize_platform_embed_config(
     return api_id, model, api_key, base_url
 
 
+def _catalog_embed_base_url(api_id: str) -> str:
+    """凭据里没有 base_url_override 时,嵌入请求该发往哪。静态模板优先,live catalog 兜底。
+
+    静态模板排前面是有意的:dashscope 在 live catalog 里可能被切成原生模式(/api/v1),
+    那条地址没有 OpenAI 兼容的 /embeddings,静态模板恒是 compatible-mode。
+    live catalog 只兜「静态模板里根本没有」的供应商(管理员 / 桌面本地用户自己加的)。
+    此前缺这一档 → 解析成空串 → _embed_via_openai 退到 api.openai.com,把别家的 key
+    发给了 OpenAI,回来的 401 还被翻成「key 无效」(反馈 #104:千问 key「获取模型都正常」,
+    因为聊天/拉模型走的 base_url_for 本就读 live catalog)。
+    """
+    try:
+        from model_registry import default_api_for
+        base = (default_api_for(api_id) or {}).get("base_url", "") or ""
+    except Exception:
+        base = ""  # normalize_api_id 对非法 id 会抛,当查不到处理
+    if base:
+        return base
+    try:
+        from model_registry import base_url_for
+        return base_url_for(api_id) or ""
+    except Exception:
+        return ""
+
+
 def _resolve_embed_config(user_id: int | None) -> tuple[str, str, str, str]:
     """返回 (api_id, model, api_key, base_url_override)。
 
@@ -121,16 +145,10 @@ def _resolve_embed_config(user_id: int | None) -> tuple[str, str, str, str]:
             # user 自己配了 — 优先用,任何用户都允许
             cred = resolve_api_key(user_id, api_id, env_fallback="")
             if cred.get("key"):
-                base_url = cred.get("base_url_override", "") or env_base_url
-                if not base_url:
-                    # 普通用户禁止自填 base_url(SSRF 闸,见 user_credentials.set_credential),
-                    # 从 catalog 取该 provider 官方 base(如 dashscope compatible-mode endpoint),
-                    # 否则 _embed_via_openai 会误连 api.openai.com。
-                    try:
-                        from model_registry import default_api_for
-                        base_url = (default_api_for(api_id) or {}).get("base_url", "") or ""
-                    except Exception:
-                        base_url = ""
+                # 凭据没带地址 → 从 catalog 取该 provider 的 base(如 dashscope compatible-mode),
+                # 否则 _embed_via_openai 会误连 api.openai.com。
+                base_url = (cred.get("base_url_override", "") or env_base_url
+                            or _catalog_embed_base_url(api_id))
                 return api_id, model, cred["key"], base_url
             # user 没自配 — 只 admin/vip 才走平台 env 兜底
             if _is_admin(user_id):
@@ -157,12 +175,15 @@ def _embed_via_openai(model: str, api_key: str, texts: list[str], base_url: str 
     """
     import json as _json
     import urllib.error
+    import urllib.parse
     import urllib.request
 
     from core.outbound import safe_urlopen  # SSRF: 不跟随重定向 + use-time 重解析 pin IP
     from core.outbound_ua import outbound_user_agent
     global _last_openai_embed_error
     effective_url = (base_url.rstrip("/") if base_url else "https://api.openai.com/v1") + "/embeddings"
+    # 报错里带上实际请求的主机:同一个 401,发错了地方和 key 真坏了是两回事,不写出来用户和我们都分不清。
+    _host = urllib.parse.urlsplit(effective_url).netloc or effective_url
 
     # BUGFIX: 不同 OpenAI 兼容 provider 对单请求 input 数组条数上限不同。DashScope(阿里 dashscope/
     # 百炼)text-embedding 限 ≤10,而上游按 BATCH_SIZE=30 喂入 → "400 batch size ... not larger than 10"。
@@ -246,8 +267,9 @@ def _embed_via_openai(model: str, api_key: str, texts: list[str], base_url: str 
             )
         elif code == 401:
             friendly = (
-                f"向量嵌入 API Key 无效或已过期（HTTP 401 Unauthorized）。"
-                f" 请在「设置 → RAG / 向量模型」更新 API Key。"
+                f"向量嵌入 API Key 被 {_host} 拒绝（HTTP 401 Unauthorized）:key 无效或已过期,"
+                f"或者这把 key 本来就不是 {_host} 的。"
+                f" 请在「设置 → RAG / 向量模型」检查 API Key 和接口地址。"
                 f" 原始响应：{body[:120]}"
             )
         elif code == 404:
@@ -269,13 +291,13 @@ def _embed_via_openai(model: str, api_key: str, texts: list[str], base_url: str 
                 )
             else:
                 friendly = (
-                    f"向量嵌入接口地址(base_url)错误(HTTP 404 Not Found)。"
+                    f"向量嵌入接口地址(base_url)错误(HTTP 404 Not Found,请求的是 {_host})。"
                     f"请确认路径与提供商匹配:OpenAI/中转站通常以 /v1 结尾、火山方舟(豆包)以 /api/v3 结尾、"
                     f"Gemini 兼容以 /v1beta/openai 结尾。"
                     f" 原始响应：{body[:120]}"
                 )
         else:
-            friendly = f"向量嵌入请求失败（HTTP {code}）：{body[:200]}"
+            friendly = f"向量嵌入请求失败（HTTP {code}，{_host}）：{body[:200]}"
         log.warning("[embedding] openai embed failed: %s %s | friendly: %s", code, body[:200], friendly)
         # 把友好描述存到模块级变量(global 已在函数顶部声明),供 embedding_preflight 读取
         _last_openai_embed_error = friendly
@@ -297,6 +319,7 @@ def _embed_provider_dispatch(
     """根据 api_id 分发到对应 provider SDK。不识别 → 降级 vertex + warn。
     user_id 传给 Vertex 路径以走 BYOK SA 优先链。
     """
+    global _last_openai_embed_error
     if api_id in _VERTEX_API_IDS:
         return _embed_via_vertex(model, texts, task_type=task_type, user_id=user_id)
     if api_id in _GEMINI_API_IDS:
@@ -313,6 +336,16 @@ def _embed_provider_dispatch(
         if not api_key:
             log.warning("[embedding] openai-compatible api_id=%r but no api_key; falling back to vertex", api_id)
             return _embed_via_vertex(model or DEFAULT_EMBED_MODEL, texts, task_type=task_type, user_id=user_id)
+        if not base_url and api_id not in _OPENAI_API_IDS:
+            # 空 base_url 在 _embed_via_openai 里等于 api.openai.com。那只对 OpenAI 自己成立;
+            # 别家的 key 发过去必然 401,等于把用户的 key 交给了第三方(反馈 #104)。
+            _last_openai_embed_error = (
+                f"找不到向量嵌入供应商「{api_id}」的接口地址,已停止发送请求。"
+                f"请在「设置 → API & 模型」给这个供应商填上接口地址(base_url),"
+                f"或在「设置 → RAG / 向量模型」换一个内置的供应商。"
+            )
+            log.warning("[embedding] api_id=%r resolved to empty base_url; refusing to send its key to api.openai.com", api_id)
+            return None
         return _embed_via_openai(model, api_key, texts, base_url=base_url)
     log.warning("[embedding] unknown api_id=%r and no api_key; falling back to vertex", api_id)
     return _embed_via_vertex(DEFAULT_EMBED_MODEL, texts, task_type=task_type, user_id=user_id)
@@ -450,11 +483,10 @@ def embed_query(
         # key → 发到旧 provider 端点 → 401/404 → 静默降级 ILIKE。
         api_id, model = force_api_id, force_model
         try:
-            from model_registry import default_api_for
             from platform_app.user_credentials import resolve_api_key
             _cred = resolve_api_key(user_id, force_api_id, env_fallback="")
             api_key = _cred.get("key", "")
-            base_url = _cred.get("base_url_override", "") or (default_api_for(force_api_id) or {}).get("base_url", "") or ""
+            base_url = _cred.get("base_url_override", "") or _catalog_embed_base_url(force_api_id)
         except Exception:
             # 极端情况(catalog 不可用):回退到当前用户 config 的 key/base_url 尽力而为
             _, _, api_key, base_url = _resolve_embed_config(user_id)
