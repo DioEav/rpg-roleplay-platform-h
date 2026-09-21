@@ -24,6 +24,19 @@ import CSTable from '@cloudscape-design/components/table';
 import CSStatusIndicator from '@cloudscape-design/components/status-indicator';
 
 
+// 跨挂载保留的自动探测状态。组件切走(设置页换到别的 section)会卸载,ref 活不过去;
+// 没有这份模块级记忆的话,**每次重新进入**都会对每个 provider 重新实时探测一遍,而且
+// 在结果回来前一律退回「未测试」—— 用户报的「重新进入加载很慢」正是这个。
+//   lastProbedAt     : apiId → 上次探测完成时刻,自动同步据此做 3 分钟节流(手动刷新不受限)
+//   lastConnectivity : apiId → 上次探测结果,重进页面先显示它,不再空转一次「未测试」
+// 命名导出是给测试隔离用的(测试之间必须清空,否则用例互相影响)。
+const AUTO_SYNC_TTL_MS = 3 * 60 * 1000;
+const autoSyncState = {
+  lastProbedAt: new Map(),
+  lastConnectivity: new Map(),
+};
+
+
 function ModelsSection() {
   const { t } = useTranslation();
   // task 51：登录态零 mock。原 useState(MODELS_DATA) 首屏闪过 OpenAI/Anthropic/
@@ -102,12 +115,17 @@ function ModelsSection() {
         // 兜底让 ① 详情/编辑弹窗显示真实中转站地址 ② 重新保存 key 时不会因表单空值把 override
         // 清掉(与生成/同步实际所用一致)③ 同步模型时 body 也带上正确地址。
         base_url: cred.base_url_override || api.base_url || "",
+        // 用户**真正存过**的覆盖值(没设过就是空串)。上面 base_url 是「override 兜底 catalog」
+        // 的合成值,不能拿它回写:那会把 catalog 默认地址固化成用户级 override,此后管理员改
+        // catalog 的地址这个用户将不再跟随(开关这类只改启用态的写入必须原样回传这个字段)。
+        base_url_override: cred.base_url_override || "",
         key_set: !!cred.has_key,
         auth_mode: cred.auth_mode || 'api_key',
         configured: !!cred.configured,
         key_hint: cred.key_hint || t('settings.models.key_set_hint'),
         status: cred.enabled === false ? "disabled" : "configured",
-        connectivity: { status: "untested" },
+        // 先显示上次探测结果(切走再切回设置页时不必等一次新的探测,也不会退回空白的「未测试」)
+        connectivity: autoSyncState.lastConnectivity.get(catalogId) || { status: "untested" },
         enabled: cred.enabled !== false,
         proxy_url: cred.proxy_url || "",
         proxy: cred.proxy_url ? "http_proxy" : "direct",
@@ -122,10 +140,12 @@ function ModelsSection() {
       .filter(([cid, c]) => c.configured && c.base_url_override && !catalogIds.has(normalizeApiId(cid)))
       .map(([cid, c]) => ({
         id: cid, credential_id: cid, name: cid,
-        base_url: c.base_url_override, key_set: !!c.has_key, key_hint: c.key_hint || '',
+        base_url: c.base_url_override, base_url_override: c.base_url_override || "",
+        key_set: !!c.has_key, key_hint: c.key_hint || '',
         auth_mode: c.auth_mode || 'api_key', configured: true,
         status: c.enabled === false ? "disabled" : "configured",
-        connectivity: { status: "untested" }, enabled: c.enabled !== false,
+        connectivity: autoSyncState.lastConnectivity.get(cid) || { status: "untested" },
+        enabled: c.enabled !== false,
         proxy_url: c.proxy_url || "",
         proxy: c.proxy_url ? "http_proxy" : "direct", models: [], _custom: true,
       }));
@@ -143,38 +163,45 @@ function ModelsSection() {
     } : a));
     const started = performance.now();
     try {
-      const r = await window.api.models.syncRemote({ api_id: apiId, base_url: api.base_url || "" });
+      // force=false 让后端用 60s 的 _LIST_CACHE(进页面自动同步用);点刷新/存 Key 后仍强制真探。
+      const r = await window.api.models.syncRemote({
+        api_id: apiId, base_url: api.base_url || "", force: opts.force !== false,
+      });
       if (!r?.ok) throw new Error(r?.error || "remote model sync failed");
       const elapsed = Math.max(1, Math.round(performance.now() - started));
       const models = (r.models || []).map(mapModel);
+      const conn = {
+        status: "ok",
+        latency_ms: elapsed,
+        checked_at: Date.now(),
+        remote_total: r.remote_total ?? models.length,
+        synced: r.synced ?? models.length,
+        error: "",
+      };
+      autoSyncState.lastProbedAt.set(apiId, Date.now());
+      autoSyncState.lastConnectivity.set(apiId, conn);
       setApis(arr => arr.map(a => a.id === apiId ? {
         ...a,
         models,
         status: "configured",
-        connectivity: {
-          status: "ok",
-          latency_ms: elapsed,
-          checked_at: Date.now(),
-          remote_total: r.remote_total ?? models.length,
-          synced: r.synced ?? models.length,
-          error: "",
-        },
+        connectivity: conn,
       } : a));
       if (!opts.silent) {
         window.__apiToast?.(t('settings.models.sync_ok', { count: models.length }), { kind: "ok", duration: 2200 });
       }
       return r;
     } catch (e) {
-      setApis(arr => arr.map(a => a.id === apiId ? {
-        ...a,
-        connectivity: {
-          status: "err",
-          checked_at: Date.now(),
-          error: e?.message || "sync failed",
-        },
-      } : a));
+      // 「供应商回了错」与「前端没等到响应」此前都是同一句红字「不可访问」,但含义不同:
+      // 后者是 abort/网络层失败(前端 35s、后端探测 30s),供应商未必坏 —— 拿它当「不可达」
+      // 正是用户看到「联通性怎么都是不可访问」的来源。分开成两个状态、两种文案。
+      const netFail = e?.code === "network";
+      const why = netFail ? t('settings.models.connectivity_netfail') : (e?.message || t('settings.models.sync_fail'));
+      const conn = { status: netFail ? "timeout" : "err", checked_at: Date.now(), error: why };
+      autoSyncState.lastProbedAt.set(apiId, Date.now());
+      autoSyncState.lastConnectivity.set(apiId, conn);
+      setApis(arr => arr.map(a => a.id === apiId ? { ...a, connectivity: conn } : a));
       if (!opts.silent) {
-        window.__apiToast?.(t('settings.models.sync_fail'), { kind: "danger", detail: e?.message });
+        window.__apiToast?.(t('settings.models.sync_fail'), { kind: "danger", detail: why });
       }
       return null;
     }
@@ -191,11 +218,28 @@ function ModelsSection() {
 
   const toggleApi = async (id) => {
     const api = apis.find(a => a.id === id);
-    const newEnabled = !api?.enabled;
+    if (!api) return;
+    const prev = api.enabled;
+    const newEnabled = !prev;
     setApis(arr => arr.map(a => a.id === id ? { ...a, enabled: newEnabled } : a));
     try {
-      await window.api.models.upsertApi({ api_id: id, enabled: newEnabled });
-    } catch (_) {}
+      // 开关读写必须是**同一个对象**。本页的 enabled 来自用户凭据(loadConfiguredApis 里
+      // `enabled: cred.enabled !== false`),所以这里必须写凭据。此前写的是全局 catalog
+      // (upsertApi → /api/models/api,admin 专属):普通用户撞 403 又被空 catch 吞掉,
+      // 管理员改的是所有人的 provider 菜单 —— 两种身份下刷新后都会「自己弹回去」,
+      // 也就是用户报的「前端看似启用、后端还是禁用」。keep_key 保留已存密钥,
+      // auth_mode 必须带上:不传 no_auth 时后端按 'api_key' 落库,会把免鉴权凭据改回要 key。
+      await window.api.credentials.set({
+        api_id: api.credential_id || id,
+        enabled: newEnabled,
+        keep_key: true,
+        no_auth: api.auth_mode === 'none',
+        base_url_override: api.base_url_override || "",
+      });
+    } catch (e) {
+      setApis(arr => arr.map(a => a.id === id ? { ...a, enabled: prev } : a));  // 写失败要回滚,别留下假状态
+      window.__apiToast?.(t('settings.models.toggle_fail'), { kind: "danger", detail: e?.message });
+    }
   };
   const toggleModel = async (apiId, mId) => {
     const api = apis.find(a => a.id === apiId);
@@ -274,11 +318,28 @@ function ModelsSection() {
 
   useEffectPL(() => {
     if (useMock || apisLoading) return;
-    configuredApis.forEach(api => {
-      if (autoSyncedRef.current.has(api.id)) return;
-      autoSyncedRef.current.add(api.id);
-      syncRemoteModels(api, { silent: true });
+    const now = Date.now();
+    const pending = configuredApis.filter(a => {
+      if (autoSyncedRef.current.has(a.id)) return false;
+      // 3 分钟节流:此前每次进入(切走设置页再切回)都把每个 provider 重探一遍 —— 后端
+      // 探测 30s、前端 35s 才放弃,重复进出就是反复占连接。这里只节流**自动**这一条路径,
+      // 点刷新(connectivity 列 / 详情面板校验)始终真探。TTL 内重进直接显示上次结果。
+      return now - (autoSyncState.lastProbedAt.get(a.id) || 0) >= AUTO_SYNC_TTL_MS;
     });
+    if (!pending.length) return;
+    pending.forEach(a => autoSyncedRef.current.add(a.id));
+    let cancelled = false;
+    (async () => {
+      // 分两批而不是 N 条同时打:同源(HTTP/1.1)只有 6 条连接,探测挂住时其余请求全在排队,
+      // 那正是「进页面很慢」的主因。force:false 让后端命中 60s 模型缓存,重复进出基本不真探。
+      const CONCURRENCY = 2;
+      for (let i = 0; i < pending.length && !cancelled; i += CONCURRENCY) {
+        await Promise.all(pending.slice(i, i + CONCURRENCY).map(
+          api => syncRemoteModels(api, { silent: true, force: false })
+        ));
+      }
+    })();
+    return () => { cancelled = true; };
   }, [useMock, apisLoading, configuredApis.map(a => a.id).join("|"), syncRemoteModels]);
 
   const detailEl = selectedApi ? (
@@ -369,21 +430,35 @@ function ModelsSection() {
                     ? t('settings.models.connectivity_ok')
                     : status === "err"
                       ? t('settings.models.connectivity_err')
-                      : status === "disabled"
-                        ? t('settings.models.status_disabled')
-                        : t('settings.models.connectivity_untested');
-                const type = status === "ok" ? "success" : status === "err" ? "error" : status === "checking" ? "in-progress" : "stopped";
+                      // 没等到响应 ≠ 不可达:供应商可能只是慢(或查询被 abort),别下「不可访问」的结论。
+                      : status === "timeout"
+                        ? t('settings.models.connectivity_timeout')
+                        : status === "disabled"
+                          ? t('settings.models.status_disabled')
+                          : t('settings.models.connectivity_untested');
+                const type = status === "ok" ? "success" : status === "err" ? "error" : status === "timeout" ? "warning" : status === "checking" ? "in-progress" : "stopped";
                 return (
-                  <button
-                    type="button"
-                    className="linklike"
-                    title={t('settings.models.connectivity_refresh_tip')}
-                    onClick={(e) => { e.stopPropagation(); syncRemoteModels(a); }}
-                    style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: 0, border: 0, background: "transparent", cursor: "pointer" }}
-                  >
-                    <CSStatusIndicator type={type}>{label}</CSStatusIndicator>
-                    {c.latency_ms ? <span className="mono muted-2">{c.latency_ms}ms</span> : null}
-                  </button>
+                  <>
+                    <button
+                      type="button"
+                      className="linklike"
+                      title={c.error ? `${t('settings.models.connectivity_refresh_tip')}\n${c.error}` : t('settings.models.connectivity_refresh_tip')}
+                      onClick={(e) => { e.stopPropagation(); syncRemoteModels(a); }}
+                      style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: 0, border: 0, background: "transparent", cursor: "pointer" }}
+                    >
+                      <CSStatusIndicator type={type}>{label}</CSStatusIndicator>
+                      {c.latency_ms ? <span className="mono muted-2">{c.latency_ms}ms</span> : null}
+                    </button>
+                    {/* 失败原因此前只存在 state 里、界面上一个字都不显示(全前端 grep 无渲染点):
+                        于是「缺 SA」「base_url 被 SSRF 校验拒了」「超时」三种完全不同的病因
+                        长得一模一样,用户只能问「为什么都是不可访问」。这里把它摊开。 */}
+                    {c.error ? (
+                      <div className="mono" title={c.error}
+                        style={{ fontSize: 11, color: 'var(--color-text-status-error, #d91515)', marginTop: 2, maxWidth: 240, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                        {c.error}
+                      </div>
+                    ) : null}
+                  </>
                 );
               } },
               { id: 'go', header: '', cell: (a) => (
@@ -529,6 +604,9 @@ function ModelsSection() {
 }
 
 export {
+  // 模块级可变状态(自动探测节流 + 上次结果),测试之间必须清空才能互相隔离。
+  autoSyncState,
+  AUTO_SYNC_TTL_MS,
   ModelsSection,
   ApiModelsList,
   AddModelModal,

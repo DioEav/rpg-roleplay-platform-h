@@ -987,7 +987,11 @@
       meDeleteModel: (body) => POST(`${API_PREFIX}/me/models/model/delete`, body),
       validate: (body) => POST(`${API_PREFIX}/models/validate`, body),
       remote: (q) => GET(`${API_PREFIX}/models/remote`, q),
-      syncRemote: (body) => POST(`${API_PREFIX}/models/remote/sync`, body),
+      // 这条会真去探测供应商的 /models,后端给的是 30s 超时(model_probe 的
+      // safe_httpx_client(timeout=30.0))。沿用 POST 默认的 15s 会让**慢但活着**的供应商
+      // 在前端先被 abort,然后被标成「不可访问」—— 后端其实还在等、可能马上就成功。
+      // 留 5s 余量盖住网络往返与排队,让死线落在后端之后。
+      syncRemote: (body) => POST(`${API_PREFIX}/models/remote/sync`, body, { signal: timeoutSignal(35000) }),
       diff: (q) => GET(`${API_PREFIX}/models/diff`, q),
       probe: (body) => POST(`${API_PREFIX}/models/probe`, body),
       pricing: () => GET(`${API_PREFIX}/models/pricing`),

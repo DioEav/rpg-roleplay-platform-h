@@ -476,9 +476,13 @@ async def api_models_remote_sync(
         "base_url": base_url,
     }
 
+    # force=真(默认,也是「点刷新」的语义):跳过 60s 的 _LIST_CACHE,必须真打一次供应商。
+    # 设置页**每次进入**会对每个已配置 provider 各调一次本接口,若一律强制探测,重复进出就是
+    # N 条实时外呼(每条后端 30s/前端 35s 才放弃),同源连接被占满、页面其它请求排队 ——
+    # 用户报的「重新进入时加载很慢」。自动同步传 force=false 让 TTL 内的重复进入直接命中缓存。
     remote = model_probe.list_remote_models(
         api_id,
-        force_refresh=True,
+        force_refresh=bool((body or {}).get("force", True)),
         user_id=user_id,
         api_override=api_meta,
     )

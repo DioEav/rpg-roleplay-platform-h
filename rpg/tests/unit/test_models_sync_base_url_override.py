@@ -121,6 +121,21 @@ class FrontendRowUsesOwnOverride(unittest.TestCase):
         """mobile credMap 之前不带 base_url_override,补上才有得兜底。"""
         self.assertIn("base_url_override: c.base_url_override", MOBILE_SETTINGS_JSX)
 
+    def test_sync_force_flag_defaults_true(self):
+        """force 必须可被请求关掉,缺省为真(点刷新语义不变)。
+
+        设置页**每次进入**都会对每个已配置 provider 各调一次本端点。此前无条件
+        force_refresh=True → 每次进页面都是 N 条实时外呼(后端探测 30s、前端 35s 才放弃),
+        同源连接被占满、页面其它请求排队 —— 用户报的「重新进入时加载很慢」。自动同步改传
+        force=false 命中 60s 的 _LIST_CACHE,这条断言挡住它被改回无脑强制探测。
+        """
+        self.assertRegex(
+            MODELS_PY,
+            r"force_refresh\s*=\s*bool\(\(body or \{\}\)\.get\(\"force\",\s*True\)\)",
+            "sync 端点必须 `force_refresh=bool((body or {}).get(\"force\", True))`:"
+            "缺省强制(点刷新语义),可被自动同步用 force=false 关掉",
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
