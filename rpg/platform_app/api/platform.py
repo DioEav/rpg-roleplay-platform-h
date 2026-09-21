@@ -20,7 +20,9 @@ router = APIRouter()
 # 保留 request 用于 _auth_required() 条件分支（依赖 current_user 返回 None 时仍需判断模式）
 # 改为 Depends(current_user) 注入，request 仅保留用于兼容签名
 @router.get("/api/platform")
-async def api_platform(user=Depends(current_user)):
+# 同步 def:platform_for(workspace 聚合 + tools 深拷贝 + library)在协程里会阻塞事件循环,
+# 启动六路请求被迫串行。def → FastAPI 线程池并行。回归锁同 tests/unit/test_boot_endpoints_sync.py。
+def api_platform(user=Depends(current_user)):
     # 服务器/生产模式下未登录拒绝返回任何平台信息
     if not user and _auth_required():
         return json_response({"ok": False, "error": "需要登录"}, status_code=401)

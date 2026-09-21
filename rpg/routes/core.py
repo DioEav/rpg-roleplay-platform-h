@@ -71,7 +71,10 @@ async def api_health() -> JSONResponse:
 
 
 @router.get("/api/state")
-async def api_state(
+# 同步 def(非 async):体内 _payload 做目录装配+两遍全目录深拷贝,是启动最重接口 —— async 协程
+# 里跑同步阻塞会卡死事件循环,六路启动请求被迫串行(实测 platform 组 22.6s)。def → FastAPI
+# 自动进线程池真正并行。回归锁见 tests/unit/test_boot_endpoints_sync.py。
+def api_state(
     api_user: dict[str, Any] | None = Depends(get_current_user),
 ) -> JSONResponse:
     from app import _payload

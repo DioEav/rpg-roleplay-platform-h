@@ -292,7 +292,9 @@ async def api_desktop_login(request: Request, token: str = "", next: str = "/Pla
 
 
 @router.get("/api/auth/me")
-async def api_me(user=Depends(current_user)):
+# 同步 def:体内 db.status + has_pgvector 两次阻塞 DB 查询,每次页面启动都调 ——
+# 在协程里会卡事件循环。线程池并行。回归锁同 tests/unit/test_boot_endpoints_sync.py。
+def api_me(user=Depends(current_user)):
     # 安全：未登录不返回 DB 细节，仅返回 driver/ok 健康标识
     is_admin = bool(user and user.get("role") == "admin")
     from ..db import status as db_status

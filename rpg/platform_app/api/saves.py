@@ -23,7 +23,8 @@ _MAX_SAVE_IMPORT_BYTES = 16 * 1024 * 1024  # 16MB 上限,防内存炸
 
 
 @router.get("/api/saves")
-async def api_saves(limit: int | None = None, cursor: str | None = None, user=Depends(require_user)):
+# 同步 def:saves_page 在协程里阻塞事件循环 → 启动六路请求被迫串行。线程池并行。
+def api_saves(limit: int | None = None, cursor: str | None = None, user=Depends(require_user)):
     """轻量列表：只返摘要字段（turn/player_name/world_time/history_count），不含 state_snapshot。"""
     return json_response({"ok": True, **workspace.saves_page(user["id"], limit, cursor)})
 

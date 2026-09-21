@@ -16,7 +16,9 @@ from ._shared import router
 
 
 @router.get("/api/scripts")
-async def api_scripts(limit: int | None = None, cursor: str | None = None, user=Depends(require_user)):
+# 同步 def:scripts_page 在协程里阻塞事件循环 → 启动六路请求被迫串行。线程池并行。
+# 回归锁同 tests/unit/test_boot_endpoints_sync.py。
+def api_scripts(limit: int | None = None, cursor: str | None = None, user=Depends(require_user)):
     from ... import workspace
     return json_response({"ok": True, **workspace.scripts_page(user["id"], limit, cursor)})
 

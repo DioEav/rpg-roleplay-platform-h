@@ -30,7 +30,8 @@ router = APIRouter()
 # ---------------------------------------------------------------------------
 
 @router.get("/api/library")
-async def api_library_list(
+# 同步 def:list_assets 在协程里阻塞事件循环 → 启动六路请求被迫串行。线程池并行。
+def api_library_list(
     kind: str | None = None,
     limit: int = 50,
     offset: int = 0,
