@@ -8,6 +8,7 @@ from typing import Any
 
 import httpx
 
+from agents.gm.backends._dsml import DsmlStreamFilter, resolve_tool_ref
 from agents.gm.helpers import _openai_text_marker_loop
 from core.logging import get_logger
 
@@ -508,6 +509,9 @@ class _OpenAICompatBackend:
             current_text = ""
             current_reasoning = ""
             finish_reason: str | None = None
+            # 中转站没接 DeepSeek 的 DSML 解析器时,工具调用会以 <｜DSML｜…> 文本落进 content。
+            # 这里扣下不外发,解析成调用补进 tool_calls_buf(反馈 #106)。
+            dsml = DsmlStreamFilter()
             try:
                 _tuning = self._tuning_kwargs(0.9)  # task 141: 采样 + 思考控制(extra_body 已深合并)
                 stream = self._create(
@@ -536,7 +540,7 @@ class _OpenAICompatBackend:
                             if rtext:
                                 current_reasoning += rtext
                                 yield {"type": "reasoning", "text": rtext}
-                            ctext = getattr(delta, "content", None)
+                            ctext = dsml.feed(getattr(delta, "content", None) or "")
                             if ctext:
                                 current_text += ctext
                                 yield {"type": "text", "text": ctext}
@@ -583,6 +587,22 @@ class _OpenAICompatBackend:
                 # 非 tools-不支持(瞬时/鉴权/5xx)或后续 iteration 异常：let it bubble
                 raise
             first_attempt = False
+
+            _tail = dsml.finish()
+            if _tail:
+                current_text += _tail
+                yield {"type": "text", "text": _tail}
+            if dsml.seen:
+                log.warning(f"[gm] {self.api_id}/{self.model_name} 在正文里吐了 DSML 工具标记,"
+                            f"已拦下并解析出 {len(dsml.calls)} 个调用")
+            _next = max(tool_calls_buf, default=-1) + 1
+            for _j, (_name, _args) in enumerate(dsml.calls):
+                _sid, _tool = resolve_tool_ref(_name, mcp_tools)
+                tool_calls_buf[_next + _j] = {
+                    "id": f"call_dsml_{_iteration}_{_j}",
+                    "name": f"{_sid}{sep}{_tool}" if _sid else _tool,
+                    "arguments": json.dumps(_args, ensure_ascii=False),
+                }
 
             if not tool_calls_buf:
                 # 没有 tool_calls → 本轮结束
