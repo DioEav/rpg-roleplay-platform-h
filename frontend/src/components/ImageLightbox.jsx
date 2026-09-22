@@ -1,6 +1,7 @@
 import React from 'react';
 import { createPortal } from 'react-dom';
 import { useTranslation } from 'react-i18next';
+import { Icon } from '../game-icons.jsx';
 
 /* ImageLightbox — 统一的图片全屏预览 + 裁剪。
    · createPortal 到 document.body：彻底逃离任何祖先(如 .msplit__media 的 sticky)
@@ -155,7 +156,12 @@ export default function ImageLightbox({ open, src, alt = '', onClose, onCrop, cr
           )}
         </div>
       </div>
-      <button className="ilb__close" aria-label={t('common.close')} onClick={() => onClose && onClose()}>×</button>
+      {/* 关闭按钮:用 SVG 图标而不是文本 ×。文本 × 的落位取决于字体度量 + 行盒(叠加 button 的
+          UA 默认 padding),在 40px 圆里会明显偏高 —— 用户上报「大叉不在圆心」。SVG 在 24×24
+          viewBox 内几何居中,与 Modal 的关闭按钮同一做法。 */}
+      <button className="ilb__close" aria-label={t('common.close')} onClick={() => onClose && onClose()}>
+        <Icon name="close" size={17} />
+      </button>
     </div>
   );
   return createPortal(node, document.body);

@@ -15,6 +15,8 @@
 import React from 'react';
 import { describe, it, expect } from 'vitest';
 import { render, fireEvent } from '@testing-library/react';
+import { readFileSync } from 'fs';
+import { resolve } from 'path';
 
 // 走已导出的 NarrativeBlock(它内部渲染 ChatImageGroup),这样在旧代码上失败是**行为性**的
 // (预览层不在 body 下),而不是"组件没导出"导致的无法运行。
@@ -37,5 +39,29 @@ describe('ChatImageGroup — 全屏预览', () => {
     expect(container.contains(portalLayer), '预览层留在消息容器里 → 会被 .gc-msg 的动画包含块困住').toBe(false);
     // 预览里显示的是同一张图
     expect(portalLayer.querySelector(`img[src="${IMG.url}"]`)).toBeTruthy();
+  });
+
+  it('右上角关闭按钮用 SVG 图标(几何居中),不再用文本 ×', () => {
+    // 用户上报:「大叉没在白色圆心的中心」。文本 × 的落位 = 字体度量 + 行盒 + button 的 UA
+    // 默认 padding 三者叠加,定高圆里必然偏;SVG 在 24×24 viewBox 内几何居中,与 Modal 同做法。
+    const { container } = render(<NarrativeBlock text="GM" images={[IMG]} />);
+    fireEvent.click(container.querySelector('.rpg-chat-img'));
+
+    const close = document.body.querySelector('.ilb__close');
+    expect(close, '预览层应有关闭按钮').toBeTruthy();
+    expect(close.querySelector('svg'), '关闭按钮应为 SVG 图标').toBeTruthy();
+    expect(close.textContent.trim(), '不该再有文本 × 参与居中').toBe('');
+  });
+});
+
+describe('.ilb__close 的居中样式(源码锁)', () => {
+  it('必须显式 flex 居中并清掉 UA 默认 padding', () => {
+    const css = readFileSync(resolve(__dirname, '../media.css'), 'utf-8');
+    const block = css.slice(css.indexOf('.ilb__close'));
+    const rule = block.slice(0, block.indexOf('}'));
+    expect(rule).toContain('display: flex');
+    expect(rule).toContain('align-items: center');
+    expect(rule).toContain('justify-content: center');
+    expect(rule).toContain('padding: 0');
   });
 });
