@@ -23,13 +23,15 @@
  *       }
  *   · generating  布尔(调用方各自映射到自己的 busy 表示)。
  *   · error / credsMissing  分类后的错误态(isCredentialsError → credsMissing)。
- *   · onDone(url)  done 时回调(成功 url)。onFail(msg,{creds})  可选,失败时回调(承接 MediaStudio
- *                  把生图失败路由进它与上传/图库共用的 fail())。
+ *   · onDone(url, imageId)  done 时回调(成功 url + 该图在 ai_images 里的 id)。onFail(msg,{creds})
+ *                  可选,失败时回调(承接 MediaStudio 把生图失败路由进它与上传/图库共用的 fail())。
  *
  * 轮询固定 2s(setTimeout 链),终态 = done(需 url,若 requireUrl)/ failed / **cancelled**,
  * 并受 maxPollAttempts 硬上限约束;凭据分类统一走 lib/creds.isCredentialsError(对字符串即
  * /credentials_required|needs_credentials/i,与两宿主原逻辑等价)。
  * stop() 会作废在途请求(取消纪元),所以关弹窗/卸载之后不会再有一条自己复活的轮询链。
+ * 成功时**就地广播** `rpg-image-updated`(op=ready,与后端 SSE 同形状):生图跑在独立进程里,
+ * 它的 SSE 事件跨进程投递需要 Redis,没配时聊天里的图要刷新才出现 —— 这一枪让当前浏览器实时追加。
  */
 import { useState, useRef, useCallback, useEffect } from 'react';
 import { isCredentialsError } from '../lib/creds.js';
@@ -46,6 +48,8 @@ export function useImageGeneration({ onDone, onFail } = {}) {
   const [error, setError] = useState(null);
   const [credsMissing, setCredsMissing] = useState(false);
   const pollRef = useRef(null);
+  // 本次生成的 kind(供成功时本地广播事件带上,消费方用它当 tooltip/分类)。
+  const kindRef = useRef('');
   // 陈旧取消守卫:每次 generate() 递增,poll 在每个 await 后校验是否仍为当前轮次。
   const genIdRef = useRef(0);
   // 取消纪元:stop() 递增。只靠 genIdRef 挡不住**在途**请求 —— 见 stop() 的注释。
@@ -86,10 +90,20 @@ export function useImageGeneration({ onDone, onFail } = {}) {
     else { setCredsMissing(false); setError(m || '操作失败'); }
   }, [stop, onFail]);
 
-  const handleDone = useCallback((url) => {
+  const handleDone = useCallback((url, imageId) => {
     stop();
     setGenerating(false);
-    if (onDone) onDone(url);
+    // 就地广播一条与后端 SSE 同形状的事件(`rpg-image-updated` / op=ready)。
+    // 为什么必须由前端补这一枪:生图实际由**独立进程**(postproc worker)执行,它写库后发的
+    // SSE 事件是跨进程投递 —— 只有配了 Redis 才到得了浏览器。没配 Redis 时(dev/单机的默认
+    // 形态)聊天里的图要刷新页面才出现(用户上报)。这个浏览器自己知道结果,补一条同形状事件
+    // 即可实时追加;真收到服务端事件时,消费方按 image_id 去重,不会重复。
+    try {
+      window.dispatchEvent(new CustomEvent('rpg-image-updated', {
+        detail: { op: 'ready', payload: { image_id: imageId, url, kind: kindRef.current }, ts: Date.now() },
+      }));
+    } catch (_) { /* 事件派发失败不影响生图结果本身 */ }
+    if (onDone) onDone(url, imageId);
   }, [stop, onDone]);
 
   const poll = useCallback((imageId, perCall, myGen, attempt) => {
@@ -114,7 +128,7 @@ export function useImageGeneration({ onDone, onFail } = {}) {
           return;
         }
         const status = pc.doneFromStatus ? pc.doneFromStatus(r) : r.status;
-        if (status === 'done' && (!pc.requireUrl || r.url)) { handleDone(r.url); return; }
+        if (status === 'done' && (!pc.requireUrl || r.url)) { handleDone(r.url, imageId); return; }
         // cancelled 是**终态**(后端取消接口与 wait_for_image 都这么算),此前只认 done/failed,
         // 于是移动端取消过的图在桌面端会被永远轮询 —— 状态不会再变,循环没有出口。
         if (status === 'failed' || status === 'cancelled') { handleFail(r.error || pc.failFallback || '生成失败', pc); return; }
@@ -130,6 +144,7 @@ export function useImageGeneration({ onDone, onFail } = {}) {
   const generate = useCallback(async (body, perCall) => {
     const pc = perCall || {};
     const myGen = ++genIdRef.current;  // 每次生成递增,供 poll 的陈旧守卫比对
+    kindRef.current = (body && body.kind) || '';
     setError(null);
     setCredsMissing(false);
     setGenerating(true);

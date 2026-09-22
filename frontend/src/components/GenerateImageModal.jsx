@@ -52,10 +52,11 @@ export default function GenerateImageModal({
   const [doneUrl, setDoneUrl] = useState('');
 
   // 生图内核(generate + 每 2s 轮询 + creds 分类)收口到 useImageGeneration;busy/error/credsMissing
-  // 取自 hook。done → 就地展示结果 + 透传宿主 onDone。
+  // 取自 hook。done → 就地展示结果 + 透传宿主 onDone(url, imageId);聊天里的实时追加由 hook
+  // 成功时广播的本地 rpg-image-updated 事件负责(不依赖 Redis)。
   const CREDS_TEXT = t('components.generate_image_modal.creds_missing_hint');
   const { generate, generating: busy, error, credsMissing, reset, stop, setError } = useImageGeneration({
-    onDone: (url) => { setDoneUrl(url); if (onDone) onDone(url); },
+    onDone: (url, imageId) => { setDoneUrl(url); if (onDone) onDone(url, imageId); },
   });
   // 反馈采集:生图弹窗(无独立路由)标记当前活跃功能供运行环境快照识别。
   useEffect(() => {

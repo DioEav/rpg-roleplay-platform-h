@@ -22,6 +22,7 @@
  *   按字面文本显示,等下一帧自然补齐。
  */
 import React from 'react';
+import ImageLightbox from './components/ImageLightbox.jsx';
 import './markdown-render.css';
 
 // ── inline 解析 ─────────────────────────────────────────────
@@ -64,29 +65,22 @@ function safeImageUrl(url) {
   return /^\/api\/(storage|images|profile\/avatar)\//.test(cleaned) ? cleaned : null;
 }
 
-// 内联图片 + 点击全屏 lightbox。背景用 <span>(fixed 覆盖) 以免在 <p> 内嵌套 <div> 破坏 HTML。
+// 内联图片 + 点击全屏预览。全屏用 portal 化的 ImageLightbox —— 此前是手写的
+// <span className="mlb-backdrop">(内联 position:fixed),而正文所在的 .gc-msg 带
+// `animation: … forwards`(forwards 填充的动画会成为 fixed 后代的包含块),全屏层被关进
+// 消息气泡 → 黑幕只盖聊天列、大图与关闭按钮在视口外 = 「点图片黑屏」。
+// (同 components/game/GameChatMessages.jsx 的 ChatImageGroup、scripts/CoverFrame.jsx。)
 function MarkdownImage({ src, alt }) {
   const [open, setOpen] = React.useState(false);
-  React.useEffect(() => {
-    if (!open) return;
-    const h = (e) => { if (e.key === "Escape") setOpen(false); };
-    window.addEventListener("keydown", h);
-    return () => window.removeEventListener("keydown", h);
-  }, [open]);
   return React.createElement(
     React.Fragment, null,
     React.createElement("img", {
       src, alt: alt || "", className: "rpg-md__img", loading: "lazy", decoding: "async",
       onClick: () => setOpen(true),
     }),
-    open && React.createElement(
-      "span", { className: "mlb-backdrop", onClick: () => setOpen(false), role: "dialog", "aria-modal": "true" },
-      React.createElement("img", {
-        src, alt: alt || "",
-        style: { maxWidth: "92vw", maxHeight: "90vh", objectFit: "contain", borderRadius: 10, boxShadow: "0 12px 60px rgba(0,0,0,.7)" },
-        onClick: (e) => e.stopPropagation(),
-      })
-    )
+    React.createElement(ImageLightbox, {
+      open, src, alt: alt || "", onClose: () => setOpen(false),
+    })
   );
 }
 

@@ -2,6 +2,7 @@
 
 import React from 'react';
 import { useTranslation } from 'react-i18next';
+import ImageLightbox from '../ImageLightbox.jsx';
 
 // 剧本封面:宽高比自适应海报(模糊填充 + contain),竖/方/横封面都完整显示;悬停更换 + 点击放大。
 function CoverFrame({ src, title, isOwner, onEdit }) {
@@ -30,11 +31,10 @@ function CoverFrame({ src, title, isOwner, onEdit }) {
           <span className="mh-chip" onClick={(e) => { e.stopPropagation(); onEdit && onEdit(); }}>{t('scripts.page.change_cover')}</span>
         </div>
       )}
+      {/* 全屏预览走 portal 化的 ImageLightbox:此前手写的 .mlb-backdrop 是内联 position:fixed,
+          会被祖先的 animation(… forwards)/sticky 造出的包含块困住(黑幕只盖局部、图跑到视口外)。 */}
       {light && (
-        <div className="mlb-backdrop" onClick={() => setLight(false)} role="dialog" aria-modal="true">
-          <img src={src} alt={title} style={{ maxWidth: '92vw', maxHeight: '90vh', objectFit: 'contain', borderRadius: 10, boxShadow: '0 12px 60px rgba(0,0,0,.7)' }} onClick={(e) => e.stopPropagation()} />
-          <button onClick={() => setLight(false)} aria-label={t('common.close')} style={{ position: 'absolute', top: 20, right: 24, width: 38, height: 38, borderRadius: 99, border: 0, background: 'rgba(255,255,255,.14)', color: '#fff', fontSize: 19, cursor: 'pointer' }}>×</button>
-        </div>
+        <ImageLightbox open src={src} alt={title} onClose={() => setLight(false)} />
       )}
     </div>
   );

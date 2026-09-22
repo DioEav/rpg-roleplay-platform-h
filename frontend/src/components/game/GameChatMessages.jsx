@@ -9,6 +9,7 @@ import { Icon } from '../../game-icons.jsx';
 import Modal from '../Modal.jsx';
 import { RpgMarkdown } from '../../markdown-render.jsx';
 import AvatarImg from '../AvatarImg.jsx';
+import ImageLightbox from '../ImageLightbox.jsx';
 import { imagesFromResponse } from '../../lib/image-list.js';
 import { stripNarrativeOps } from '../../narrative-strip.js';
 import { lsGetJSON, lsSetJSON } from '../../lib/storage.js';
@@ -648,12 +649,6 @@ export function useSaveImages(saveId, lastKeyRef) {
 function ChatImageGroup({ images }) {
   const { t } = useTranslation();
   const [lightbox, setLightbox] = useStateA(null);
-  useEffectA(() => {
-    if (!lightbox) return;
-    const h = (e) => { if (e.key === 'Escape') setLightbox(null); };
-    window.addEventListener('keydown', h);
-    return () => window.removeEventListener('keydown', h);
-  }, [lightbox]);
   if (!images || !images.length) return null;
   const multi = images.length > 1;
   return (
@@ -665,12 +660,13 @@ function ChatImageGroup({ images }) {
           <img src={im.url} alt="" loading="lazy" decoding="async" />
         </button>
       ))}
-      {lightbox && (
-        <div className="mlb-backdrop" onClick={() => setLightbox(null)} role="dialog" aria-modal="true">
-          <img src={lightbox} alt="" style={{ maxWidth: '92vw', maxHeight: '90vh', objectFit: 'contain', borderRadius: 10, boxShadow: '0 12px 60px rgba(0,0,0,.7)' }} onClick={(e) => e.stopPropagation()} />
-          <button onClick={() => setLightbox(null)} aria-label={t('common.close')} style={{ position: 'absolute', top: 20, right: 24, width: 38, height: 38, borderRadius: 99, border: 0, background: 'rgba(255,255,255,.14)', color: '#fff', fontSize: 19, cursor: 'pointer' }}>×</button>
-        </div>
-      )}
+      {/* 全屏预览用 portal 化的 ImageLightbox。此前这里是手写的 <div className="mlb-backdrop">
+          (内联 position:fixed) —— 而 .gc-msg 带 `animation: m-stagger … forwards`,按规范
+          forwards 填充的动画会让该元素成为 fixed 后代的**包含块**,于是全屏层被关进消息气泡:
+          黑幕只盖住聊天列、大图与关闭按钮跑到视口外 = 用户报的「点图片就黑屏」。
+          同一个坑本仓修过一次(见 components/ImageLightbox.jsx 头注 / commit fced032),
+          这里是当时漏掉的 3 处之一。 */}
+      <ImageLightbox open={!!lightbox} src={lightbox || ''} alt="" onClose={() => setLightbox(null)} />
     </div>
   );
 }
@@ -780,4 +776,4 @@ function SaveImagesStrip({ saveId }) {
   );
 }
 
-export { NarrativeBlock, PlayerBlock, renderNarrativeWithInlineTools, SaveImagesStrip };
+export { NarrativeBlock, PlayerBlock, renderNarrativeWithInlineTools, SaveImagesStrip, ChatImageGroup };

@@ -35,7 +35,8 @@ describe('useImageGeneration', () => {
     await act(async () => { await result.current.generate({ prompt: 'p' }, {}); });
     // 第一次 get = pending → 排 2s
     await act(async () => { await vi.advanceTimersByTimeAsync(2000); });
-    expect(onDone).toHaveBeenCalledWith('http://x/y.png');
+    // 契约:onDone(url, imageId) —— imageId 供调用方广播本地 image_ready 事件(见 hook 头注)
+    expect(onDone).toHaveBeenCalledWith('http://x/y.png', 'img1');
     expect(result.current.generating).toBe(false);
   });
 
@@ -110,7 +111,7 @@ describe('useImageGeneration', () => {
     });
     // 第一次 get: ok 但无 url → status='done' 但 requireUrl 不满足 → 继续轮询
     await act(async () => { await vi.advanceTimersByTimeAsync(2000); });
-    expect(onDone).toHaveBeenCalledWith('u://ok');
+    expect(onDone).toHaveBeenCalledWith('u://ok', 'imgU');
   });
 
   it('stop():卸载/关闭后不再继续轮询', async () => {
@@ -125,6 +126,32 @@ describe('useImageGeneration', () => {
   });
 
   /* ── 以下三条对应「后端一直在打 GET /api/images/N」的收口 ────────────────── */
+
+  it('成功后就地广播 rpg-image-updated(没配 Redis 时聊天也能实时追加)', async () => {
+    // 生图跑在独立进程(postproc worker)里,它的 SSE 事件跨进程投递要 Redis;
+    // 未配 Redis 的形态下浏览器收不到 → 聊天里的图要刷新才出现。这一枪由前端自己补,
+    // 负载形状必须与 state-event-bridge 产出的完全一致(消费方按 image_id 去重)。
+    const seen = [];
+    const onEvt = (e) => seen.push(e.detail);
+    window.addEventListener('rpg-image-updated', onEvt);
+    try {
+      setApi({
+        generate: vi.fn(async () => ({ image_id: 'imgEv' })),
+        get: vi.fn(async () => ({ status: 'done', url: 'https://cdn/e.png' })),
+      });
+      const { result } = renderHook(() => useImageGeneration({}));
+      await act(async () => { await result.current.generate({ prompt: 'p', kind: 'game' }, {}); });
+
+      expect(seen).toHaveLength(1);
+      expect(seen[0]).toEqual({
+        op: 'ready',
+        payload: { image_id: 'imgEv', url: 'https://cdn/e.png', kind: 'game' },
+        ts: expect.any(Number),
+      });
+    } finally {
+      window.removeEventListener('rpg-image-updated', onEvt);
+    }
+  });
 
   it('cancelled 是终态:停止轮询并报错', async () => {
     // 后端取消接口 / wait_for_image 都把 cancelled 当终态,前端此前只认 done/failed →
