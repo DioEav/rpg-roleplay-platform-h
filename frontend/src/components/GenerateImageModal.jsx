@@ -10,6 +10,7 @@ import CSAlert from '@cloudscape-design/components/alert';
 import CSStatusIndicator from '@cloudscape-design/components/status-indicator';
 import AgentModelPicker from './AgentModelPicker.jsx';
 import ImageSizePicker from './ImageSizePicker.jsx';
+import AvatarImg from './AvatarImg.jsx';
 import { useImageGeneration } from '../hooks/useImageGeneration.js';
 import { plGoto } from '../router.js';
 
@@ -26,7 +27,10 @@ import { plGoto } from '../router.js';
    内部流程:
      1. 点「生成」→ POST /api/images/generate → {image_id, status:'pending'}
      2. 每 2s 轮询 GET /api/images/{image_id} 直到 status==='done' 或 'failed'
-     3. done → onDone(url) + 关闭弹窗
+     3. done → **留在弹窗里就地展示结果**（点图看大图）+ 调宿主 onDone(url)
+        —— 不再自动关闭：此前直接 onClose() 而宿主 onDone 是空实现，用户既看不到图、
+        URL 也被丢弃，只留下"弹窗一闪就没了"（用户上报）。关窗不取消后端任务，
+        图已经存进图库，所以留窗展示不会丢结果。
      4. failed / credentials_required → 显示错误提示
 */
 export default function GenerateImageModal({
@@ -44,12 +48,14 @@ export default function GenerateImageModal({
   const [prompt, setPrompt] = useState(defaultPrompt);
   const [size, setSize] = useState('');
   const [selModel, setSelModel] = useState({ api_id: '', model: '' });
+  // 生成成功后的结果 URL。非空 = 弹窗切到「结果视图」（不再自动关闭）。
+  const [doneUrl, setDoneUrl] = useState('');
 
   // 生图内核(generate + 每 2s 轮询 + creds 分类)收口到 useImageGeneration;busy/error/credsMissing
-  // 取自 hook。done → onDone(url)+onClose;creds 文案逐字保留。
+  // 取自 hook。done → 就地展示结果 + 透传宿主 onDone。
   const CREDS_TEXT = t('components.generate_image_modal.creds_missing_hint');
   const { generate, generating: busy, error, credsMissing, reset, stop, setError } = useImageGeneration({
-    onDone: (url) => { if (onDone) onDone(url); if (onClose) onClose(); },
+    onDone: (url) => { setDoneUrl(url); if (onDone) onDone(url); },
   });
   // 反馈采集:生图弹窗(无独立路由)标记当前活跃功能供运行环境快照识别。
   useEffect(() => {
@@ -103,6 +109,7 @@ export default function GenerateImageModal({
   function handleClose() {
     if (busy) return;
     reset();
+    setDoneUrl('');
     if (onClose) onClose();
   }
 
@@ -114,19 +121,55 @@ export default function GenerateImageModal({
       footer={
         <CSBox float="right">
           <CSSpaceBetween direction="horizontal" size="xs">
-            <CSButton onClick={handleClose} disabled={busy}>{t('common.cancel')}</CSButton>
-            <CSButton
-              variant="primary"
-              loading={busy}
-              disabled={busy || !(prompt || '').trim()}
-              onClick={handleGenerate}
-            >
-              {t('components.generate_image_modal.generate_btn')}
-            </CSButton>
+            {/* 结果视图与表单视图的按钮组互斥(避免 SpaceBetween 收到 Fragment 子元素而丢间距) */}
+            {doneUrl ? [
+              <CSButton key="close" onClick={handleClose}>
+                {t('components.generate_image_modal.close_btn')}
+              </CSButton>,
+              <CSButton key="again" variant="primary" onClick={() => { reset(); setDoneUrl(''); }}>
+                {t('components.generate_image_modal.regenerate_btn')}
+              </CSButton>,
+            ] : [
+              <CSButton key="cancel" onClick={handleClose} disabled={busy}>{t('common.cancel')}</CSButton>,
+              <CSButton
+                key="gen"
+                variant="primary"
+                loading={busy}
+                disabled={busy || !(prompt || '').trim()}
+                onClick={handleGenerate}
+              >
+                {t('components.generate_image_modal.generate_btn')}
+              </CSButton>,
+            ]}
           </CSSpaceBetween>
         </CSBox>
       }
     >
+      {doneUrl ? (
+        <CSSpaceBetween size="m">
+          <CSBox variant="h3">{t('components.generate_image_modal.result_title')}</CSBox>
+          <div style={{ display: 'flex', justifyContent: 'center' }}>
+            {/* AvatarImg 自带「点击开全屏」(zoomable → ImageLightbox),无需另外接线;
+                加载失败时它自己降级成占位,不会露出破图。 */}
+            <AvatarImg
+              src={doneUrl}
+              name={t('components.generate_image_modal.result_title')}
+              size={220}
+              shape="rounded"
+              zoomable
+            />
+          </div>
+          <CSBox color="text-body-secondary" fontSize="body-s">
+            {t('components.generate_image_modal.result_saved_hint')}
+          </CSBox>
+          {prompt ? (
+            <CSBox fontSize="body-s">
+              <span className="muted-2">{t('components.generate_image_modal.result_prompt_label')}</span>
+              {' '}{prompt}
+            </CSBox>
+          ) : null}
+        </CSSpaceBetween>
+      ) : (
       <CSSpaceBetween size="m">
         {busy && (
           <CSStatusIndicator type="loading">
@@ -171,6 +214,7 @@ export default function GenerateImageModal({
           <ImageSizePicker kind={kind} value={size} onChange={setSize} />
         </CSFormField>
       </CSSpaceBetween>
+      )}
     </CSModal>
   );
 }

@@ -1004,7 +1004,9 @@
     // POST /api/images/generate → {image_id, status:'pending'}
     // GET  /api/images/{id}    → {id, status, url, error, kind}
     // GET  /api/images/file/{name} → FileResponse(静态文件)
-    // GET  /api/images/list?save_id=X → [{id,url,kind,prompt,status,created_at}]
+    // GET  /api/images/list?save_id=X → 信封 {ok, images:[{id,url,kind,prompt,status,created_at,message_index}], meta}
+    //      ⚠️ 本层不解包(只 return payload) —— 消费方请用 lib/image-list.js 的 imagesFromResponse()
+    //      归一,别再写 Array.isArray(res)(那会把信封当"空列表",刷新后图全丢)。
     images: {
       generate: (body) => POST(`/api/images/generate`, body),
       get: (id) => GET(`/api/images/` + encodeURIComponent(id)),

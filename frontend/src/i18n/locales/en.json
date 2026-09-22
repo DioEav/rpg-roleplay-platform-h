@@ -7360,6 +7360,11 @@
       "model_picker_description": "Choose an image generation model (only models that support image generation are shown)",
       "size_label": "Size / Aspect Ratio",
       "size_description": "Default aspect ratio is recommended based on usage type; your selection is saved locally. Vertex (Gemini) does not support custom sizes.",
+      "result_title": "Result",
+      "result_saved_hint": "Click the image to view it full size. It has been saved to your library (find it under \"Library\").",
+      "result_prompt_label": "Prompt used:",
+      "regenerate_btn": "Generate another",
+      "close_btn": "Close",
       "error": {
         "no_image_id": "Server did not return a task ID",
         "generate_failed": "Generation failed",

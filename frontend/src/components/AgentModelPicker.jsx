@@ -37,6 +37,25 @@ function _readLocalSnapshot() {
   } catch (_) { return null; }
 }
 
+/** 用户显式改了偏好之后,把结果**写穿**快照(内存 + localStorage 镜像),并把内存快照标记为
+ *  不新鲜(ts=0,`_snapshotFresh` 据此判否)。
+ *  为什么必须写穿:快照只在 _fetchShared 成功时写入,persist() 不改它 —— 于是"刚选完 → 5 分钟内
+ *  重开"会解析出**改前**的旧值;本次把 init 回声恢复成两条路径都发之后,那个旧值还会被交给父组件
+ *  (ScriptDetail 的 audit-cards 用 body 覆盖后端偏好 → 直接提交错模型)。
+ *  ts=0 则保证下次挂载仍会做一次校真(目录/凭据/服务端偏好也可能在此期间变了)——两端都要:
+ *  既让"画出来的第一帧"是对的,又不把校真关掉。 */
+function _patchSnapshotPrefs(patch) {
+  const apply = (snap) => {
+    if (!snap) return;
+    snap.prefs = { ...(snap.prefs || {}), ...patch };
+  };
+  try {
+    if (_shared) { apply(_shared); _shared.ts = 0; }
+    const ls = _readLocalSnapshot();
+    if (ls) { apply(ls); lsSetJSON(_SNAPSHOT_KEY, ls); }
+  } catch (_) { /* 快照只是缓存,写失败不影响落库本身 */ }
+}
+
 async function _fetchShared() {
   // 逐项 catch:某一项失败不拖垮其它两项(与旧的每项 .catch(() => ({})) 等价);
   // 只有目录和凭据【双双】失败才算失败 → 上层进错误态(可重试),而不是假扮"没配 key"。
@@ -199,6 +218,14 @@ export default function AgentModelPicker({
   const [syncing, setSyncing] = useState(false);      // stale 快照已上屏、后台校真进行中 → 提示"列表可能马上更新"
   const popRef = useState(() => React.createRef())[0];
   const popTriggerRef = useState(() => React.createRef())[0];
+  // 上次回声过的 "api|model":同一值不重复回声(内存快照→校真两趟常解析出同一个值)。
+  const lastEchoRef = useState(() => ({ current: '' }))[0];
+  // 用户显式动过选择器的**代次**(选模型 / 切换继承 → +1)。
+  // 用途:丢弃「在这一代之前发出的」校真响应 —— 冷加载时 /api/me/profile 这类重接口可能几秒才回,
+  // 期间用户点了模型,那份带着改前旧值的结果回来会把用户的选择改回去("选完自己变回去")。
+  // 用计数器而不是布尔:换/删 API Key 会触发 reloadTick 重拉(那是一次**新的**请求,应当被应用),
+  // 布尔标记会把它一起挡掉 —— 计数器的比较只丢弃"发出早于用户操作"的那一份。
+  const userTouchEpochRef = useState(() => ({ current: 0 }))[0];
 
   // 换/删 API Key 后(api-client 广播 rpg-credentials-updated)重拉 API/模型/凭据列表,
   // 让下拉里能选的 provider/模型与当前 key 同步。
@@ -209,8 +236,8 @@ export default function AgentModelPicker({
   }, []);
 
   // 数据应用:把一份 {models, creds, prefs} 推导成选中态。推导逻辑与旧版逐行一致(机械搬家)。
-  // authoritative=false(stale 快照先画)时:不做 onChange('init') 回声、不做 persistOnMount 写回 ——
-  // 游戏内浮层据此不关闭/不刷新,临时值也绝不落库。
+  // authoritative=false(stale 快照先画)时:不做 persistOnMount 写回 —— 临时值绝不落库
+  // (游戏内浮层据 source 判断不关闭/不刷新);但**回声照发**,见下方 onChange 处。
   const applyData = (modelsData, credsData, prefsData, { authoritative = true } = {}) => {
     {
         const list = modelsData?.models?.apis || (Array.isArray(modelsData?.apis) ? modelsData.apis : []) || [];
@@ -302,9 +329,17 @@ export default function AgentModelPicker({
         setApiId(chosenApi);
         setModel(chosenModel);
         // 把解析出的当前 provider+model 告知父组件(父拿它提交),与展示完全一致,不依赖 persistOnMount。
-        // source='init':这是「挂载时解析出的当前模型回声」,不是用户真的换了模型 ——
+        // source='init':这是「解析出的当前模型回声」,不是用户真的换了模型 ——
         // 游戏内浮层据此【不关闭/不刷新】(否则一打开就被这条回声关掉,见 game-composer / MobileGame)。
-        if (authoritative && chosenApi && chosenModel) onChange && onChange(chosenApi, chosenModel, 'init');
+        // ⚠️ 快照路径(authoritative=false)也必须回声:新鲜内存快照会 early return、校真那趟永不执行
+        // (见下方挂载 effect 第 ② 步),不回声就会出现「选择器自己把模型画上屏、父组件拿到的却是空值」
+        // —— 生图弹窗据此报「请先选择模型」,必须重选一次才成功(2026-09 回归)。
+        // 同一个值只回一次声(内存快照→校真两趟值相同时不重复 setState)。
+        const echoKey = `${chosenApi}|${chosenModel}`;
+        if (chosenApi && chosenModel && lastEchoRef.current !== echoKey) {
+          lastEchoRef.current = echoKey;
+          onChange && onChange(chosenApi, chosenModel, 'init');
+        }
         // 无偏好时把解析出的一致默认写回(仅当 provider+model 都有效),避免"显示一套、后端用另一套"。
         // persistOnMount 只对 flat shape 有意义(dict/models_select/allowInherit 不在挂载时强写)。
         // stale 快照先画(authoritative=false)时不写回 —— 临时值绝不落库。
@@ -338,6 +373,8 @@ export default function AgentModelPicker({
         if (!cancelled) { setLoaded(true); setLoadError(false); setSyncing(false); }
         return;
       }
+      // 记下"这一份请求是第几代发出的":回来时若用户已经动过(代次变了),就丢弃它。
+      const touchedAtStart = userTouchEpochRef.current;
       try {
         const s = await _getShared();
         if (cancelled) return;
@@ -349,6 +386,9 @@ export default function AgentModelPicker({
           return;
         }
         setLoadError(false);
+        // 发出这份请求之后用户动过选择器 → 它的值可能已经过时,不能覆盖用户的选择,连回声也不发。
+        // 只摘掉"同步中"提示。(换/删 Key 触发的重拉是在用户操作**之后**发出的,代次相同 → 照常应用。)
+        if (userTouchEpochRef.current !== touchedAtStart) return;
         applyData(s.models, s.creds, s.prefs, { authoritative: true });
       } catch (_) {
         // 有 stale 快照在屏就不吓用户(后台刷新失败,保留旧画面);从零失败才亮错误态
@@ -374,6 +414,8 @@ export default function AgentModelPicker({
   // 统一落库:按 persistShape 走 flat 双 key / dict 单 key 对象 / POST /api/models/select。
   const persist = async (aid, m) => {
     if (!aid || !m) return;
+    // 推进代次必须在 await **之前**:在途的那份校真响应回来时不该覆盖用户这次选择。
+    userTouchEpochRef.current += 1;
     setSaving(true);
     setInherit(false);
     try {
@@ -391,6 +433,15 @@ export default function AgentModelPicker({
         });
       }
       onChange && onChange(aid, m, 'user');   // 用户真的换了模型 → 浮层据此关闭/刷新
+      // 新值写穿快照:否则 5 分钟内重开时快照仍解析出**改前**的旧值,而它会被 init 回声交给
+      // 父组件(ScriptDetail 这类"body 覆盖后端偏好"的接口会因此提交错模型)。
+      _patchSnapshotPrefs(
+        persistShape === 'dict' && dictKey
+          ? { [dictKey]: { api_id: aid, model: m } }
+          : persistShape === 'models_select'
+            ? {}   // 这个 shape 没有 pref 键 → 只靠 ts=0 让下次挂载校真取回真值
+            : { [`${prefPrefix}.api_id`]: aid, [`${prefPrefix}.model_real_name`]: m },
+      );
       // 渠道健康门控:选中的渠道最近多次故障 —— 不阻止选择,只 warn 提示(models_select 路径,
       // 即游戏内 GM 模型切换;其它 persistShape 维持原静默行为,与既有 reject 分支同范围)。
       if (persistShape === 'models_select' && isChannelDegraded(aid, m)) {
@@ -408,6 +459,7 @@ export default function AgentModelPicker({
 
   // allowInherit:清空本功能偏好 → 后端解析回退主 GM / 系统默认。
   const persistInherit = async () => {
+    userTouchEpochRef.current += 1;   // 同 persist():推进代次要放在 await 之前
     setSaving(true);
     try {
       if (persistShape === 'dict' && dictKey) {
@@ -421,6 +473,12 @@ export default function AgentModelPicker({
       setInherit(true);
       setCustomSel(false);
       onChange && onChange(null, null, 'user');
+      // 镜像"已清空":否则快照里仍留着旧偏好,下次挂载又会把它画上屏/回声给父组件。
+      _patchSnapshotPrefs(
+        persistShape === 'dict' && dictKey
+          ? { [dictKey]: null }
+          : { [`${prefPrefix}.api_id`]: null, [`${prefPrefix}.model_real_name`]: null },
+      );
     } catch (_) { /* 静默 */ } finally { setSaving(false); }
   };
 

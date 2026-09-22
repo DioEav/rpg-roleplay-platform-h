@@ -219,7 +219,12 @@ function ConfigCard({ it, handleId, onConfigDefault, onConfigContinue, onConfigS
               preferProvider={item.api_id || null}
               defaultModel={model || null}
               configHash="settings-models"
-              onChange={() => setReady(true)}
+              onChange={(_a, _m, source) => {
+                // 只认用户真的动了选择器(或下面监听 rpg-credentials-updated):init 回声是
+                // "解析出的当前模型",在**一个 key 都没配**时也能解析出非空对(preferProvider /
+                // defaultModel 兜底)→ 会把「继续」提前点亮,用户点了只是清卡片再失败一次。
+                if (source !== 'init') setReady(true);
+              }}
             />
             <div className="gc-confirm-actions">
               <button className="gc-chip-btn gc-chip-primary" disabled={!ready}

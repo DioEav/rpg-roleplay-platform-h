@@ -251,7 +251,13 @@ export default function ModelConfigInterceptModal({ open, item, onResolve, onCan
             preferProvider={item.api_id || null}
             defaultModel={requestedModel || null}
             configHash="settings-models"
-            onChange={(api_id, model) => setChosen({ api_id, model })}
+            onChange={(_a, _m, source) => {
+              // 只在用户真的换了模型时改写 chosen。init 回声是"解析出的当前模型",会把
+              // 本弹窗按 popup 需求预置的 {item.api_id, item.model} 换掉 —— 之前靠
+              // "子 effect 先于父 effect" 的时序巧合把它吞掉,这里显式忽略,别再依赖顺序。
+              if (source === 'init') return;
+              setChosen({ api_id: _a, model: _m });
+            }}
           />
         )}
 

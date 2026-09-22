@@ -13,7 +13,7 @@
  */
 import React from 'react';
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
 import { readFileSync } from 'fs';
 import { resolve } from 'path';
 
@@ -231,6 +231,170 @@ describe('AgentModelPicker — 共享 store(请求去重 + 快照上屏)', () =>
     await screen.findByText('DeepSeek V4-Pro');
     // stale 在屏期间不渲染告警
     expect(screen.queryByText('尚未配置任何 API key')).toBeNull();
+  });
+});
+
+describe('AgentModelPicker — init 回声(父组件拿值提交)', () => {
+  /** 预热共享 store:渲染一次并把三个接口都 resolve → _shared 变新鲜(下次挂载走 early return)。 */
+  async function warmSharedStore() {
+    const d = installHangingApi();
+    const first = render(<Picker />);
+    d.models.resolve(CATALOG);
+    d.creds.resolve(CREDS);
+    d.profile.resolve({ preferences: PREFS });
+    await screen.findByText('DeepSeek V4-Pro');
+    first.unmount();
+  }
+
+  it('内存快照新鲜(早退、不发校真请求)时,父组件仍必须收到 init 回声', async () => {
+    await warmSharedStore();
+    // 第二次挂载:_shared 新鲜 → 0 请求直达,不会走 authoritative 那一趟
+    installHangingApi();
+    const onChange = vi.fn();
+    render(<Picker onChange={onChange} />);
+
+    await waitFor(() => expect(onChange).toHaveBeenCalledTimes(1));
+    expect(onChange.mock.calls[0][0]).toBe('deepseek');
+    expect(onChange.mock.calls[0][1]).toBe('deepseek-v4-pro');
+    expect(onChange.mock.calls[0][2]).toBe('init');
+    // 早退路径确实没打网络(否则这条用例锁的就不是快照路径了)
+    expect(window.api.models.list).not.toHaveBeenCalled();
+  });
+
+  it('快照路径即使传了 persistOnMount 也不写库(临时值绝不落库)', async () => {
+    await warmSharedStore();
+    installHangingApi();
+    render(<Picker persistOnMount />);
+    await waitFor(() => expect(window.api.account.preferences).not.toHaveBeenCalled());
+  });
+
+  it('stale 快照 + 校真值不同 → 两次 init 回声,顺序为「快照值 → 校真值」', async () => {
+    localStorage.setItem('agent_picker_snapshot_v1', JSON.stringify({
+      ts: Date.now() - 30 * 60 * 1000,   // 过期 → 会走校真
+      models: CATALOG, creds: CREDS,
+      prefs: { 'extractor.api_id': 'deepseek', 'extractor.model_real_name': 'old-model-x' },
+    }));
+    const d = installHangingApi();
+    const onChange = vi.fn();
+    render(<Picker onChange={onChange} />);
+    // 第一枪:快照画屏时立刻回声(旧值)
+    await waitFor(() => expect(onChange).toHaveBeenCalled());
+    d.models.resolve(CATALOG);
+    d.creds.resolve(CREDS);
+    d.profile.resolve({ preferences: PREFS });   // 校真给出 deepseek-v4-pro
+    await waitFor(() => expect(onChange).toHaveBeenCalledTimes(2));
+    expect(onChange.mock.calls.map((c) => [c[1], c[2]])).toEqual([
+      ['old-model-x', 'init'],
+      ['deepseek-v4-pro', 'init'],
+    ]);
+  });
+});
+
+describe('AgentModelPicker — 用户操作与在途校真的竞争', () => {
+  // popover 变体的模型是**普通按钮**(内联渲染,不走 Cloudscape 虚拟下拉),所以这里能驱动
+  // 一次真实的"用户选模型"——这是唯一可自动化的用户操作入口。
+  const TWO_MODEL_CATALOG = {
+    models: {
+      apis: [{
+        api_id: 'deepseek', display_name: 'DeepSeek', enabled: true,
+        models: [
+          { real_name: 'deepseek-v4-pro', display_name: 'DeepSeek V4-Pro', enabled: true, capabilities: ['text'] },
+          { real_name: 'deepseek-v4-flash', display_name: 'DeepSeek V4-Flash', enabled: true, capabilities: ['text'] },
+        ],
+      }],
+      selected: { api_id: 'deepseek', model_id: 'deepseek-v4-pro' },
+    },
+  };
+  const PREFS_PRO = { 'extractor.api_id': 'deepseek', 'extractor.model_real_name': 'deepseek-v4-pro' };
+
+  /** 每次调用给一个独立 deferred,测试自己决定第几次拉取返回什么(模拟"重拉拿到不同数据")。 */
+  function installMultiFetchApi() {
+    const mk = () => { let resolve; const promise = new Promise((r) => { resolve = r; }); return { promise, resolve }; };
+    const slots = { models: [], creds: [], profile: [] };
+    const grab = (arr) => vi.fn(() => { const d = mk(); arr.push(d); return d.promise; });
+    window.api = {
+      account: {
+        profile: grab(slots.profile),
+        preferences: vi.fn().mockResolvedValue({ ok: true }),
+        getPreferences: vi.fn().mockResolvedValue({ preferences: {} }),
+      },
+      models: { list: grab(slots.models) },
+      credentials: { list: grab(slots.creds) },
+    };
+    return {
+      fetchCount: () => slots.models.length,
+      resolveFetch(n, { models, creds, prefs }) {
+        slots.models[n].resolve(models);
+        slots.creds[n].resolve(creds);
+        slots.profile[n].resolve({ preferences: prefs || {} });
+      },
+    };
+  }
+
+  function seedStaleSnapshot(prefs = PREFS_PRO, models = TWO_MODEL_CATALOG) {
+    localStorage.setItem('agent_picker_snapshot_v1', JSON.stringify({
+      ts: Date.now() - 30 * 60 * 1000, models, creds: CREDS, prefs,
+    }));
+  }
+
+  it('在途校真带着改前的旧值回来时,不得覆盖用户刚选的模型', async () => {
+    seedStaleSnapshot();
+    const api = installMultiFetchApi();
+    const onChange = vi.fn();
+    render(<Picker variant="popover" onChange={onChange} />);
+
+    // 快照先画 → 直接点另一个模型(用户操作)
+    fireEvent.click(await screen.findByText('DeepSeek V4-Flash'));
+    await waitFor(() => expect(window.api.account.preferences).toHaveBeenCalled());
+    const callsAfterPick = onChange.mock.calls.length;
+    expect(onChange).toHaveBeenLastCalledWith('deepseek', 'deepseek-v4-flash', 'user');
+
+    // 校真回来,带着**改前**的偏好(deepseek-v4-pro)
+    await act(async () => {
+      api.resolveFetch(0, { models: TWO_MODEL_CATALOG, creds: CREDS, prefs: PREFS_PRO });
+      await new Promise((r) => setTimeout(r, 30));   // 让校真落地
+    });
+
+    expect(onChange.mock.calls.length, '校真不该再补一枪回声').toBe(callsAfterPick);
+    expect(onChange).toHaveBeenLastCalledWith('deepseek', 'deepseek-v4-flash', 'user');
+  });
+
+  it('用户选过之后,换/删 Key 触发的重拉仍必须生效(守卫不能把它一起挡掉)', async () => {
+    seedStaleSnapshot();
+    const api = installMultiFetchApi();
+    render(<Picker variant="popover" />);
+
+    fireEvent.click(await screen.findByText('DeepSeek V4-Flash'));
+    await waitFor(() => expect(window.api.account.preferences).toHaveBeenCalled());
+    await act(async () => {
+      api.resolveFetch(0, { models: TWO_MODEL_CATALOG, creds: CREDS, prefs: PREFS_PRO });
+      await new Promise((r) => setTimeout(r, 30));
+    });
+
+    // 换/删 API Key → 广播 → 组件必须重新拉一轮(这不是"在途的旧响应",而是新的事实)
+    await act(async () => {
+      window.dispatchEvent(new Event('rpg-credentials-updated'));
+      await new Promise((r) => setTimeout(r, 0));
+    });
+    await waitFor(() => expect(api.fetchCount()).toBe(2));
+    await act(async () => {
+      api.resolveFetch(1, {
+        models: {
+          apis: [
+            ...TWO_MODEL_CATALOG.models.apis,
+            { api_id: 'moonshot', display_name: 'Moonshot', enabled: true,
+              models: [{ real_name: 'kimi-x', display_name: 'Kimi X', enabled: true, capabilities: ['text'] }] },
+          ],
+          selected: { api_id: 'deepseek', model_id: 'deepseek-v4-pro' },
+        },
+        creds: { items: [...CREDS.items, { api_id: 'moonshot', configured: true, enabled: true, auth_mode: 'api_key' }] },
+        prefs: PREFS_PRO,
+      });
+      await new Promise((r) => setTimeout(r, 30));
+    });
+
+    // 新 provider 的模型出现在列表里 = 这一轮重拉被应用了
+    expect(await screen.findByText('Kimi X')).toBeTruthy();
   });
 });
 

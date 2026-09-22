@@ -7357,6 +7357,11 @@
       "model_picker_description": "选择生图模型（仅展示支持图像生成的模型）",
       "size_label": "尺寸 / 比例",
       "size_description": "按用途推荐默认比例；改一次后本地记住。vertex(Gemini) 暂不支持自定义尺寸",
+      "result_title": "生成结果",
+      "result_saved_hint": "点击图片可看大图；图片已存入图库（可在「文件库」里找到）。",
+      "result_prompt_label": "本次描述：",
+      "regenerate_btn": "再生成一张",
+      "close_btn": "关闭",
       "error": {
         "no_image_id": "服务端未返回任务 ID",
         "generate_failed": "生成失败",

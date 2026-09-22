@@ -9,6 +9,7 @@ import { Icon } from '../../game-icons.jsx';
 import Modal from '../Modal.jsx';
 import { RpgMarkdown } from '../../markdown-render.jsx';
 import AvatarImg from '../AvatarImg.jsx';
+import { imagesFromResponse } from '../../lib/image-list.js';
 import { stripNarrativeOps } from '../../narrative-strip.js';
 import { lsGetJSON, lsSetJSON } from '../../lib/storage.js';
 import { copyText } from '../../lib/clipboard.js';
@@ -601,7 +602,9 @@ export function useSaveImages(saveId, lastKeyRef) {
       try {
         const list = await window.api.images.list(saveId);
         if (cancelled) return;
-        const done = Array.isArray(list) ? list.filter((im) => im.status === 'done' && im.url) : [];
+        // 后端返回的是信封 {ok, images, meta}（api-client 不解包）——此前按裸数组判 Array.isArray，
+        // 结果恒为空数组 → 刷新后聊天里的生图全部消失。见 lib/image-list.js。
+        const done = imagesFromResponse(list).filter((im) => im.status === 'done' && im.url);
         const map = mapRef.current;
         // 反馈#74:优先用后端权威 message_index(刷新后确定性还原),旧行回退 localStorage 映射。
         setImages(done.map((im) => ({
@@ -688,9 +691,8 @@ function SaveImagesStrip({ saveId }) {
       try {
         const list = await window.api.images.list(saveId);
         if (cancelled) return;
-        const done = Array.isArray(list)
-          ? list.filter((img) => img.status === 'done' && img.url)
-          : [];
+        // 同上:信封 {ok, images} → 归一(此前按裸数组判,导致刷新后这条图带永远是空的)。
+        const done = imagesFromResponse(list).filter((img) => img.status === 'done' && img.url);
         setImages(done);
       } catch (_) { /* 静默:后端未实装时不崩 */ }
     })();
