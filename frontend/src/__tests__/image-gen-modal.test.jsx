@@ -17,6 +17,7 @@ import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 
 import GenerateImageModal from '../components/GenerateImageModal.jsx';
 import { _resetPickerStoreForTests } from '../components/AgentModelPicker.jsx';
+import { chatImageAnchor } from '../components/game/chat-image-anchor.js';
 
 vi.mock('../router.js', () => ({ plGoto: vi.fn() }));
 
@@ -66,9 +67,9 @@ function installApi({ poll } = {}) {
 }
 
 /** 打开弹窗并填好 prompt(与真实使用一致:先描述、再点生成)。 */
-function openWithPrompt(prompt = '一只在窗台上的猫') {
+function openWithPrompt(prompt = '一只在窗台上的猫', extraProps = {}) {
   const onClose = vi.fn();
-  render(<GenerateImageModal open kind="game" onClose={onClose} />);
+  render(<GenerateImageModal open kind="game" onClose={onClose} {...extraProps} />);
   const ta = document.querySelector('textarea');
   expect(ta, '弹窗里应有 prompt 文本域').toBeTruthy();
   fireEvent.change(ta, { target: { value: prompt } });
@@ -78,6 +79,7 @@ function openWithPrompt(prompt = '一只在窗台上的猫') {
 beforeEach(() => {
   _resetPickerStoreForTests();
   window.localStorage.clear();
+  chatImageAnchor.lastAsstKey = null;   // 每例清干净,免得跨例污染(单例是模块级的)
 });
 
 afterEach(() => {
@@ -104,6 +106,33 @@ describe('生图弹窗 — 模型回声', () => {
       model: 'deepseek-v4-pro',
     });
     expect(screen.queryByText('请先选择模型')).toBeNull();
+  });
+});
+
+describe('生图弹窗 — 消息索引绑定', () => {
+  it('saveId 场景:点击生成时带锚点的 message_index(图绑到当时最后一条助手消息)', async () => {
+    seedFreshSnapshot();
+    const { generate } = installApi();
+    chatImageAnchor.lastAsstKey = '7';     // 聊天视图发布"当前最后一条助手消息索引 7"
+    openWithPrompt('绑定消息的图', { saveId: '9' });
+    await waitFor(() => expect(screen.getByText('DeepSeek V4-Pro')).toBeTruthy());
+
+    fireEvent.click(screen.getByText('生成'));
+
+    await waitFor(() => expect(generate).toHaveBeenCalledTimes(1));
+    expect(generate.mock.calls[0][0]).toMatchObject({ save_id: '9', message_index: 7 });
+  });
+
+  it('锚点为空(还没有助手消息)→ 不带 message_index 字段', async () => {
+    seedFreshSnapshot();
+    const { generate } = installApi();
+    openWithPrompt('没有锚点', { saveId: '9' });
+    await waitFor(() => expect(screen.getByText('DeepSeek V4-Pro')).toBeTruthy());
+
+    fireEvent.click(screen.getByText('生成'));
+
+    await waitFor(() => expect(generate).toHaveBeenCalledTimes(1));
+    expect('message_index' in generate.mock.calls[0][0]).toBe(false);
   });
 });
 

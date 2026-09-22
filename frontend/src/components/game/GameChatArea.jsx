@@ -6,6 +6,7 @@ import { Icon } from '../../game-icons.jsx';
 import { useStickToBottom } from '../../hooks/useStickToBottom.js';
 import { ToolCallBlock } from '../ToolCallBlock.jsx';
 import { NarrativeBlock, PlayerBlock, useSaveImages } from './GameChatMessages.jsx';
+import { chatImageAnchor } from './chat-image-anchor.js';
 import { ThinkingPill } from './GameLeftRail.jsx';
 
 function ChatArea({ history, runState, runStyle, narrativeFont, narrativeSize, hasError, errorMessage, saveId, onRetry, onShowSse, memory }) {
@@ -39,6 +40,8 @@ function ChatArea({ history, runState, runStyle, narrativeFont, narrativeSize, h
   for (let _i = totalLen - 1; _i >= 0; _i--) { if (history[_i] && history[_i].role === "assistant") { lastAsstIdx = _i; break; } }
   const lastKeyRef = useRefA(null);
   lastKeyRef.current = lastAsstIdx >= 0 ? String(lastAsstIdx) : null;
+  // 同步发布给生图弹窗(提交时读,生成的图据此写 message_index,见 chat-image-anchor.js)。
+  chatImageAnchor.lastAsstKey = lastKeyRef.current;
   const imagesByKey = useSaveImages(saveId, lastKeyRef);
 
   // task 133: Claude 风格自动滚动 — 用户上滚后停止跟随 + 回到底部按钮。

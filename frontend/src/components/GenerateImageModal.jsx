@@ -11,6 +11,7 @@ import CSStatusIndicator from '@cloudscape-design/components/status-indicator';
 import AgentModelPicker from './AgentModelPicker.jsx';
 import ImageSizePicker from './ImageSizePicker.jsx';
 import AvatarImg from './AvatarImg.jsx';
+import { chatImageAnchor } from './game/chat-image-anchor.js';
 import { useImageGeneration } from '../hooks/useImageGeneration.js';
 import { plGoto } from '../router.js';
 
@@ -104,6 +105,15 @@ export default function GenerateImageModal({
     if (attach) body.attach = attach;
     if (saveId != null) body.save_id = saveId;
     if (size) body.size = size;
+    // 存档绑定的生图把"当前最后一条助手消息的绝对索引"一起写进 ai_images.message_index。
+    // **点击时**读锚点(不是 render 快照)——此后删本地对话,旧索引匹配不到任何消息,
+    // 图不会漂到新对话的最新消息上(用户上报的"删了对话图片爬到新消息")。
+    if (saveId != null) {
+      const mi = chatImageAnchor.lastAsstKey;
+      if (mi != null && mi !== '' && Number.isFinite(Number(mi)) && Number(mi) >= 0) {
+        body.message_index = Number(mi);
+      }
+    }
     generate(body, PER_CALL);
   }
 

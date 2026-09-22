@@ -651,7 +651,7 @@ export function useSaveImages(saveId, lastKeyRef) {
       const key = (lastKeyRef && lastKeyRef.current != null) ? String(lastKeyRef.current) : null;
       if (key != null) { mapRef.current[image_id] = key; _saveImgMap(saveId, mapRef.current); }
       setImages((prev) => prev.some((im) => im.id === image_id) ? prev
-        : [...prev, { id: image_id, url, kind: kind || 'game', key }]);
+        : [...prev, { id: image_id, url, kind: kind || 'game', key, realtime: true }]);
     };
     window.addEventListener('rpg-image-updated', handler);
     return () => window.removeEventListener('rpg-image-updated', handler);
@@ -660,8 +660,15 @@ export function useSaveImages(saveId, lastKeyRef) {
   return useMemoA(() => {
     const g = {};
     for (const im of images) {
-      const k = im.key != null ? im.key : '__last';
-      (g[k] = g[k] || []).push(im);
+      if (im.key != null) {
+        (g[im.key] = g[im.key] || []).push(im);
+        continue;
+      }
+      // 无 key 的**历史**行(message_index 为 NULL 且 localStorage 也没映射) = 孤儿:
+      // 既不知道它属于哪条消息,若塞进 __last 就会永远跟着"最新一条"走 —— 删完本地对话
+      // 重新聊天时,旧图爬到新消息上(用户上报)。孤儿直接不渲染(图仍在文件库里)。
+      // realtime(SSE 刚到、本会话生成)才允许 __last:那才是它"生成时就在最新消息旁"的本意。
+      if (im.realtime) (g['__last'] = g['__last'] || []).push(im);
     }
     return g;
   }, [images]);

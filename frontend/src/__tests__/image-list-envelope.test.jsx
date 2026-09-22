@@ -57,6 +57,45 @@ describe('useSaveImages — 历史图片按 message_index 还原', () => {
     expect(result.current['3'].map((im) => im.id)).toEqual([11]);   // pending 行被过滤
   });
 
+  it('历史孤儿(message_index 空且无映射)不入 __last,不渲染在任何消息上', async () => {
+    // 删除本地对话后的经典场景:旧图 message_index 为 NULL、localStorage 映射也失效 →
+    // 旧逻辑归 __last = 永远挂在"最新一条"上,于是旧图爬进新对话(用户上报)。
+    // 收紧后:孤儿直接不归桶 —— 图仍在文件库里,但不再出现在聊天。
+    window.api = {
+      images: {
+        list: vi.fn().mockResolvedValue({
+          ok: true,
+          images: [
+            { id: 31, url: '/api/storage/ai_images/orphan.png', kind: 'game', status: 'done', message_index: null },
+          ],
+          meta: {},
+        }),
+      },
+    };
+
+    const { result } = renderHook(() => useSaveImages('42', { current: '99' }));
+    await waitFor(() => expect(window.api.images.list).toHaveBeenCalled());
+    await new Promise((r) => setTimeout(r, 30));
+
+    expect(result.current, '孤儿历史行不得进任何桶(含 __last)').toEqual({});
+  });
+
+  it('SSE 实时到达且无锚点的图才进 __last(本会话刚生成的语义)', async () => {
+    window.api = { images: { list: vi.fn().mockResolvedValue({ ok: true, images: [], meta: {} }) } };
+
+    // lastKeyRef 为 null = 当前没有助手消息,实时图只能进 __last 兜底
+    const { result } = renderHook(() => useSaveImages('42', { current: null }));
+    await waitFor(() => expect(window.api.images.list).toHaveBeenCalled());
+
+    await act(async () => {
+      window.dispatchEvent(new CustomEvent('rpg-image-updated', {
+        detail: { op: 'ready', payload: { image_id: 32, url: '/api/storage/ai_images/rt.png', kind: 'game' }, ts: Date.now() },
+      }));
+    });
+
+    expect((result.current['__last'] || []).map((im) => im.id)).toEqual([32]);
+  });
+
   it('收到 image/deleted(文件库删除广播)→ 对应图从聊天气泡里移除', async () => {
     // 用户上报:文件库删图后聊天里只剩一个 404 的空图位。
     // 后端删除资产时广播 op=deleted(带 url);useSaveImages 必须按 url 尾段匹配并移除。

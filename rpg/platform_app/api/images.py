@@ -214,7 +214,7 @@ async def api_image_file(filename: str, request: Request) -> FileResponse:
 async def api_generate_image(request: Request):
     """UI 按钮入口：接收生图请求，入队异步 job，立即返回 {image_id, status}。
 
-    body: {prompt, kind, api_id?, model?, ref?, attach?, save_id?}
+    body: {prompt, kind, api_id?, model?, ref?, attach?, save_id?, message_index?}
 
     attach 可选，格式：
       {"type": "user_avatar"}
@@ -244,6 +244,22 @@ async def api_generate_image(request: Request):
     ref: str | None = body.get("ref") or None
     attach: dict | None = body.get("attach") or None
     save_id: str | None = str(body.get("save_id") or "").strip() or None
+    # 消息绑定:图生成时挂到"当前最后一条助手消息"的绝对索引。UI 生图此前不写这个字段,
+    # ai_images.message_index 恒 NULL → 前端只能靠 localStorage 索引 / __last 桶兜底,
+    # 一删本地对话索引就漂移(图片爬到新对话的最新消息上 —— 用户上报)。
+    # 只接受非负 int 或纯数字串;bool/float/非数字串/负数一律 None(不抛错,图照常生成,
+    # 只是没有绑定 —— 注意 int(2.5) 会静默截断成 2,所以 float 必须显式拒)。
+    _raw_mi = body.get("message_index")
+    if isinstance(_raw_mi, bool):
+        message_index: int | None = None
+    elif isinstance(_raw_mi, int):
+        message_index = _raw_mi
+    elif isinstance(_raw_mi, str) and _raw_mi.strip().isdigit():
+        message_index = int(_raw_mi.strip())
+    else:
+        message_index = None
+    if message_index is not None and message_index < 0:
+        message_index = None
     # 分辨率(UI 或 LLM 都可传):宽高/比例白名单,形如 1024x1024 / 832*1216 / 16:9;非法忽略由 provider 默认
     import re as _re_size
     _raw_size = str(body.get("size") or "").strip()
@@ -321,6 +337,7 @@ async def api_generate_image(request: Request):
         extra=_gen_extra or None,
         attach=attach,
         save_id=save_id,
+        message_index=message_index,
     )
 
     # 每日配额超限：enqueue 返回 error="quota_exceeded"

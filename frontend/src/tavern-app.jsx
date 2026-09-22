@@ -27,6 +27,7 @@ import Modal from './components/Modal.jsx';
 import ConfirmDialog from './components/ConfirmDialog.jsx';
 import { useResizable } from './responsive.jsx';
 import { NarrativeBlock, PlayerBlock, GameToastStack, SaveImagesStrip, useSaveImages } from './game-app.jsx';
+import { chatImageAnchor } from './components/game/chat-image-anchor.js';
 import { ToolCallBlock } from './components/ToolCallBlock.jsx';
 import { Composer } from './game-composer.jsx';
 import { TavernImportModal } from './pages/cards.jsx';
@@ -327,6 +328,7 @@ export function TavernChatArea({ history, running, saveId, charName, charInitial
   for (let _i = total0 - 1; _i >= 0; _i--) { if (history[_i] && history[_i].role === 'assistant') { lastAsstIdx = _i; break; } }
   const lastKeyRef = useRef(null);
   lastKeyRef.current = lastAsstIdx >= 0 ? String(lastAsstIdx) : null;
+  chatImageAnchor.lastAsstKey = lastKeyRef.current;  // 供生图弹窗提交时读(同 GameChatArea)
   const imagesByKey = useSaveImages(saveId, lastKeyRef);
 
   // 粘底守卫收口到 useStickToBottom(逐字等价:threshold 80 / 双守卫 360 / 首屏·末条玩家策略 / instant scrollTop)。
