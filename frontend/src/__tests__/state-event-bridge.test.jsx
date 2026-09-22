@@ -88,4 +88,23 @@ describe('state-event-bridge — SSE 空闲重连', () => {
 
     expect(FakeEventSource.instances.length).toBe(1);   // 排队的那次没有兑现
   });
+
+  it('任何 op(含 deleted)都被转成 rpg-image-updated 派发', async () => {
+    // 文件库删除图片 → 后端广播 image/deleted → 聊天的 useSaveImages 据此移除缩略图。
+    // 桥必须对**任意 op** 原样转发,不能只认 ready/updated。
+    const seen = [];
+    const onEvt = (e) => seen.push(e.detail);
+    window.addEventListener('rpg-image-updated', onEvt);
+    try {
+      const es = await loadBridge();
+      es.emit('hello', { user_id: 1 });
+      es.emit('state_change', { topic: 'image', op: 'deleted', payload: { url: '/api/storage/ai_images/x.png' } });
+
+      expect(seen).toHaveLength(1);
+      expect(seen[0].op).toBe('deleted');
+      expect(seen[0].payload).toEqual({ url: '/api/storage/ai_images/x.png' });
+    } finally {
+      window.removeEventListener('rpg-image-updated', onEvt);
+    }
+  });
 });

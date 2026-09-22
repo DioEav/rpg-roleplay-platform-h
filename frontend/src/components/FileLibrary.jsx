@@ -235,7 +235,9 @@ function AssetCard({ asset, onDelete, busy }) {
         paddingTop: 10,
         borderTop: '1px solid var(--color-border-divider-default, rgba(255,255,255,0.08))',
       }}>
-        <CSButton variant="inline-link" iconName="download-alt" onClick={handleDownload} formAction="none">
+        {/* iconName 必须是 Cloudscape 图标集里的名字(见 icon/generated/icons.d.ts):
+            此前写的是 "download-alt" —— 集合里没有这个名字 → 图标整个不渲染,按钮只剩文字。 */}
+        <CSButton variant="inline-link" iconName="download" onClick={handleDownload} formAction="none">
           {t('components.file_library.card.download')}
         </CSButton>
         <CSButton variant="inline-link" iconName="remove" onClick={(e) => { e.stopPropagation(); onDelete(asset); }} formAction="none" disabled={busy}>

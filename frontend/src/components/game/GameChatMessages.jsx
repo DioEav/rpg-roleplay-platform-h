@@ -593,6 +593,10 @@ function _saveImgMap(saveId, map) {
 export function useSaveImages(saveId, lastKeyRef) {
   const [images, setImages] = useStateA([]);   // [{id,url,kind,key}]
   const mapRef = useRefA({});
+  // 当前列表的镜像:deleted 事件的处理是"按 url 尾段找行 → 清映射 → 移除",
+  // 需要在事件回调里读到最新列表而不把它变成 setState updater 的副作用。
+  const imagesRef = useRefA([]);
+  useEffectA(() => { imagesRef.current = images; }, [images]);
 
   // 拉历史图片 + 应用持久化映射
   useEffectA(() => {
@@ -618,11 +622,29 @@ export function useSaveImages(saveId, lastKeyRef) {
     return () => { cancelled = true; };
   }, [saveId]);
 
-  // SSE 实时追加,归到当前最后助手消息
+  // SSE 实时追加(ready)/移除(deleted,文件库删除后广播),归到当前最后助手消息
   useEffectA(() => {
     if (saveId == null) return;
     const handler = (ev) => {
       const { op, payload } = (ev && ev.detail) || {};
+      // 文件库里删了图 → 后端广播 image/deleted → 把对应缩略图从气泡里移除。
+      // 此前不处理:文件已被删,聊天的 <img> 404,只剩一个加载不出的空图位(用户上报)。
+      // 按 url 尾段匹配(ai_images.url 与 user_assets.url 同为 /api/storage/ai_images/<file>;
+      // 尾段兜底覆盖相对/绝对写法差异)。注意 payload.image_id 是 user_assets 的资产 id,
+      // 与聊天侧 ai_images 的 id 不是同一个 —— 只能按 url 匹配。
+      if (op === 'deleted') {
+        const tail = String(payload?.url || payload?.storage_key || '').split('/').pop();
+        if (!tail) return;
+        const removedIds = imagesRef.current
+          .filter((im) => (im.url || '').split('/').pop() === tail)
+          .map((im) => im.id);
+        if (removedIds.length) {
+          for (const rid of removedIds) delete mapRef.current[rid];
+          _saveImgMap(saveId, mapRef.current);
+          setImages((prev) => prev.filter((im) => !removedIds.includes(im.id)));
+        }
+        return;
+      }
       if (op !== 'ready') return;
       const { image_id, url, kind } = payload || {};
       if (!image_id || !url) return;
@@ -649,15 +671,27 @@ export function useSaveImages(saveId, lastKeyRef) {
 function ChatImageGroup({ images }) {
   const { t } = useTranslation();
   const [lightbox, setLightbox] = useStateA(null);
-  if (!images || !images.length) return null;
-  const multi = images.length > 1;
+  // 加载失败的 url 集合 → 不再渲染。兜底场景:文件库删了图但本页没收到 image/deleted
+  // 事件(多 worker 未配 Redis / SSE 断开)时,刷新页面后历史列表仍含该行,浏览器对 404
+  // 的图触发 onError → 就地移除,不留"加载不出内容的空图位"(用户上报)。
+  const [broken, setBroken] = useStateA(() => new Set());
+  const markBroken = (u) => setBroken((prev) => {
+    if (prev.has(u)) return prev;
+    const next = new Set(prev);
+    next.add(u);
+    return next;
+  });
+  const visible = (images || []).filter((im) => !broken.has(im.url));
+  if (!visible.length) return null;
+  const multi = visible.length > 1;
   return (
     <div className="rpg-chat-imgs">
-      {images.map((im) => (
+      {visible.map((im) => (
         <button key={im.id} type="button" title={im.kind || t('game.app.image.generated')}
           className={`rpg-chat-img ${multi ? 'rpg-chat-img--multi' : 'rpg-chat-img--single'}`}
           onClick={() => setLightbox(im.url)}>
-          <img src={im.url} alt="" loading="lazy" decoding="async" />
+          <img src={im.url} alt="" loading="lazy" decoding="async"
+            onError={() => markBroken(im.url)} />
         </button>
       ))}
       {/* 全屏预览用 portal 化的 ImageLightbox。此前这里是手写的 <div className="mlb-backdrop">

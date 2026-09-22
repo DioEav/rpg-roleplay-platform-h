@@ -9,7 +9,7 @@
  *   ② useSaveImages 真的能把信封里的行映射成 { msgKey: images[] }。
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { renderHook, waitFor } from '@testing-library/react';
+import { renderHook, waitFor, act } from '@testing-library/react';
 
 import { imagesFromResponse } from '../lib/image-list.js';
 import { useSaveImages } from '../components/game/GameChatMessages.jsx';
@@ -55,5 +55,35 @@ describe('useSaveImages — 历史图片按 message_index 还原', () => {
 
     await waitFor(() => expect(Object.keys(result.current)).toContain('3'));
     expect(result.current['3'].map((im) => im.id)).toEqual([11]);   // pending 行被过滤
+  });
+
+  it('收到 image/deleted(文件库删除广播)→ 对应图从聊天气泡里移除', async () => {
+    // 用户上报:文件库删图后聊天里只剩一个 404 的空图位。
+    // 后端删除资产时广播 op=deleted(带 url);useSaveImages 必须按 url 尾段匹配并移除。
+    window.api = {
+      images: {
+        list: vi.fn().mockResolvedValue({
+          ok: true,
+          images: [
+            { id: 21, url: '/api/storage/ai_images/keep.png', kind: 'game', status: 'done', message_index: 1 },
+            { id: 22, url: '/api/storage/ai_images/deleted.png', kind: 'game', status: 'done', message_index: 2 },
+          ],
+          meta: {},
+        }),
+      },
+    };
+
+    const { result } = renderHook(() => useSaveImages('42', { current: 9 }));
+    await waitFor(() => expect(Object.keys(result.current).length).toBeGreaterThan(0));
+
+    // 模拟 state-event-bridge 派发的删除事件(storage_key 形态也能匹配 —— 尾段一致)
+    await act(async () => {
+      window.dispatchEvent(new CustomEvent('rpg-image-updated', {
+        detail: { op: 'deleted', payload: { image_id: 999, storage_key: 'ai_images/deleted.png' }, ts: Date.now() },
+      }));
+    });
+
+    const remaining = Object.values(result.current).flat().map((im) => im.id);
+    expect(remaining).toEqual([21]);
   });
 });

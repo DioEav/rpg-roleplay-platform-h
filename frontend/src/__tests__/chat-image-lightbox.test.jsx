@@ -52,6 +52,19 @@ describe('ChatImageGroup — 全屏预览', () => {
     expect(close.querySelector('svg'), '关闭按钮应为 SVG 图标').toBeTruthy();
     expect(close.textContent.trim(), '不该再有文本 × 参与居中').toBe('');
   });
+
+  it('图片 404(onError)时就地移除,不留空图位', () => {
+    // 兜底:文件库删图但本页没收到 deleted 事件(多 worker 未配 Redis / SSE 断开)时,
+    // 刷新后历史列表仍含该行 → <img> 对 404 触发 onError → 必须把自己从气泡里拿掉。
+    const { container } = render(<NarrativeBlock text="GM" images={[IMG]} />);
+    const img = container.querySelector(`img[src="${IMG.url}"]`);
+    expect(img).toBeTruthy();
+
+    fireEvent.error(img);
+
+    expect(container.querySelector(`img[src="${IMG.url}"]`)).toBeNull();
+    expect(container.querySelector('.rpg-chat-imgs')).toBeNull();  // 全挂了 → 整组不渲染
+  });
 });
 
 describe('.ilb__close 的居中样式(源码锁)', () => {

@@ -247,4 +247,38 @@ def delete_asset_with_refs(
 
     # 物理删除（force=True：引用已处理）
     result = _reg.delete_asset(user_id, asset_id, force=True)
+
+    # 同步清理 ai_images —— 根治「文件库删图后聊天里还留着占位」:
+    # 聊天历史走的是 ai_images 表(/api/images/list),文件库删的只是 user_assets 行 + 文件;
+    # 只删后者的话,每次进游戏历史接口都会把死图拉回来(渲染 → 404 → 被 onError 摘掉,
+    # 表现为"占位闪一下再消失" —— 用户上报)。生成图入图库时两表存的是**同一个 url 字符串**
+    # (store_image → register_asset 原样透传),按精确 url 匹配 + 文件名尾段兜底(覆盖
+    # 相对/绝对写法差异);限本用户。没有对应行的资产(纯上传件)删 0 行,无副作用。
+    if result.get("ok") and result.get("deleted"):
+        storage_key = result.get("storage_key") or asset.get("storage_key") or ""
+        if url or storage_key:
+            filename = (storage_key or url).split("/")[-1]
+            try:
+                from .db import connect as _connect
+                with _connect() as db:
+                    db.execute(
+                        "delete from ai_images "
+                        " where user_id = %s"
+                        "   and (url = %s or url like %s)",
+                        (user_id, url, f"%/{filename}"),
+                    )
+            except Exception:
+                pass  # 清理失败不阻断删除;聊天侧仍有 onError 兜底
+
+        # 广播 image/deleted —— 让**开着聊天的那一屏**实时移除缩略图,不用等下次刷新。
+        # try/except:通知失败不影响删除本身。
+        try:
+            from state_event_bus import emit as _emit
+            _emit(user_id, "image", "deleted", {
+                "image_id": asset_id,
+                "url": url,
+                "storage_key": storage_key,
+            })
+        except Exception:
+            pass
     return result
