@@ -18,7 +18,8 @@ import CSStatusIndicator from '@cloudscape-design/components/status-indicator';
  *    list(kind?)    → { items: [...] }
  *    get(id)        → { asset }
  *    downloadUrl(id)→ string   (无需 await)
- *    deleteAsset(id, confirm?) → { ok, needs_confirm?, references?, deleted? }
+ *    deleteAsset(id, confirm) → { ok, needs_confirm?, references?, deleted? }
+ *      confirm 缺省按 false 探测引用;真正删除须显式传 true。
  *  }
  * ────────────────────────────────────────────────────────────────*/
 
@@ -160,7 +161,7 @@ function DeleteConfirmModal({ open, asset, references, onCancel, onConfirm, busy
 }
 
 // ── 单卡片 ────────────────────────────────────────────────────
-function AssetCard({ asset, onDelete }) {
+function AssetCard({ asset, onDelete, busy }) {
   const { t } = useTranslation();
   const KIND_META = getKindMeta();
   const SOURCE_LABELS = getSourceLabels();
@@ -186,6 +187,9 @@ function AssetCard({ asset, onDelete }) {
       display: 'flex',
       flexDirection: 'column',
       gap: 10,
+      // 网格行内拉满高度,操作区才能统一贴底
+      height: '100%',
+      boxSizing: 'border-box',
     }}>
       {/* 缩略图区 */}
       <div style={{ display: 'flex', justifyContent: 'center' }}>
@@ -201,7 +205,7 @@ function AssetCard({ asset, onDelete }) {
       </div>
 
       {/* 元数据行 */}
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 3, flex: 1 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
           <CSBadge color="grey">{meta.label}</CSBadge>
           {asset.source && (
@@ -221,12 +225,20 @@ function AssetCard({ asset, onDelete }) {
         )}
       </div>
 
-      {/* 操作按钮 */}
-      <div style={{ display: 'flex', gap: 8, marginTop: 2 }}>
+      {/* 操作按钮:固定卡片底部,左下载 / 右删除 */}
+      <div style={{
+        display: 'flex',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        gap: 8,
+        marginTop: 'auto',
+        paddingTop: 10,
+        borderTop: '1px solid var(--color-border-divider-default, rgba(255,255,255,0.08))',
+      }}>
         <CSButton variant="inline-link" iconName="download-alt" onClick={handleDownload} formAction="none">
           {t('components.file_library.card.download')}
         </CSButton>
-        <CSButton variant="inline-link" iconName="remove" onClick={(e) => { e.stopPropagation(); onDelete(asset); }} formAction="none">
+        <CSButton variant="inline-link" iconName="remove" onClick={(e) => { e.stopPropagation(); onDelete(asset); }} formAction="none" disabled={busy}>
           {t('common.delete')}
         </CSButton>
       </div>
@@ -245,9 +257,9 @@ export default function FileLibrary() {
   // 删除状态机
   const [deleteState, setDeleteState] = React.useState(null);
   // deleteState 格式:
-  //   { asset, phase: 'first'|'confirm', references: [] }
-  //   phase=first: 尚未调用 deleteAsset(id)(无 confirm)
-  //   phase=confirm: 收到 needs_confirm 或无引用时准备二次确认
+  //   { asset, phase: 'confirm', references: [] }
+  //   phase=confirm: 等待用户在弹窗里点「确认删除」
+  // 探测阶段(startDelete)不进 state,直接跑;有引用/需二次确认时才写 phase=confirm。
   const [deleteBusy, setDeleteBusy] = React.useState(false);
 
   // ── 加载列表 ─────────────────────────────────────────────
@@ -284,63 +296,64 @@ export default function FileLibrary() {
     : assets.filter(a => a.kind === activeTab);
 
   // ── 删除流程 ─────────────────────────────────────────────
-  const startDelete = (asset) => {
-    setDeleteState({ asset, phase: 'first', references: [] });
+  // 点击「删除」→ 立刻探测(confirm=false):
+  //   needs_confirm → 弹二次确认(带关联警告)
+  //   ok+deleted    → 直接移除并 toast
+  //   其余          → 弹轻量确认,由用户再决定
+  const startDelete = async (asset) => {
+    if (deleteBusy) return;
+    setDeleteBusy(true);
+    try {
+      // 显式 false:api-client 在 confirm===undefined 时曾默认成 true,会跳过引用检查
+      const r = await window.api?.library?.deleteAsset(asset.id, false);
+      if (r && r.ok === false && r.needs_confirm) {
+        setDeleteState({ asset, phase: 'confirm', references: r.references || [] });
+      } else if (r && r.ok) {
+        if (r.deleted) {
+          setAssets(prev => prev.filter(a => a.id !== asset.id));
+          window.toast?.(t('components.file_library.toast.deleted', { name: asset.name || '#' + asset.id }), { kind: 'ok', duration: 2400 });
+        } else {
+          setDeleteState({ asset, phase: 'confirm', references: [] });
+        }
+      } else if (r && r.ok === false && r.error) {
+        window.toast?.(r.error || t('components.file_library.toast.delete_failed'), { kind: 'danger', duration: 3000 });
+      } else {
+        // 未知响应 → 进弹窗让用户决策
+        setDeleteState({ asset, phase: 'confirm', references: [] });
+      }
+    } catch (e) {
+      window.toast?.(e?.message || t('components.file_library.toast.delete_failed'), { kind: 'danger', duration: 3000 });
+      setDeleteState(null);
+    } finally {
+      setDeleteBusy(false);
+    }
   };
 
   const handleDeleteCancel = () => {
     if (!deleteBusy) setDeleteState(null);
   };
 
-  // phase=first: 先调一次不带 confirm 的 deleteAsset,拿到 needs_confirm 或直接成功
-  // phase=confirm: 用户点了弹窗里的「确认删除」,带 confirm=true 再调一次
+  // 弹窗里的「确认删除」→ 带 confirm=true 再调一次
   const handleDeleteConfirm = async () => {
     if (!deleteState || deleteBusy) return;
-    const { asset, phase } = deleteState;
+    const { asset } = deleteState;
 
-    if (phase === 'first') {
-      // 第一次调:探测引用(后端有引用时返回 needs_confirm,无引用时直接删或返 ok)
-      setDeleteBusy(true);
-      try {
-        const r = await window.api?.library?.deleteAsset(asset.id);
-        if (r && r.ok === false && r.needs_confirm) {
-          // 有引用 → 进二次确认弹窗
-          setDeleteState({ asset, phase: 'confirm', references: r.references || [] });
-        } else if (r && r.ok) {
-          // 无引用 → 后端已删(或返回 ok) → 进二次确认(设计要求:无引用也弹轻量确认)
-          // 此分支: 后端已删了(r.deleted=true)就直接移除;否则进二次确认
-          if (r.deleted) {
-            setAssets(prev => prev.filter(a => a.id !== asset.id));
-            setDeleteState(null);
-            window.toast?.(t('components.file_library.toast.deleted', { name: asset.name || '#' + asset.id }), { kind: 'ok', duration: 2400 });
-          } else {
-            // 后端返回 ok 但 deleted 未标(可能要前端再确认一次)
-            setDeleteState({ asset, phase: 'confirm', references: [] });
-          }
-        } else {
-          // 未知响应,也进弹窗让用户决策
-          setDeleteState({ asset, phase: 'confirm', references: [] });
-        }
-      } catch (e) {
-        window.toast?.(e?.message || t('components.file_library.toast.delete_failed'), { kind: 'danger', duration: 3000 });
+    setDeleteBusy(true);
+    try {
+      const r = await window.api?.library?.deleteAsset(asset.id, true);
+      if (r && r.ok === false && r.error) {
+        window.toast?.(r.error || t('components.file_library.toast.delete_failed'), { kind: 'danger', duration: 3000 });
         setDeleteState(null);
-      } finally {
-        setDeleteBusy(false);
+        return;
       }
-    } else {
-      // phase=confirm: 用户在弹窗点了确认,调带 confirm=true 的接口
-      setDeleteBusy(true);
-      try {
-        await window.api?.library?.deleteAsset(asset.id, true);
-        setAssets(prev => prev.filter(a => a.id !== asset.id));
-        setDeleteState(null);
-        window.toast?.(t('components.file_library.toast.deleted', { name: asset.name || '#' + asset.id }), { kind: 'ok', duration: 2400 });
-      } catch (e) {
-        window.toast?.(e?.message || t('components.file_library.toast.delete_failed'), { kind: 'danger', duration: 3000 });
-        setDeleteState(null);
-      } finally {
-        setDeleteBusy(false);
-      }
+      setAssets(prev => prev.filter(a => a.id !== asset.id));
+      setDeleteState(null);
+      window.toast?.(t('components.file_library.toast.deleted', { name: asset.name || '#' + asset.id }), { kind: 'ok', duration: 2400 });
+    } catch (e) {
+      window.toast?.(e?.message || t('components.file_library.toast.delete_failed'), { kind: 'danger', duration: 3000 });
+      setDeleteState(null);
+    } finally {
+      setDeleteBusy(false);
     }
   };
 
@@ -426,21 +439,25 @@ export default function FileLibrary() {
             display: 'grid',
             gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))',
             gap: 16,
+            // 同行卡片等高,底部操作条才能对齐
+            gridAutoRows: '1fr',
+            alignItems: 'stretch',
           }}>
             {visibleAssets.map(asset => (
               <AssetCard
                 key={asset.id}
                 asset={asset}
                 onDelete={startDelete}
+                busy={deleteBusy}
               />
             ))}
           </div>
         )}
       </CSSpaceBetween>
 
-      {/* 删除确认弹窗(phase=confirm 时才显示) */}
+      {/* 删除确认弹窗(探测到引用 / 需二次确认时才显示) */}
       <DeleteConfirmModal
-        open={!!(deleteState && deleteState.phase === 'confirm')}
+        open={!!deleteState}
         asset={deleteState?.asset}
         references={deleteState?.references}
         onCancel={handleDeleteCancel}

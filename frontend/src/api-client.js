@@ -912,13 +912,14 @@
     // GET /api/library?kind=X → {items:[{id,kind,url,source,ref_kind,ref_id,size,created_at,...}]}
     // GET /api/library/asset/{id} → 单个资产(owner 校验)
     // GET /api/library/asset/{id}/download → 带 Content-Disposition 的下载
-    // POST /api/library/asset/{id}/delete {confirm:true} → 删除(关联检查由后端做)
+    // POST /api/library/asset/{id}/delete {confirm:false|true} → 探测/删除(关联检查由后端做)
     library: {
       list: (kind) => GET(`/api/library`, kind ? { kind } : undefined),
       get: (id) => GET(`/api/library/asset/` + encodeURIComponent(id)),
       downloadUrl: (id) => BASE + `/api/library/asset/` + encodeURIComponent(id) + `/download`,
       deleteAsset: (id, confirm) => {
-        const fd_body = { confirm: confirm === undefined ? true : !!confirm };
+        // 默认 false:undefined 应走「探测引用」而不是直接强制删(否则跳过 needs_confirm)
+        const fd_body = { confirm: confirm === undefined ? false : !!confirm };
         return _send(`/api/library/asset/` + encodeURIComponent(id) + `/delete`, { method: "POST", body: fd_body });
       },
       // 旧接口保留(内部用,别再从 UI 调)
