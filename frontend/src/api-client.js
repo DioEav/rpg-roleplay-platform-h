@@ -1014,6 +1014,9 @@
       file: (name) => BASE + `/api/images/file/` + encodeURIComponent(name),
       list: (saveId) => GET(`/api/images/list?save_id=` + encodeURIComponent(saveId)),
       cancel: (id) => POST(`/api/images/` + encodeURIComponent(id) + `/cancel`, {}),
+      // 大图预览工具条:下载(attachment 端点,window.open 同源带 cookie)/删除(对齐文件库两段式)
+      downloadUrl: (id) => BASE + `/api/images/` + encodeURIComponent(id) + `/download`,
+      deleteImage: (id, confirm) => POST(`/api/images/` + encodeURIComponent(id) + `/delete`, { confirm: !!confirm }),
       // 参考图上传(i2i):FormData → {ok,url}。魔数白名单 + 8MB 由后端校验;
       // 不 register_asset(草稿不进图库)。_send 对 FormData 不套 JSON 头,直接 multipart。
       refUpload: (file) => {

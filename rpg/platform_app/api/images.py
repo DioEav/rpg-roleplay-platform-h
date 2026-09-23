@@ -533,6 +533,135 @@ async def api_get_image(image_id: int, request: Request):
 
 
 # ══════════════════════════════════════════════════════════════════════
+#  下载 / 删除（聊天大图预览工具条，交互对齐文件库）
+# ══════════════════════════════════════════════════════════════════════
+
+def _image_storage_key(url: str) -> str:
+    """ai_images.url → storage_key（'kind/filename'）。
+
+    覆盖新旧两种落盘 URL：/api/storage/{key} 与 /api/images/file/{filename}
+    （旧式只有文件名，kind 固定 ai_images）。其余格式返回空串。
+    """
+    if url.startswith("/api/storage/"):
+        return url[len("/api/storage/"):]
+    if url.startswith("/api/images/file/"):
+        return "ai_images/" + url[len("/api/images/file/"):]
+    return ""
+
+
+@router.get("/api/images/{image_id}/download")
+async def api_download_image(image_id: int, request: Request):
+    """下载生图（Content-Disposition: attachment），仅 owner。
+
+    对齐 GET /api/library/asset/{id}/download：强制 attachment + nosniff，
+    防止同源 XSS；文件缺失 404。
+    """
+    user = require_user(request)
+    user_id: int = int(user["id"])
+
+    record = get_image_record(image_id)
+    if record is None or int(record.get("user_id") or 0) != user_id:
+        raise HTTPException(status_code=404, detail="图片记录不存在或无权访问")
+
+    key = _image_storage_key(record.get("url") or "")
+    if not key:
+        raise HTTPException(status_code=404, detail="图片地址无效")
+
+    from platform_app import storage  # lazy import
+
+    try:
+        path = storage.resolve_path(key)
+    except ValueError:
+        raise HTTPException(status_code=404, detail="图片地址无效")
+    if not path.is_file():
+        raise HTTPException(status_code=404, detail="物理文件已丢失")
+
+    import mimetypes as _mimetypes
+
+    filename = path.name
+    mime = record.get("mime") or _mimetypes.guess_type(filename)[0] or "application/octet-stream"
+    return FileResponse(
+        path,
+        media_type=mime,
+        filename=filename,
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"',
+            "X-Content-Type-Options": "nosniff",
+            "Content-Security-Policy": "default-src 'none'; sandbox",
+            "X-Frame-Options": "DENY",
+            "Referrer-Policy": "no-referrer",
+        },
+    )
+
+
+@router.post("/api/images/{image_id}/delete")
+async def api_delete_image(image_id: int, request: Request):
+    """删除生图：物理文件 + 同 url 的 user_assets 行 + ai_images 行,
+    并广播 image/deleted（开着的聊天页实时移除缩略图）。仅 owner。
+
+    request body（可选）: {"confirm": true}
+    —— 引用检查对齐文件库两段式：被角色头像/封面等引用且未 confirm 时
+    返回 {ok:false, needs_confirm:true, references:[...]}，不删任何东西。
+
+    返回：{ok:true, deleted:true} | {ok:false, needs_confirm, references}
+          | 404 {ok:false, error:"not_found"}（不存在或非 owner）
+    """
+    user = require_user(request)
+    user_id: int = int(user["id"])
+
+    # 非 owner：在触碰任何 DB/文件之前直接 404（返回而非 raise——调用方按
+    # 响应体分支；单测也按 resp.status_code 断言）。
+    record = get_image_record(image_id)
+    if record is None or int(record.get("user_id") or 0) != user_id:
+        return json_response({"ok": False, "error": "not_found"}, status_code=404)
+
+    body: dict = {}
+    try:
+        body = await request.json()
+    except Exception:
+        pass
+    if not isinstance(body, dict):
+        body = {}
+    confirm = bool(body.get("confirm", False))
+
+    url: str = record.get("url") or ""
+
+    # 引用检查（lazy import——storage/library 均为函数内引入，避免循环）
+    from platform_app import storage
+
+    references = storage.find_references(url) if url else []
+    if references and not confirm:
+        return json_response({"ok": False, "needs_confirm": True, "references": references})
+    if references:
+        from platform_app.library import nullify_references
+
+        nullify_references(user_id, url, references)
+
+    init_db()
+    with connect() as db:
+        db.execute(
+            "delete from user_assets where url = %s and user_id = %s",
+            (url, user_id),
+        )
+        db.execute(
+            "delete from ai_images where id = %s and user_id = %s",
+            (image_id, user_id),
+        )
+
+    key = _image_storage_key(url)
+    if key:
+        storage.delete_file(key)
+
+    # 函数内 import：模块顶部绑死会绕过单测对 state_event_bus.emit 的 patch，
+    # 也会让多 worker 场景下的广播失效（与 library.py / image_jobs.py 同款写法）。
+    from state_event_bus import emit
+
+    emit(user_id, "image", "deleted", {"url": url, "image_id": image_id})
+
+    return json_response({"ok": True, "deleted": True})
+
+
+# ══════════════════════════════════════════════════════════════════════
 #  保留策略：清理旧 chat/game 图片
 # ══════════════════════════════════════════════════════════════════════
 

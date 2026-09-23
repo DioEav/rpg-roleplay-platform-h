@@ -677,7 +677,7 @@ export function useSaveImages(saveId, lastKeyRef) {
 // 助手消息气泡内的图片组(单图自然比例,多图方形拼贴),点击全屏。
 function ChatImageGroup({ images }) {
   const { t } = useTranslation();
-  const [lightbox, setLightbox] = useStateA(null);
+  const [lightbox, setLightbox] = useStateA(null);   // 当前放大的整张图对象 {id,url,kind}(非裸 url——工具条要 id 拼下载/删除端点)
   // 加载失败的 url 集合 → 不再渲染。兜底场景:文件库删了图但本页没收到 image/deleted
   // 事件(多 worker 未配 Redis / SSE 断开)时,刷新页面后历史列表仍含该行,浏览器对 404
   // 的图触发 onError → 就地移除,不留"加载不出内容的空图位"(用户上报)。
@@ -691,12 +691,25 @@ function ChatImageGroup({ images }) {
   const visible = (images || []).filter((im) => !broken.has(im.url));
   if (!visible.length) return null;
   const multi = visible.length > 1;
+  // 大图工具条的下载/删除(对齐文件库):id 缺失(老数据/异常行)时不传,按钮自然隐藏。
+  const dlUrl = lightbox?.id != null && window.api?.images?.downloadUrl
+    ? window.api.images.downloadUrl(lightbox.id) : undefined;
+  const doDelete = (lightbox?.id != null && window.api?.images?.deleteImage)
+    ? async () => {
+        const res = await window.api.images.deleteImage(lightbox.id, true);
+        if (!res || res.ok !== true) {
+          throw new Error((res && res.error) || 'delete_failed');
+        }
+        setLightbox(null);
+        try { window.toast && window.toast(t('lightbox.deleted'), { kind: 'ok' }); } catch (_) {}
+      }
+    : undefined;
   return (
     <div className="rpg-chat-imgs">
       {visible.map((im) => (
         <button key={im.id} type="button" title={im.kind || t('game.app.image.generated')}
           className={`rpg-chat-img ${multi ? 'rpg-chat-img--multi' : 'rpg-chat-img--single'}`}
-          onClick={() => setLightbox(im.url)}>
+          onClick={() => setLightbox(im)}>
           <img src={im.url} alt="" loading="lazy" decoding="async"
             onError={() => markBroken(im.url)} />
         </button>
@@ -707,7 +720,8 @@ function ChatImageGroup({ images }) {
           黑幕只盖住聊天列、大图与关闭按钮跑到视口外 = 用户报的「点图片就黑屏」。
           同一个坑本仓修过一次(见 components/ImageLightbox.jsx 头注 / commit fced032),
           这里是当时漏掉的 3 处之一。 */}
-      <ImageLightbox open={!!lightbox} src={lightbox || ''} alt="" onClose={() => setLightbox(null)} />
+      <ImageLightbox open={!!lightbox} src={lightbox?.url || ''} alt="" onClose={() => setLightbox(null)}
+        downloadUrl={dlUrl} onDelete={doDelete} />
     </div>
   );
 }

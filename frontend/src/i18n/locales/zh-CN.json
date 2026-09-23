@@ -7566,7 +7566,13 @@
     "applying": "处理中…",
     "crop": "裁剪",
     "crop_failed": "裁剪失败",
-    "crop_hint": "拖动调整裁剪区域，应用后保存"
+    "crop_hint": "拖动调整裁剪区域，应用后保存",
+    "delete": "删除",
+    "delete_confirm_body": "删除后不可恢复。若该图已被角色头像或封面引用，引用将同时被移除。",
+    "delete_confirm_title": "删除这张图片？",
+    "delete_failed": "删除失败",
+    "deleted": "已删除",
+    "download": "下载"
   },
   "m_caps_extra": {
     "github_url_desc": "公开仓库地址,如 https://github.com/owner/repo —— 拉取其中的 skill.md/角色档案蒸馏成角色卡 + 人设图",

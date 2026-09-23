@@ -278,6 +278,11 @@
   gap: 14px; padding: 24px; animation: mlb-fade var(--m-base) ease;
   overscroll-behavior: contain;
 }
+/* lightbox 内打开的删除确认弹窗(ConfirmDialog → Modal,platform.css 里 z-index:50)
+   也是 portal 到 body 的兄弟节点,且晚于 .ilb 挂载(一般顺序)——50 < 10000 会被
+   .ilb 近乎不透明的黑遮罩整个盖住(用户报:点删除没弹框)。lightbox 打开期间把这样的
+   backdrop 顶到遮罩之上;选择器要求 .ilb 在前,lightbox 关闭后规则自然失效。 */
+.ilb ~ .pl-modal-backdrop { z-index: 10001; }
 .ilb__stage { display: flex; flex-direction: column; align-items: center; gap: 14px; max-width: 96vw; }
 .ilb__imgwrap { position: relative; display: inline-block; line-height: 0; }
 .ilb__img {

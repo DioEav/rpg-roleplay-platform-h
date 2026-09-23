@@ -7569,7 +7569,13 @@
     "applying": "Processing…",
     "crop": "Crop",
     "crop_failed": "Crop failed",
-    "crop_hint": "Drag to adjust the crop area, then apply to save"
+    "crop_hint": "Drag to adjust the crop area, then apply to save",
+    "delete": "Delete",
+    "delete_confirm_body": "This cannot be undone. If the image is referenced by a character avatar or cover, those references will be cleared too.",
+    "delete_confirm_title": "Delete this image?",
+    "delete_failed": "Delete failed",
+    "deleted": "Deleted",
+    "download": "Download"
   },
   "m_caps_extra": {
     "github_url_desc": "Public repository URL, e.g. https://github.com/owner/repo — fetches skill.md / character files and distills them into a character card + portrait",
