@@ -187,10 +187,9 @@ export default function MediaStudio({ open, onClose, target, name, defaultPrompt
               onChange={(api_id, model) => setSel({ api_id, model })} />
             <div style={{ margin: '12px 0 2px', fontSize: 12, color: 'var(--muted)' }}>{t('components.media_studio.gen.size_label')}</div>
             <ImageSizePicker kind={kind} value={size} onChange={setSize} />
-            {/* 参考图(i2i):与 GenerateImageModal 同一选择器、同一 i18n 命名空间 */}
-            <div style={{ margin: '12px 0 2px' }}>
-              <ReferenceImagePicker refs={refs} onChange={setRefs} />
-            </div>
+            {/* 参考图(i2i):与 GenerateImageModal 同一选择器、同一 i18n 命名空间;标题与上方 size 标签同款式 */}
+            <div style={{ margin: '12px 0 2px', fontSize: 12, color: 'var(--muted)' }}>{t('components.generate_image_modal.reference_label')}</div>
+            <ReferenceImagePicker refs={refs} onChange={setRefs} />
             {busy === 'generating' && <div className="ms-status"><span className="ms-spin" />{t('components.media_studio.gen.generating')}</div>}
             <div style={{ marginTop: 16, textAlign: 'right' }}>{footerBtn(t('components.media_studio.btn.generate'), generate, !!prompt.trim())}</div>
           </div>

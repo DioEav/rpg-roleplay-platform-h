@@ -7359,6 +7359,8 @@
       "size_description": "按用途推荐默认比例；改一次后本地记住。vertex(Gemini) 暂不支持自定义尺寸",
       "result_title": "生成结果",
       "result_saved_hint": "点击图片可看大图；图片已存入图库（可在「文件库」里找到）。",
+      "reference_label": "参考图",
+      "reference_description": "注意：并非所有模型都支持参考图（seedream 4.x / gpt-image / Gemini 图像等支持）。不支持的模型会忽略参考图，生成完成后会明确提示。支持 png / jpg / webp，单张不超过 8MB。",
       "ref_dropped_note": "当前模型/中转站不支持参考图，本次生成已忽略参考图。",
       "ref_dropped_hint": "参考图无法支撑（模型或中转站不接受 image 输入）。你可以换用支持参考图的模型（如 seedream 4.x / gpt-image / Gemini 图像），或仅用文字描述生成。",
       "result_prompt_label": "本次描述：",

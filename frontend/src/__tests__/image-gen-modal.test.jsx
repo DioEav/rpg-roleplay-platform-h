@@ -95,6 +95,10 @@ describe('生图弹窗 — 模型回声', () => {
 
     // 快照即时上屏(这是"看起来已经选好了"的来源)
     await waitFor(() => expect(screen.getByText('DeepSeek V4-Pro')).toBeTruthy());
+    // 表单视图必须带「参考图」标题 + 注意事项(与「尺寸 / 比例」同款 FormField;
+    // 用户上报此前裸按钮无标题)
+    expect(screen.getByText('参考图')).toBeTruthy();
+    expect(screen.getByText(/注意：并非所有模型都支持参考图/)).toBeTruthy();
 
     fireEvent.click(screen.getByText('生成'));
 

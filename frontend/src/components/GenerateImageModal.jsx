@@ -244,8 +244,14 @@ export default function GenerateImageModal({
         <CSFormField label={t('components.generate_image_modal.size_label')} description={t('components.generate_image_modal.size_description')}>
           <ImageSizePicker kind={kind} value={size} onChange={setSize} />
         </CSFormField>
-        {/* 参考图(i2i):自带 label/说明,不套 CSFormField(它已有自己的 .rif 结构) */}
-        <ReferenceImagePicker refs={refs} onChange={setRefs} />
+        {/* 参考图(i2i):与「尺寸 / 比例」同款标题(此前裸插一排按钮,没有标题 —— 用户上报);
+            description 是注意事项:模型支持面 + 格式限制(不支持的模型会忽略参考图并提示) */}
+        <CSFormField
+          label={t('components.generate_image_modal.reference_label')}
+          description={t('components.generate_image_modal.reference_description')}
+        >
+          <ReferenceImagePicker refs={refs} onChange={setRefs} />
+        </CSFormField>
       </CSSpaceBetween>
       )}
     </CSModal>
