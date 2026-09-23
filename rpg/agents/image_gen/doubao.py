@@ -48,7 +48,7 @@ _SEEDREAM_SIZES: tuple[tuple[int, int], ...] = (
 
 
 def _is_seedream(model: str) -> bool:
-    return "seedream" in (model or "").lower"
+    return "seedream" in (model or "").lower()
 
 
 def _reference_image_cap(model: str) -> int | None:

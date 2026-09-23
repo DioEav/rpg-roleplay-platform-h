@@ -139,6 +139,49 @@ class ChatModalityFallback(_NoNetworkTestCase):
         self.assertEqual(p.call_count, 2)
         self.assertTrue(p.call_args_list[1].args[0].endswith("/chat/completions"))
 
+
+class ImagesEditsMultipart(_NoNetworkTestCase):
+    """带参考图 → /images/edits(multipart)。
+
+    用户上报(gpt-image-2/中转站):`UnmarshalBodyReusable failed: invalid character '-'
+    in numeric literal` —— edits 请求带着 `_headers` 的 `Content-Type: application/json`
+    头发 multipart 体,服务端按 JSON 解析 `--boundary` 开头的体必炸。锁死两件事:
+      ① 出站请求**不得**携带 application/json 头(由 httpx 按 files= 自动补 multipart 头);
+      ② 参考图以 `image[]` 字段逐个成 part。
+    """
+
+    PARAMS = {"reference_images": [(_PNG, "image/png")]}
+
+    def test_edits_strips_json_content_type(self):
+        with _patched_post(_Resp(200, {"data": [{"b64_json": _B64}]})) as p:
+            out = openai_compat.generate(
+                "a cat with this hat", dict(self.PARAMS),
+                api_id="some-relay", model="gpt-image-2",
+                api_key="k", base_url="https://relay.test/v1",
+            )
+        self.assertEqual(out, [_PNG])
+        self.assertTrue(p.call_args.args[0].endswith("/images/edits"))
+        headers = {
+            k.lower(): v
+            for k, v in p.call_args.kwargs.get("headers", {}).items()
+        }
+        self.assertNotEqual(
+            headers.get("content-type"), "application/json",
+            "multipart 请求带着 JSON 头 → 服务端按 JSON 解析 boundary 必炸(本次上报的 400)",
+        )
+        files = p.call_args.kwargs.get("files") or []
+        self.assertTrue(files and files[0][0] == "image[]", "参考图必须以 image[] 逐个成 part")
+
+    def test_edits_clamped_to_16_refs(self):
+        refs = [(b"\x89PNG" * 4, "image/png")] * 20
+        with _patched_post(_Resp(200, {"data": [{"b64_json": _B64}]})) as p:
+            openai_compat.generate(
+                "x", {"reference_images": refs},
+                api_id="some-relay", model="gpt-image-2",
+                api_key="k", base_url="https://relay.test/v1",
+            )
+        self.assertLessEqual(len(p.call_args.kwargs["files"]), 16)
+
     def test_openrouter_goes_straight_to_chat_modality(self):
         # openrouter 直接走 chat 模态(不先打 /images/generations)
         resp = _Resp(200, {"choices": [{"message": {"images": [

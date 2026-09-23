@@ -180,7 +180,12 @@ def _try_images_edit(
 
     try:
         with safe_httpx_client(timeout=_READ_TIMEOUT) as client:
-            resp = client.post(endpoint, data=data, files=files, headers=headers)
+            # headers 里的 application/json 必须剔除:httpx 见到 files= 会自动组
+            # `multipart/form-data; boundary=…`,但显式 Content-Type 会压过它 —— 请求变成
+            # 「JSON 头 + multipart 体」,服务端按 JSON 解析 `--boundary` 开头的体,报
+            # `invalid character '-' in numeric literal`(gpt-image-2 上实测命中,用户上报)。
+            multipart_headers = {k: v for k, v in headers.items() if k.lower() != "content-type"}
+            resp = client.post(endpoint, data=data, files=files, headers=multipart_headers)
     except httpx.TimeoutException as exc:
         raise ImageGenError(f"openai_compat: images/edits 超时 ({exc})") from exc
     except Exception as exc:
