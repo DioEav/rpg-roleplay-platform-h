@@ -16,6 +16,7 @@ gemini-*-image / flux 这类(被名字 heuristic 标成可生图)全部失败。
 """
 from __future__ import annotations
 
+import re
 from typing import Any
 
 import httpx
@@ -30,6 +31,13 @@ _READ_TIMEOUT = 180.0  # 生图比聊天慢,给足时间
 # (OpenRouter 的 google/gemini-*-image、openai/gpt-*-image 等)。直接走 chat 模态,免得先
 # 打一发不存在的 /images/generations 拿到误导性的 401/404。
 _CHAT_MODALITY_IMAGE_PROVIDERS = {"openrouter"}
+
+# 按模型名匹配「参考图的原生请求形状」(带参考图时的尝试顺序依据,见 generate()):
+#   · qwen-image / wan / seedream 系 → /images/generations + `image: [dataURL...]`
+#     (Ark 与 DashScope 兼容端点的原生约定;模型名来自中转站同步,不带 api_id 前缀)
+#   · gemini / nano-banana → chat + image parts(gemini 图像的原生形状)
+_DASHSCOPE_ARK_IMAGE_RE = re.compile(r"qwen-image|qwen-imag|wanx|wan[2-9]|seedream|seededit", re.I)
+_GEMINI_CHAT_RE = re.compile(r"gemini|nano-banana", re.I)
 
 
 def _raise_http(resp, api_id: str, label: str) -> None:
@@ -199,6 +207,43 @@ def _try_images_edit(
     return _parse_images_payload(resp, api_id, "images/edits")
 
 
+def _try_images_generation_refs(
+    base: str, headers: dict[str, str], prompt: str, model: str, params: dict, api_id: str
+) -> list[bytes]:
+    """带参考图打 /images/generations(JSON,body 含 `image: [dataURL...]`)。
+
+    中转站往往没有 /images/edits(multipart),但 t2i 的 generations 路由是通的
+    (用户中转站实测:不带参考图成功)。Ark(seedream-4,≤10)与 DashScope 新系
+    (qwen-image)的原生约定就是 generations + image 数组 —— 把参考图内嵌成 base64
+    dataURL 塞进这条已打通的路由。返回 [] 表示端点不存在(404/405,交给调用方继续
+    回退);其它非 200 抛出供应商真实报错(比 chat 回退后的「模型不存在」更有指向性)。
+    """
+    endpoint = f"{base}/images/generations"
+    refs = reference_images(params)[:10]  # Ark seedream-4 官方上限,以文档为准
+    body: dict[str, Any] = {
+        "model": model,
+        "prompt": prompt,
+        "image": [to_data_url(blob, mime) for blob, mime in refs],
+    }
+    if params.get("size"):
+        body["size"] = str(params["size"])
+
+    try:
+        with safe_httpx_client(timeout=_READ_TIMEOUT) as client:
+            resp = client.post(endpoint, json=body, headers=headers)
+    except httpx.TimeoutException as exc:
+        raise ImageGenError(f"openai_compat: images/generations(参考图) 超时 ({exc})") from exc
+    except Exception as exc:
+        raise ImageGenError(f"openai_compat: 网络错误 ({exc})") from exc
+
+    if resp.status_code in (404, 405):
+        return []
+    if resp.status_code != 200:
+        _raise_http(resp, api_id, "images/generations(参考图)")
+
+    return _parse_images_payload(resp, api_id, "images/generations(参考图)")
+
+
 def _collect_chat_images(message: dict[str, Any]) -> list[bytes]:
     """从 chat 响应 message 里抽图。兼容 OpenRouter `message.images[].image_url.url`
     与 content 数组里的 image_url 项(data: URI 或 http)。"""
@@ -298,12 +343,45 @@ def generate(
     if api_id in _CHAT_MODALITY_IMAGE_PROVIDERS:
         return _try_chat_modality(base, headers, prompt, model, api_id, params)
 
-    # 带参考图优先走 /images/edits(multipart);端点不存在(404/405)→ 回退 chat 模态。
+    # 带参考图:按「模型名 → 原生形状」排序的尝试序列。任何一级失败都不中断(错误收集),
+    # 全部失败才聚合报错。最终兜底是**不带参考图的纯 t2i** —— 中转站上 generations 路由
+    # 实测可通,图先出,参考图被忽略的事实由 ref_dropped 标记告知前端(用户要求)。
     if refs:
-        images = _try_images_edit(base, headers, prompt, model, params, api_id)
-        if images:
+        order = ["edits"]
+        if _DASHSCOPE_ARK_IMAGE_RE.search(model or ""):
+            order.append("gens_image")       # 原生形状按模型名提前(qwen-image/wan/seedream)
+        if _GEMINI_CHAT_RE.search(model or ""):
+            order.append("chat")             # gemini 图像的原生形状
+        for step in ("gens_image", "chat"):
+            if step not in order:
+                order.append(step)           # 未被名称覆盖的通用形状,靠后各试一次
+        order.append("plain_t2i")            # 最终兜底(不再带参考图)
+
+        runners = {
+            "edits": lambda: _try_images_edit(base, headers, prompt, model, params, api_id),
+            "gens_image": lambda: _try_images_generation_refs(base, headers, prompt, model, params, api_id),
+            "chat": lambda: _try_chat_modality(base, headers, prompt, model, api_id, params),
+            "plain_t2i": lambda: _try_images_api(base, headers, prompt, model, params, api_id),
+        }
+        errors: list[str] = []
+        for step in order:
+            try:
+                images = runners[step]()
+            except ImageGenError as exc:
+                errors.append(f"[{step}] {exc}")
+                continue
+            if not images:
+                errors.append(f"[{step}] 端点不存在")
+                continue
+            if step == "plain_t2i":
+                # 成功的这一发没带参考图 → 告知 worker 落 ref_dropped 标记,
+                # 查询接口/前端据此提示「参考图无法支撑」(用户要求显式提示,不许静默)。
+                params["_ref_dropped"] = True
             return images
-        return _try_chat_modality(base, headers, prompt, model, api_id, params)
+
+        raise ImageGenError(
+            "参考图无法支撑（当前模型/中转站不支持参考图），已尝试: " + " | ".join(errors)
+        )
 
     images = _try_images_api(base, headers, prompt, model, params, api_id)
     if images:

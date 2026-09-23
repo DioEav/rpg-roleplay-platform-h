@@ -205,6 +205,105 @@ class ImagesEditsMultipart(_NoNetworkTestCase):
         self.assertIn("鉴权失败", msg)
         self.assertIn("sk-or-v1", msg)  # openrouter 专属提示 key 形如 sk-or-v1-…
 
+
+class RefAttemptChain(_NoNetworkTestCase):
+    """带参考图(名字命中原生形状)的五级尝试链。
+
+    用户中转站实测:qwen-image / gpt-image-2 走 /images/generations(t2i)成功,但
+    /images/edits 与 /chat/completions 两条路都不通 → 带参考图此前必失败。新链路:
+    edits → (按模型名)generations+image / chat → (剩余通用形状) → 纯 t2i 兜底(_ref_dropped)。
+    """
+
+    PARAMS = {"reference_images": [(_PNG, "image/png")]}
+
+    def _gens_ok(self):
+        return _Resp(200, {"data": [{"b64_json": _B64}]})
+
+    def test_name_matched_native_route_tried_before_generic(self):
+        """qwen-image(名字命中 dashscope 系):edits 400 → generations+image 成功。
+
+        旧代码在 edits 的 400 上直接 raise,从不尝试 generations —— 而那正是该中转站
+        唯一打通的路由(用户对照实验:t2i 成功)。
+        """
+        seq = [
+            _Resp(400, {"error": {"message": "edits not supported"}}),  # edits
+            self._gens_ok(),                                            # generations+image
+        ]
+        with _patched_post(side_effect=seq) as p:
+            out = openai_compat.generate(
+                "a cat with this hat", dict(self.PARAMS),
+                api_id="some-relay", model="qwen-image",
+                api_key="k", base_url="https://relay.test/v1",
+            )
+        self.assertEqual(out, [_PNG])
+        paths = [c.args[0] for c in p.call_args_list]
+        self.assertTrue(paths[0].endswith("/images/edits"))
+        self.assertTrue(paths[1].endswith("/images/generations"))
+        # generations+image 的 body:image 字段为 dataURL 数组(Ark/DashScope 原生形状)
+        body = p.call_args_list[1].kwargs["json"]
+        self.assertEqual(body["model"], "qwen-image")
+        self.assertEqual(len(body["image"]), 1)
+        self.assertTrue(body["image"][0].startswith("data:image/png;base64,"))
+
+    def test_gemini_name_prefers_chat_over_generations(self):
+        """gemini 名字:edits 404 → chat+parts(原生形状先于通用 generations+image)。"""
+        seq = [
+            _Resp(404, None, "no edits"),
+            _Resp(200, {"choices": [{"message": {"images": [
+                {"image_url": {"url": "data:image/png;base64," + _B64}}
+            ]}}]}),
+        ]
+        with _patched_post(side_effect=seq) as p:
+            out = openai_compat.generate(
+                "a cat", dict(self.PARAMS),
+                api_id="some-relay", model="google/gemini-2.5-flash-image",
+                api_key="k", base_url="https://relay.test/v1",
+            )
+        self.assertEqual(out, [_PNG])
+        paths = [c.args[0] for c in p.call_args_list]
+        self.assertTrue(paths[1].endswith("/chat/completions"), "gemini 名字应先试 chat 原生形状")
+
+    def test_all_attempts_fail_aggregates_with_refs_unsupported(self):
+        """四级全败 → 聚合报错必须含「参考图无法支撑」与各级供应商原始信息。"""
+        seq = [
+            _Resp(400, {"error": {"message": "edits bad"}}),
+            _Resp(400, {"error": {"message": "gens bad"}}),
+            _Resp(400, {"error": {"message": "chat model not exist"}}),
+            _Resp(400, {"error": {"message": "plain bad"}}),
+        ]
+        with _patched_post(side_effect=seq):
+            with self.assertRaises(ImageGenError) as ctx:
+                openai_compat.generate(
+                    "x", dict(self.PARAMS),
+                    api_id="some-relay", model="qwen-image",
+                    api_key="k", base_url="https://relay.test/v1",
+                )
+        msg = str(ctx.exception)
+        self.assertIn("参考图无法支撑", msg)
+        self.assertIn("chat model not exist", msg)   # 保留供应商原始信息,别吞成一句空话
+
+    def test_plain_t2i_fallback_marks_ref_dropped(self):
+        """前三级全败 + 纯 t2i 成功 → 出图,且 params['_ref_dropped']=True(worker 落库提示)。"""
+        seq = [
+            _Resp(400, {"error": {"message": "edits bad"}}),
+            _Resp(400, {"error": {"message": "gens bad"}}),
+            _Resp(400, {"error": {"message": "chat model not exist"}}),
+            self._gens_ok(),   # 纯 t2i:同一个 generations 路由,不带 image 字段
+        ]
+        params = dict(self.PARAMS)
+        with _patched_post(side_effect=seq) as p:
+            out = openai_compat.generate(
+                "x", params,
+                api_id="some-relay", model="qwen-image",
+                api_key="k", base_url="https://relay.test/v1",
+            )
+        self.assertEqual(out, [_PNG])
+        self.assertTrue(params.get("_ref_dropped"), "降级成功必须标记 _ref_dropped")
+        # 兜底那一发必须是**纯 t2i**:body 不含 image 字段
+        plain_body = p.call_args_list[3].kwargs["json"]
+        self.assertNotIn("image", plain_body)
+        self.assertEqual(plain_body["model"], "qwen-image")
+
     def test_chat_no_image_clear_error(self):
         resp = _Resp(200, {"choices": [{"message": {"content": "sorry, text only"}}]})
         with _patched_post(resp):

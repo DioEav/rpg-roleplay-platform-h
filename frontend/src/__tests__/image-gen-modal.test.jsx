@@ -169,4 +169,19 @@ describe('生图弹窗 — 成功后就地看结果', () => {
     expect(document.querySelector(`img[src="${IMG_URL}"]`)).toBeNull();
     expect(document.querySelector('textarea').value).toBe(prompt);
   });
+
+  it('轮询返回 ref_dropped → 结果视图提示「参考图被忽略」', async () => {
+    // 尝试链全部降级到纯 t2i 时,后端把 ref_dropped 写进记录、轮询带回 → 前端必须显式提示
+    //(用户要求:不许静默忽略参考图)。图照常展示。
+    seedFreshSnapshot();
+    installApi({ poll: { id: 7, status: 'done', url: IMG_URL, kind: 'game', ref_dropped: true } });
+    openWithPrompt();
+    await waitFor(() => expect(screen.getByText('DeepSeek V4-Pro')).toBeTruthy());
+
+    fireEvent.click(screen.getByText('生成'));
+
+    expect(await screen.findByText('当前模型/中转站不支持参考图，本次生成已忽略参考图。')).toBeTruthy();
+    expect(screen.getByText('生成结果')).toBeTruthy();
+    expect(document.querySelector(`img[src="${IMG_URL}"]`)).toBeTruthy();
+  });
 });

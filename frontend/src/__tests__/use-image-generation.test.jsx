@@ -35,8 +35,9 @@ describe('useImageGeneration', () => {
     await act(async () => { await result.current.generate({ prompt: 'p' }, {}); });
     // 第一次 get = pending → 排 2s
     await act(async () => { await vi.advanceTimersByTimeAsync(2000); });
-    // 契约:onDone(url, imageId) —— imageId 供调用方广播本地 image_ready 事件(见 hook 头注)
-    expect(onDone).toHaveBeenCalledWith('http://x/y.png', 'img1');
+    // 契约:onDone(url, imageId, 轮询响应) —— imageId 供本地 image_ready 广播,
+    // 第三参携 ref_dropped 等标记供宿主展示结果态提示(见 hook 头注)。
+    expect(onDone).toHaveBeenCalledWith('http://x/y.png', 'img1', { status: 'done', url: 'http://x/y.png' });
     expect(result.current.generating).toBe(false);
   });
 
@@ -111,7 +112,7 @@ describe('useImageGeneration', () => {
     });
     // 第一次 get: ok 但无 url → status='done' 但 requireUrl 不满足 → 继续轮询
     await act(async () => { await vi.advanceTimersByTimeAsync(2000); });
-    expect(onDone).toHaveBeenCalledWith('u://ok', 'imgU');
+    expect(onDone).toHaveBeenCalledWith('u://ok', 'imgU', { ok: true, url: 'u://ok' });
   });
 
   it('stop():卸载/关闭后不再继续轮询', async () => {

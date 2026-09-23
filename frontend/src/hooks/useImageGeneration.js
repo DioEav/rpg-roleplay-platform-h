@@ -90,7 +90,7 @@ export function useImageGeneration({ onDone, onFail } = {}) {
     else { setCredsMissing(false); setError(m || '操作失败'); }
   }, [stop, onFail]);
 
-  const handleDone = useCallback((url, imageId) => {
+  const handleDone = useCallback((url, imageId, pollResult) => {
     stop();
     setGenerating(false);
     // 就地广播一条与后端 SSE 同形状的事件(`rpg-image-updated` / op=ready)。
@@ -103,7 +103,8 @@ export function useImageGeneration({ onDone, onFail } = {}) {
         detail: { op: 'ready', payload: { image_id: imageId, url, kind: kindRef.current }, ts: Date.now() },
       }));
     } catch (_) { /* 事件派发失败不影响生图结果本身 */ }
-    if (onDone) onDone(url, imageId);
+    // 第三参 = 整份轮询响应(含 ref_dropped 等标记),宿主据此展示结果态提示;老宿主只取前两参不受影响。
+    if (onDone) onDone(url, imageId, pollResult);
   }, [stop, onDone]);
 
   const poll = useCallback((imageId, perCall, myGen, attempt) => {
@@ -128,7 +129,7 @@ export function useImageGeneration({ onDone, onFail } = {}) {
           return;
         }
         const status = pc.doneFromStatus ? pc.doneFromStatus(r) : r.status;
-        if (status === 'done' && (!pc.requireUrl || r.url)) { handleDone(r.url, imageId); return; }
+        if (status === 'done' && (!pc.requireUrl || r.url)) { handleDone(r.url, imageId, r); return; }
         // cancelled 是**终态**(后端取消接口与 wait_for_image 都这么算),此前只认 done/failed,
         // 于是移动端取消过的图在桌面端会被永远轮询 —— 状态不会再变,循环没有出口。
         if (status === 'failed' || status === 'cancelled') { handleFail(r.error || pc.failFallback || '生成失败', pc); return; }

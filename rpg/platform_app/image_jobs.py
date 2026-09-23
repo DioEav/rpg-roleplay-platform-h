@@ -333,7 +333,12 @@ async def handle_image_gen(payload: dict[str, Any]) -> None:
         _fail(image_id, "cancel_check_error: 无法确认任务状态,已按失败收尾")
         return
     try:
-        update_image_record(image_id, "done", url=url)
+        update_image_record(
+            image_id, "done", url=url,
+            # 尝试链降级到纯 t2i(参考图被忽略)时,把标记合进 params ——
+            # GET /api/images/{id} 据此返回 ref_dropped,前端结果视图给出提示。
+            params_patch=({"ref_dropped": True} if params.get("_ref_dropped") else None),
+        )
     except Exception as exc:
         # 同理:写 done 失败若只记日志,记录会永远停在 generating → 前端轮询永不结束。
         log.exception("[image_jobs] update done failed image_id=%s", image_id)

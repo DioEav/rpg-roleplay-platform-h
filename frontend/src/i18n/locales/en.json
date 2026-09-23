@@ -7362,6 +7362,8 @@
       "size_description": "Default aspect ratio is recommended based on usage type; your selection is saved locally. Vertex (Gemini) does not support custom sizes.",
       "result_title": "Result",
       "result_saved_hint": "Click the image to view it full size. It has been saved to your library (find it under \"Library\").",
+      "ref_dropped_note": "Reference images are not supported by the current model/relay; they were ignored for this generation.",
+      "ref_dropped_hint": "Reference images could not be used (the model or relay does not accept image input). Try a reference-capable model (e.g. seedream 4.x / gpt-image / Gemini image), or describe everything in text.",
       "result_prompt_label": "Prompt used:",
       "regenerate_btn": "Generate another",
       "close_btn": "Close",

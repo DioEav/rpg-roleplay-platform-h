@@ -163,10 +163,26 @@ def update_image_record(
     *,
     url: str | None = None,
     error: str | None = None,
+    params_patch: dict | None = None,
 ) -> None:
-    """更新 ai_images 行的 status / url / error。"""
+    """更新 ai_images 行的 status / url / error / params(可选 jsonb 浅合并)。
+
+    params_patch: 形如 {"ref_dropped": True} 的浅合并 —— 用于把 worker 侧的
+    「参考图被忽略」标记带回查询接口(GET /api/images/{id} 据此返回 ref_dropped)。
+    """
     init_db()
+    from psycopg.types.json import Jsonb  # lazy import(与 create_image_record 同款)
     with connect() as db:
+        if params_patch:
+            db.execute(
+                """
+                update ai_images
+                   set params = coalesce(params, '{}'::jsonb) || %s::jsonb
+                 where id = %s
+                   and status <> 'cancelled'
+                """,
+                (Jsonb(params_patch), int(image_id)),
+            )
         db.execute(
             """
             update ai_images
@@ -510,6 +526,9 @@ async def api_get_image(image_id: int, request: Request):
         "url": record.get("url") or "",
         "error": record.get("error") or "",
         "kind": record.get("kind") or "",
+        # 参考图被忽略的标记(worker 尝试链全部降级到纯 t2i 时写入 params);
+        # 前端轮询据此在结果视图提示「参考图无法支撑」。
+        "ref_dropped": bool((record.get("params") or {}).get("ref_dropped")),
     })
 
 

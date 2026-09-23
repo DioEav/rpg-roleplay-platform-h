@@ -53,13 +53,23 @@ export default function GenerateImageModal({
   const [selModel, setSelModel] = useState({ api_id: '', model: '' });
   // 生成成功后的结果 URL。非空 = 弹窗切到「结果视图」（不再自动关闭）。
   const [doneUrl, setDoneUrl] = useState('');
+  // 后端标记「参考图被忽略」(尝试链全部降级到纯 t2i,见 openai_compat) → 结果视图提示条。
+  const [refDropped, setRefDropped] = useState(false);
 
   // 生图内核(generate + 每 2s 轮询 + creds 分类)收口到 useImageGeneration;busy/error/credsMissing
-  // 取自 hook。done → 就地展示结果 + 透传宿主 onDone(url, imageId);聊天里的实时追加由 hook
+  // 取自 hook。done → 就地展示结果 + 透传宿主 onDone(url, imageId, 轮询响应);聊天里的实时追加由 hook
   // 成功时广播的本地 rpg-image-updated 事件负责(不依赖 Redis)。
   const CREDS_TEXT = t('components.generate_image_modal.creds_missing_hint');
   const { generate, generating: busy, error, credsMissing, reset, stop, setError } = useImageGeneration({
-    onDone: (url, imageId) => { setDoneUrl(url); if (onDone) onDone(url, imageId); },
+    onDone: (url, imageId, pollResult) => {
+      const dropped = !!(pollResult && pollResult.ref_dropped);
+      setRefDropped(dropped);
+      if (dropped) {
+        window.__apiToast?.(t('components.generate_image_modal.ref_dropped_note'), { kind: 'warn', duration: 5000 });
+      }
+      setDoneUrl(url);
+      if (onDone) onDone(url, imageId, pollResult);
+    },
   });
   // 反馈采集:生图弹窗(无独立路由)标记当前活跃功能供运行环境快照识别。
   useEffect(() => {
@@ -125,6 +135,7 @@ export default function GenerateImageModal({
     if (busy) return;
     reset();
     setDoneUrl('');
+    setRefDropped(false);
     if (onClose) onClose();
   }
 
@@ -141,7 +152,7 @@ export default function GenerateImageModal({
               <CSButton key="close" onClick={handleClose}>
                 {t('components.generate_image_modal.close_btn')}
               </CSButton>,
-              <CSButton key="again" variant="primary" onClick={() => { reset(); setDoneUrl(''); }}>
+              <CSButton key="again" variant="primary" onClick={() => { reset(); setDoneUrl(''); setRefDropped(false); }}>
                 {t('components.generate_image_modal.regenerate_btn')}
               </CSButton>,
             ] : [
@@ -175,6 +186,11 @@ export default function GenerateImageModal({
             />
           </div>
           <CSBox color="text-body-secondary" fontSize="body-s">
+            {refDropped && (
+              <CSAlert type="warning" header={t('components.generate_image_modal.ref_dropped_note')}>
+                {t('components.generate_image_modal.ref_dropped_hint')}
+              </CSAlert>
+            )}
             {t('components.generate_image_modal.result_saved_hint')}
           </CSBox>
           {prompt ? (
