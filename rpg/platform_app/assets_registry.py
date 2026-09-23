@@ -72,6 +72,23 @@ def register_asset(
 
 
 # ---------------------------------------------------------------------------
+# 写：size 惰性回填（供 library._backfill_sizes）
+# ---------------------------------------------------------------------------
+
+def update_asset_size(user_id: int, asset_id: int, size: int) -> None:
+    """把 size=0 的旧行回填为磁盘实测大小。
+
+    `and size = 0` 守卫：只修未回填过的行，不覆盖真实值；限 owner。
+    """
+    init_db()
+    with connect() as db:
+        db.execute(
+            "update user_assets set size = %s where id = %s and user_id = %s and size = 0",
+            (int(size), int(asset_id), int(user_id)),
+        )
+
+
+# ---------------------------------------------------------------------------
 # 读：列表
 # ---------------------------------------------------------------------------
 

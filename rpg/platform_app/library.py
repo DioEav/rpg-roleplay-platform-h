@@ -76,6 +76,7 @@ def list_assets(
     from . import assets_registry as _reg  # lazy import
 
     items = _reg.list_user_assets(user_id, kind=kind, limit=limit, offset=offset)
+    _backfill_sizes(user_id, items, _reg)
     return {
         "ok": True,
         "items": items,
@@ -83,6 +84,38 @@ def list_assets(
         "limit": limit,
         "offset": offset,
     }
+
+
+def _backfill_sizes(user_id: int, items: list[dict[str, Any]], _reg: Any = None) -> None:
+    """惰性回填 size=0 的旧行（列表就地修正 + 持久化）。
+
+    根因:image_jobs 的 register_asset 曾漏传 size(其他登记点都传 size=len(data)),
+    AI 生图行落库 size=0 → 前端 fmtBytes(0) 显示 "—"。migrations 是纯 SQL,文件系统
+    的 stat 只能在 Python 侧做 —— 放列表路径:每行最多 stat 一次(回填带 `and size = 0`
+    守卫持久化,下次直接读库值,不再碰磁盘)。文件已丢失的行保持 0(显示 "—" 即"未知",
+    属实);stat/update 失败逐条忽略,不拖垮列表。
+    """
+    stale = [it for it in items if not it.get("size") and it.get("storage_key")]
+    if not stale:
+        return
+    if _reg is None:
+        from . import assets_registry as _reg  # lazy import
+
+    from . import storage  # lazy import
+
+    for it in stale:
+        try:
+            path = storage.resolve_path(it["storage_key"])
+            if not path.is_file():
+                continue
+            size = path.stat().st_size
+        except Exception:
+            continue
+        it["size"] = size
+        try:
+            _reg.update_asset_size(user_id, it["id"], size)
+        except Exception:
+            pass  # 持久化失败不影响本次展示(下次列表再 stat 一次)
 
 
 def list_dir(user_id: int, path: str = "", limit: int | None = None, cursor: str | None = None) -> dict:
@@ -210,17 +243,22 @@ def delete_asset_with_refs(
     user_id: int,
     asset_id: int,
     confirm: bool = False,
+    probe: bool = False,
 ) -> dict[str, Any]:
     """S5 删除端点的核心逻辑。
 
     流程：
     1. find_asset_references 拿引用列表（同时做 owner 校验）。
-    2. 若有引用且 confirm=False → 返回 {ok:False, needs_confirm:True, references:[...]}。
-    3. 若无引用，或有引用但 confirm=True：
+    2. probe=True（文件库「点删除先弹确认框」的只读探测）→ 无论有无引用都返回
+       {ok:False, needs_confirm:True, references:[...]}，**不删任何东西**。
+       （confirm=False 的旧语义是「无引用就直接删」——文件库里无引用的 AI 生图
+       点删除因此不弹框直接消失,用户报的就是这个;probe 把「探测」变成纯只读。）
+    3. 若有引用且 confirm=False → 返回 {ok:False, needs_confirm:True, references:[...]}。
+    4. 若无引用，或有引用但 confirm=True：
        a. nullify_references 置空所有引用字段（带 owner 条件）。
        b. delete_asset(force=True) 删 user_assets 行 + 物理文件。
        c. 返回 {ok:True, deleted:True}。
-    4. 资产不存在/不属于该用户 → {ok:False, error:'not_found'}。
+    5. 资产不存在/不属于该用户 → {ok:False, error:'not_found'}。
     """
     from . import assets_registry as _reg  # lazy import
 
@@ -230,6 +268,15 @@ def delete_asset_with_refs(
 
     references = ref_result.get("references") or []
     asset = ref_result.get("asset") or {}
+
+    # 只读探测:总是要求确认(owner 校验已在上面做过),引用列表给确认框做警告展示
+    if probe:
+        return {
+            "ok": False,
+            "needs_confirm": True,
+            "references": references,
+            "asset": asset,
+        }
 
     # 有引用 + 未确认 → 要求前端二次确认
     if references and not confirm:

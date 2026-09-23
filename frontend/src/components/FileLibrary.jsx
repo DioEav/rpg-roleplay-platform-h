@@ -18,8 +18,8 @@ import CSStatusIndicator from '@cloudscape-design/components/status-indicator';
  *    list(kind?)    → { items: [...] }
  *    get(id)        → { asset }
  *    downloadUrl(id)→ string   (无需 await)
- *    deleteAsset(id, confirm) → { ok, needs_confirm?, references?, deleted? }
- *      confirm 缺省按 false 探测引用;真正删除须显式传 true。
+ *    deleteAsset(id, confirm, probe) → { ok, needs_confirm?, references?, deleted? }
+ *      probe=true 只读探测(总是 needs_confirm,不删);确认后 deleteAsset(id, true) 真删。
  *  }
  * ────────────────────────────────────────────────────────────────*/
 
@@ -298,25 +298,21 @@ export default function FileLibrary() {
     : assets.filter(a => a.kind === activeTab);
 
   // ── 删除流程 ─────────────────────────────────────────────
-  // 点击「删除」→ 立刻探测(confirm=false):
-  //   needs_confirm → 弹二次确认(带关联警告)
-  //   ok+deleted    → 直接移除并 toast
-  //   其余          → 弹轻量确认,由用户再决定
+  // 点击「删除」→ probe 只读探测(不删!):
+  //   总是返回 needs_confirm → 弹确认框(带关联警告,无引用时只显示确认文案)。
+  //   此前 confirm=false 对无引用资产是「直接删」—— AI 生图(多数无引用)点删除
+  //   不弹框就消失(用户上报)。确认框里「确认删除」→ confirm=true 真删。
   const startDelete = async (asset) => {
     if (deleteBusy) return;
     setDeleteBusy(true);
     try {
-      // 显式 false:api-client 在 confirm===undefined 时曾默认成 true,会跳过引用检查
-      const r = await window.api?.library?.deleteAsset(asset.id, false);
+      const r = await window.api?.library?.deleteAsset(asset.id, false, true);
       if (r && r.ok === false && r.needs_confirm) {
         setDeleteState({ asset, phase: 'confirm', references: r.references || [] });
-      } else if (r && r.ok) {
-        if (r.deleted) {
-          setAssets(prev => prev.filter(a => a.id !== asset.id));
-          window.toast?.(t('components.file_library.toast.deleted', { name: asset.name || '#' + asset.id }), { kind: 'ok', duration: 2400 });
-        } else {
-          setDeleteState({ asset, phase: 'confirm', references: [] });
-        }
+      } else if (r && r.ok && r.deleted) {
+        // 兼容旧后端(无 probe 字段时仍可能直删)——不静默:照样移除 + toast
+        setAssets(prev => prev.filter(a => a.id !== asset.id));
+        window.toast?.(t('components.file_library.toast.deleted', { name: asset.name || '#' + asset.id }), { kind: 'ok', duration: 2400 });
       } else if (r && r.ok === false && r.error) {
         window.toast?.(r.error || t('components.file_library.toast.delete_failed'), { kind: 'danger', duration: 3000 });
       } else {

@@ -377,6 +377,9 @@ async def handle_image_gen(payload: dict[str, Any]) -> None:
             ref_kind=_ref_kind,
             ref_id=_ref_id,
             mime="image/png",
+            # 漏传 size → user_assets.size=0 → 文件库卡片显示 "—"(其他登记点都传
+            # size=len(...);落盘的就是 raw_results[0] 原始字节,长度即文件大小)。
+            size=len(raw_results[0]),
             meta={"prompt": prompt, "model": model or ""},
         )
     except Exception as _reg_exc:

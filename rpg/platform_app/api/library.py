@@ -106,10 +106,14 @@ async def api_library_download(asset_id: int, user=Depends(require_user)):
 async def api_library_delete_asset(asset_id: int, request: Request, user=Depends(require_user)):
     """删除资产（含引用检查 + 二次确认 + 置空引用 + force 删）。
 
-    request body（可选）: {"confirm": true}
+    request body（可选）:
+      {"confirm": true}            — 确认执行删除
+      {"probe": true}              — 只读探测:总是返回 needs_confirm + 引用列表,
+                                     不删任何东西(文件库「点删除先弹确认框」用;
+                                     否则无引用资产 confirm=false 会直接删、不弹框)
 
     返回：
-      {ok: false, needs_confirm: true, references: [...]}  — 有引用且未 confirm
+      {ok: false, needs_confirm: true, references: [...]}  — 需确认(probe 或有引用未 confirm)
       {ok: true,  deleted: true}                           — 删除成功
       {ok: false, error: "not_found"}                      — 不存在或无权
     """
@@ -120,7 +124,8 @@ async def api_library_delete_asset(asset_id: int, request: Request, user=Depends
         pass
 
     confirm = bool(body.get("confirm", False))
-    result = _library.delete_asset_with_refs(user["id"], asset_id, confirm=confirm)
+    probe = bool(body.get("probe", False))
+    result = _library.delete_asset_with_refs(user["id"], asset_id, confirm=confirm, probe=probe)
     status = 200
     if not result.get("ok") and result.get("error") == "not_found":
         status = 404
