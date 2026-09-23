@@ -2390,6 +2390,12 @@ MIGRATIONS: list[tuple[int, str, list[str]]] = [
         " where api_id = 'xiaomi_mimo' "
         "   and rtrim(base_url_override, '/') = 'https://chat.d.xiaomi.net/ai/api/v1'",
     ]),
+    (104, "user_assets_display_name", [
+        # 文件库「重命名」:user_assets 此前没有显示名字段,卡片只能回退显示
+        # storage_key 文件名(如 ai_7_a1b2….png)。name='' 表示"未重命名",前端回退
+        # storage_key 展示 —— 与 asset.name || storage_key 的既有取值口径一致。
+        "alter table user_assets add column if not exists name text not null default ''",
+    ]),
 
 ]
 

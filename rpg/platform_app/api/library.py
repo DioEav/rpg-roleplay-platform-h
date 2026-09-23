@@ -11,6 +11,7 @@ S5 重构：文件库从"手动上传文件管理器"改为"统一用户资产�
   GET  /api/library/asset/{id}            — 单项（owner 校验）
   GET  /api/library/asset/{id}/download   — 文件下载（attachment）
   POST /api/library/asset/{id}/delete     — 删除（含引用检查 + confirm 二次确认）
+  POST /api/library/asset/{id}/rename     — 重命名显示名（只改 name 列）
   POST /api/library/upload                — 405 已移除
   POST /api/library/mkdir                 — 405 已移除
 """
@@ -130,6 +131,39 @@ async def api_library_delete_asset(asset_id: int, request: Request, user=Depends
     if not result.get("ok") and result.get("error") == "not_found":
         status = 404
     return json_response(result, status_code=status)
+
+
+# ---------------------------------------------------------------------------
+# POST /api/library/asset/{asset_id}/rename — 重命名显示名
+# ---------------------------------------------------------------------------
+
+_RENAME_MAX_LEN = 100  # 显示名而已,不进文件系统;限长防滥用
+
+
+@router.post("/api/library/asset/{asset_id}/rename")
+async def api_library_rename_asset(asset_id: int, request: Request, user=Depends(require_user)):
+    """重命名资产显示名（只改 user_assets.name,文件本体不动）。
+
+    request body: {"name": "新名称"}
+    — trim 后 1..100 字符;空串/超长 → 400 {ok:false, error:"invalid_name"}。
+    name='' 若需"清除回退"语义由前端先校验(空输入直接禁用保存),这里同样拒绝。
+
+    返回：{ok:true, asset:{...更新后的行}} | 404 {ok:false, error:"not_found"}
+    """
+    body: dict = {}
+    try:
+        body = await request.json()
+    except Exception:
+        pass
+
+    name = str(body.get("name") or "").strip()
+    if not name or len(name) > _RENAME_MAX_LEN:
+        return json_response({"ok": False, "error": "invalid_name"}, status_code=400)
+
+    asset = _library.rename_asset(user["id"], asset_id, name)
+    if asset is None:
+        return json_response({"ok": False, "error": "not_found"}, status_code=404)
+    return json_response({"ok": True, "asset": asset})
 
 
 # ---------------------------------------------------------------------------

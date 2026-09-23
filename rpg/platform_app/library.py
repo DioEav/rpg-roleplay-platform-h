@@ -137,6 +137,17 @@ def get_asset(user_id: int, asset_id: int) -> dict | None:
     return _reg.get_asset(user_id, asset_id)
 
 
+def rename_asset(user_id: int, asset_id: int, name: str) -> dict | None:
+    """重命名资产显示名（文件库「重命名」）。
+
+    只改 user_assets.name,不动文件/存储键/引用。owner 校验在 registry 内做;
+    不存在/非 owner → None(端点转 404)。
+    """
+    from . import assets_registry as _reg  # lazy import
+
+    return _reg.rename_asset(user_id, asset_id, name)
+
+
 # ---------------------------------------------------------------------------
 # 下载：解析物理路径
 # ---------------------------------------------------------------------------

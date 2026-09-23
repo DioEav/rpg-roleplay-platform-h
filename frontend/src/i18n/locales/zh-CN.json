@@ -7208,14 +7208,23 @@
         "asset_fallback": "资产 #{{id}}"
       },
       "card": {
-        "download": "下载"
+        "download": "下载",
+        "rename": "重命名"
+      },
+      "rename_modal": {
+        "header": "重命名",
+        "hint": "更改此文件在库中的显示名称，文件本身不会被改动。",
+        "placeholder": "输入新名称",
+        "too_long": "名称不能超过 100 个字符"
       },
       "title": "文件库",
       "description": "你的全部文件资产(AI 生图 / 角色卡图 / 头像 / 封面 / 导入文本)。只读管理——不支持直接上传,文件由各功能组件产生。",
       "load_error": "加载失败",
       "toast": {
         "deleted": "已删除 {{name}}",
-        "delete_failed": "删除失败"
+        "delete_failed": "删除失败",
+        "renamed": "已重命名为 {{name}}",
+        "rename_failed": "重命名失败"
       },
       "empty": {
         "all": "暂无文件资产",

@@ -925,6 +925,8 @@
         if (probe) fd_body.probe = true;
         return _send(`/api/library/asset/` + encodeURIComponent(id) + `/delete`, { method: "POST", body: fd_body });
       },
+      // 重命名显示名(只改 user_assets.name,文件本体不动)→ {ok, asset}
+      renameAsset: (id, name) => POST(`/api/library/asset/` + encodeURIComponent(id) + `/rename`, { name }),
       // 旧接口保留(内部用,别再从 UI 调)
       _legacyUpload: (file, path) => {
         const fd = new FormData();

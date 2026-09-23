@@ -7211,14 +7211,23 @@
         "asset_fallback": "Asset #{{id}}"
       },
       "card": {
-        "download": "Download"
+        "download": "Download",
+        "rename": "Rename"
+      },
+      "rename_modal": {
+        "header": "Rename",
+        "hint": "Change how this file is displayed in the library. The file itself is not modified.",
+        "placeholder": "Enter a new name",
+        "too_long": "Name cannot exceed 100 characters"
       },
       "title": "File Library",
       "description": "All your file assets — AI images, character card images, avatars, covers, and imported text. Read-only management: direct upload is not supported; files are created by the platform's features.",
       "load_error": "Failed to load",
       "toast": {
         "deleted": "Deleted {{name}}",
-        "delete_failed": "Failed to delete"
+        "delete_failed": "Failed to delete",
+        "renamed": "Renamed to {{name}}",
+        "rename_failed": "Rename failed"
       },
       "empty": {
         "all": "No files yet",

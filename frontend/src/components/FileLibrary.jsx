@@ -8,6 +8,7 @@ import CSButton from '@cloudscape-design/components/button';
 import CSBox from '@cloudscape-design/components/box';
 import CSBadge from '@cloudscape-design/components/badge';
 import CSModal from '@cloudscape-design/components/modal';
+import CSInput from '@cloudscape-design/components/input';
 import CSAlert from '@cloudscape-design/components/alert';
 import CSStatusIndicator from '@cloudscape-design/components/status-indicator';
 
@@ -138,7 +139,10 @@ function DeleteConfirmModal({ open, asset, references, onCancel, onConfirm, busy
           <CSSpaceBetween direction="horizontal" size="xs">
             <CSButton variant="link" onClick={onCancel} disabled={busy}>{t('common.cancel')}</CSButton>
             <CSButton variant="primary" onClick={onConfirm} disabled={busy}
-              style={{ '--btn-bg': 'var(--color-background-status-error,#d63031)' }}>
+              style={{ root: {
+                background: { default: '#d63031', hover: '#b02a2a', active: '#8f1f1f' },
+                borderColor: { default: '#d63031', hover: '#b02a2a', active: '#8f1f1f' },
+              } }}>
               {busy ? t('components.file_library.delete_modal.deleting') : t('components.file_library.delete_modal.confirm_delete')}
             </CSButton>
           </CSSpaceBetween>
@@ -160,8 +164,71 @@ function DeleteConfirmModal({ open, asset, references, onCancel, onConfirm, busy
   );
 }
 
+// ── 重命名弹框 ────────────────────────────────────────────────
+// 只改显示名(user_assets.name),文件本体/存储键不动。空名禁用保存
+// (name='' 在展示口径 = 未重命名,允许清空会让按钮语义变模糊)。
+function RenameModal({ open, asset, onCancel, onConfirm, busy }) {
+  const { t } = useTranslation();
+  const [value, setValue] = React.useState('');
+
+  // 打开时回填当前名(asset.name 空 → 回退 storage_key 展示名,让用户看到"现在叫什么")
+  React.useEffect(() => {
+    if (open && asset) {
+      setValue(asset.name || asset.storage_key || '');
+    }
+  }, [open, asset]);
+
+  if (!open || !asset) return null;
+
+  const trimmed = value.trim();
+  const tooLong = trimmed.length > 100;
+
+  const submit = () => {
+    if (!trimmed || tooLong || busy) return;
+    onConfirm(trimmed);
+  };
+
+  return (
+    <CSModal
+      visible
+      onDismiss={onCancel}
+      header={t('components.file_library.rename_modal.header')}
+      footer={
+        <CSBox float="right">
+          <CSSpaceBetween direction="horizontal" size="xs">
+            <CSButton variant="link" onClick={onCancel} disabled={busy}>{t('common.cancel')}</CSButton>
+            <CSButton variant="primary" onClick={submit} disabled={busy || !trimmed || tooLong} loading={busy}>
+              {t('common.save')}
+            </CSButton>
+          </CSSpaceBetween>
+        </CSBox>
+      }
+    >
+      <CSSpaceBetween size="s">
+        <CSBox fontSize="body-s" color="text-body-secondary">
+          {t('components.file_library.rename_modal.hint')}
+        </CSBox>
+        <CSInput
+          value={value}
+          onChange={({ detail }) => setValue(detail.value)}
+          placeholder={t('components.file_library.rename_modal.placeholder')}
+          ariaLabel={t('components.file_library.rename_modal.header')}
+          disabled={busy}
+          invalid={tooLong}
+          onKeyDown={(e) => { if (e.key === 'Enter') submit(); }}
+        />
+        {tooLong && (
+          <CSAlert type="error">
+            {t('components.file_library.rename_modal.too_long')}
+          </CSAlert>
+        )}
+      </CSSpaceBetween>
+    </CSModal>
+  );
+}
+
 // ── 单卡片 ────────────────────────────────────────────────────
-function AssetCard({ asset, onDelete, busy }) {
+function AssetCard({ asset, onDelete, onRename, busy }) {
   const { t } = useTranslation();
   const KIND_META = getKindMeta();
   const SOURCE_LABELS = getSourceLabels();
@@ -225,22 +292,34 @@ function AssetCard({ asset, onDelete, busy }) {
         )}
       </div>
 
-      {/* 操作按钮:固定卡片底部,左下载 / 右删除 */}
+      {/* 操作按钮:固定卡片底部,两行 —— 第一行 下载(左)/重命名(右),第二行 删除(左,红色) */}
       <div style={{
         display: 'flex',
-        justifyContent: 'space-between',
-        alignItems: 'center',
-        gap: 8,
+        flexDirection: 'column',
+        alignItems: 'flex-start',
+        gap: 2,
         marginTop: 'auto',
         paddingTop: 10,
         borderTop: '1px solid var(--color-border-divider-default, rgba(255,255,255,0.08))',
       }}>
         {/* iconName 必须是 Cloudscape 图标集里的名字(见 icon/generated/icons.d.ts):
             此前写的是 "download-alt" —— 集合里没有这个名字 → 图标整个不渲染,按钮只剩文字。 */}
-        <CSButton variant="inline-link" iconName="download" onClick={handleDownload} formAction="none">
-          {t('components.file_library.card.download')}
-        </CSButton>
-        <CSButton variant="inline-link" iconName="remove" onClick={(e) => { e.stopPropagation(); onDelete(asset); }} formAction="none" disabled={busy}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', width: '100%' }}>
+          <CSButton variant="inline-link" iconName="download" onClick={handleDownload} formAction="none">
+            {t('components.file_library.card.download')}
+          </CSButton>
+          <CSButton variant="inline-link" iconName="edit" onClick={(e) => { e.stopPropagation(); onRename && onRename(asset); }} formAction="none" disabled={busy}>
+            {t('components.file_library.card.rename')}
+          </CSButton>
+        </div>
+        {/* 红色删除:CSButton 的 style 是 Cloudscape 结构化对象({root:{color:{...}}}),
+            会被 getButtonStyles 映射成内联 --awsui-style-color-{state}-esndbs 变量,
+            落进按钮 CSS 的 color: var(--awsui-internal-style-color, var(--awsui-style-color-…)) 
+            fallback 槽。传扁平 {'--x': …} 会被整体丢弃(无 style.root → undefined)——
+            此前两处红按钮不生效就是这个原因。default/hover/active 必须都设,
+            否则悬停/按下会 fallback 回默认蓝;disabled 不设 → 走灰色(忙碌态合理)。 */}
+        <CSButton variant="inline-link" iconName="remove" onClick={(e) => { e.stopPropagation(); onDelete(asset); }} formAction="none" disabled={busy}
+          style={{ root: { color: { default: '#d63031', hover: '#b02a2a', active: '#8f1f1f' } } }}>
           {t('common.delete')}
         </CSButton>
       </div>
@@ -263,6 +342,10 @@ export default function FileLibrary() {
   //   phase=confirm: 等待用户在弹窗里点「确认删除」
   // 探测阶段(startDelete)不进 state,直接跑;有引用/需二次确认时才写 phase=confirm。
   const [deleteBusy, setDeleteBusy] = React.useState(false);
+
+  // 重命名状态机:{ asset, } —— 输入值在 RenameModal 内部管理
+  const [renameState, setRenameState] = React.useState(null);
+  const [renameBusy, setRenameBusy] = React.useState(false);
 
   // ── 加载列表 ─────────────────────────────────────────────
   const load = React.useCallback(async (kind) => {
@@ -329,6 +412,42 @@ export default function FileLibrary() {
 
   const handleDeleteCancel = () => {
     if (!deleteBusy) setDeleteState(null);
+  };
+
+  // ── 重命名流程 ─────────────────────────────────────────────
+  const startRename = (asset) => {
+    if (renameBusy || deleteBusy) return;
+    setRenameState({ asset });
+  };
+
+  const handleRenameCancel = () => {
+    if (!renameBusy) setRenameState(null);
+  };
+
+  const handleRenameConfirm = async (name) => {
+    if (!renameState || renameBusy) return;
+    const { asset } = renameState;
+
+    setRenameBusy(true);
+    try {
+      const r = await window.api?.library?.renameAsset?.(asset.id, name);
+      if (r && r.ok) {
+        const updated = r.asset || { ...asset, name };
+        // 就地更新列表(不重拉):卡片名 / 删除弹窗文案都从 assets 读
+        setAssets(prev => prev.map(a => a.id === asset.id ? { ...a, ...updated } : a));
+        setRenameState(null);
+        window.toast?.(t('components.file_library.toast.renamed', { name }), { kind: 'ok', duration: 2400 });
+      } else {
+        // RenameModal 通过 onConfirm 的 promise 语义拿不到内部 err state —— 用 toast 兜底
+        window.toast?.(t('components.file_library.toast.rename_failed'), { kind: 'danger', duration: 3000 });
+        setRenameState(null);
+      }
+    } catch (e) {
+      window.toast?.(e?.message || t('components.file_library.toast.rename_failed'), { kind: 'danger', duration: 3000 });
+      setRenameState(null);
+    } finally {
+      setRenameBusy(false);
+    }
   };
 
   // 弹窗里的「确认删除」→ 带 confirm=true 再调一次
@@ -446,7 +565,8 @@ export default function FileLibrary() {
                 key={asset.id}
                 asset={asset}
                 onDelete={startDelete}
-                busy={deleteBusy}
+                onRename={startRename}
+                busy={deleteBusy || renameBusy}
               />
             ))}
           </div>
@@ -461,6 +581,15 @@ export default function FileLibrary() {
         onCancel={handleDeleteCancel}
         onConfirm={handleDeleteConfirm}
         busy={deleteBusy}
+      />
+
+      {/* 重命名弹框(卡片「重命名」按钮触发) */}
+      <RenameModal
+        open={!!renameState}
+        asset={renameState?.asset}
+        onCancel={handleRenameCancel}
+        onConfirm={handleRenameConfirm}
+        busy={renameBusy}
       />
     </div>
   );

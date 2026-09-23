@@ -72,6 +72,31 @@ def register_asset(
 
 
 # ---------------------------------------------------------------------------
+# 写：显示名重命名（文件库「重命名」）
+# ---------------------------------------------------------------------------
+
+def rename_asset(user_id: int, asset_id: int, name: str) -> dict | None:
+    """重命名资产显示名（只改 name 列，不动文件/存储键/引用）。
+
+    owner 校验（user_id 严格匹配）；行不存在/不属于该用户 → None。
+    name='' 表示清除重命名（回退显示 storage_key），由调用方决定是否允许。
+    返回更新后的行。
+    """
+    init_db()
+    with connect() as db:
+        row = db.execute(
+            """
+            update user_assets set name = %s
+             where id = %s and user_id = %s
+            returning id, user_id, kind, name, storage_key, url, source,
+                      ref_kind, ref_id, mime, size, meta, created_at
+            """,
+            (name, asset_id, user_id),
+        ).fetchone()
+    return _row_to_dict(row) if row is not None else None
+
+
+# ---------------------------------------------------------------------------
 # 写：size 惰性回填（供 library._backfill_sizes）
 # ---------------------------------------------------------------------------
 
@@ -110,7 +135,7 @@ def list_user_assets(
         if kind is not None:
             rows = db.execute(
                 """
-                select id, user_id, kind, storage_key, url, source,
+                select id, user_id, kind, name, storage_key, url, source,
                        ref_kind, ref_id, mime, size, meta, created_at
                 from user_assets
                 where user_id = %s and kind = %s
@@ -122,7 +147,7 @@ def list_user_assets(
         else:
             rows = db.execute(
                 """
-                select id, user_id, kind, storage_key, url, source,
+                select id, user_id, kind, name, storage_key, url, source,
                        ref_kind, ref_id, mime, size, meta, created_at
                 from user_assets
                 where user_id = %s
@@ -145,7 +170,7 @@ def get_asset(user_id: int, asset_id: int) -> dict | None:
     with connect() as db:
         row = db.execute(
             """
-            select id, user_id, kind, storage_key, url, source,
+            select id, user_id, kind, name, storage_key, url, source,
                    ref_kind, ref_id, mime, size, meta, created_at
             from user_assets
             where id = %s and user_id = %s
