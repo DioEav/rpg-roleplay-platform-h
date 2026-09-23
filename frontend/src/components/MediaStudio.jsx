@@ -4,6 +4,7 @@ import CSModal from '@cloudscape-design/components/modal';
 import AgentModelPicker from './AgentModelPicker.jsx';
 import MediaUploadZone from './MediaUploadZone.jsx';
 import ImageSizePicker from './ImageSizePicker.jsx';
+import ReferenceImagePicker from './ReferenceImagePicker.jsx';
 import { isCredentialsError } from '../lib/creds.js';
 import { useImageGeneration } from '../hooks/useImageGeneration.js';
 import { plGoto } from '../router.js';
@@ -26,6 +27,7 @@ export default function MediaStudio({ open, onClose, target, name, defaultPrompt
   const [tab, setTab] = useState(TAB.GEN);
   const [prompt, setPrompt] = useState('');
   const [size, setSize] = useState('');
+  const [refs, setRefs] = useState([]);   // 参考图(i2i)站内 URL 列表,≤4 张
   const [sel, setSel] = useState({ api_id: '', model: '' });
   const [busy, setBusy] = useState('');          // '' | 'generating' | 'uploading'
   const [err, setErr] = useState('');
@@ -103,9 +105,14 @@ export default function MediaStudio({ open, onClose, target, name, defaultPrompt
     if (!prompt.trim()) { setErr(t('components.media_studio.error.prompt_required')); return; }
     if (!sel.api_id || !sel.model) { setErr(t('components.media_studio.error.model_required')); return; }
     setErr(''); setBusy('generating');
-    imageGen.generate({ prompt: prompt.trim(), kind, api_id: sel.api_id, model: sel.model, attach, size: size || undefined }, GEN_PER_CALL);
+    imageGen.generate({
+      prompt: prompt.trim(), kind, api_id: sel.api_id, model: sel.model, attach,
+      size: size || undefined,
+      // 参考图(i2i):站内 URL 列表(与 GenerateImageModal 同 body 契约)
+      refs: refs.length ? refs : undefined,
+    }, GEN_PER_CALL);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [prompt, sel, kind, attach, imageGen]);
+  }, [prompt, sel, kind, attach, refs, imageGen]);
 
   // ── 上传 ──
   const onPickFile = useCallback((file) => {
@@ -180,6 +187,10 @@ export default function MediaStudio({ open, onClose, target, name, defaultPrompt
               onChange={(api_id, model) => setSel({ api_id, model })} />
             <div style={{ margin: '12px 0 2px', fontSize: 12, color: 'var(--muted)' }}>{t('components.media_studio.gen.size_label')}</div>
             <ImageSizePicker kind={kind} value={size} onChange={setSize} />
+            {/* 参考图(i2i):与 GenerateImageModal 同一选择器、同一 i18n 命名空间 */}
+            <div style={{ margin: '12px 0 2px' }}>
+              <ReferenceImagePicker refs={refs} onChange={setRefs} />
+            </div>
             {busy === 'generating' && <div className="ms-status"><span className="ms-spin" />{t('components.media_studio.gen.generating')}</div>}
             <div style={{ marginTop: 16, textAlign: 'right' }}>{footerBtn(t('components.media_studio.btn.generate'), generate, !!prompt.trim())}</div>
           </div>

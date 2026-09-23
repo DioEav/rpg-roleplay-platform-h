@@ -7376,6 +7376,25 @@
         "missing_api_key": "Missing API Key"
       }
     },
+    "reference_image": {
+      "label": "Reference images",
+      "hint": "Optional. Upload local images or pick from your library to guide the generation (style / composition / subject). Up to 4.",
+      "upload_btn": "Upload images",
+      "uploading": "Uploading…",
+      "library_btn": "From library",
+      "confirm": "Confirm ({{n}})",
+      "cancel": "Cancel",
+      "remove": "Remove",
+      "loading": "Loading library…",
+      "lib_empty": "No usable images in the library yet",
+      "full_hint": "4 images selected — remove one before adding another",
+      "error": {
+        "over_limit": "Up to {{max}} reference images",
+        "bad_type": "{{name}} is not an image (PNG/JPEG/WebP only)",
+        "too_large": "{{name}} exceeds the 8MB limit",
+        "upload_failed": "Upload failed: {{msg}}"
+      }
+    },
     "gm_style_editor": {
       "title": "Narrative Style (Linear Sliders)",
       "desc_script": "Showing the effective style for this script (your personal defaults already applied). Only adjust the knobs you want to customize specifically for this script — unchanged knobs continue to inherit your personal or platform defaults.",

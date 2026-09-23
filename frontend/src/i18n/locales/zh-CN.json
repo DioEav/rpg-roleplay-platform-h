@@ -7373,6 +7373,25 @@
         "missing_api_key": "缺少 API Key"
       }
     },
+    "reference_image": {
+      "label": "参考图",
+      "hint": "可选。可上传本地图片或从图库选，作为生成的参考（风格/构图/主体）；最多 4 张。",
+      "upload_btn": "上传图片",
+      "uploading": "上传中…",
+      "library_btn": "从图库选",
+      "confirm": "确认（{{n}}）",
+      "cancel": "取消",
+      "remove": "移除",
+      "loading": "加载图库…",
+      "lib_empty": "图库还没有可用图片",
+      "full_hint": "已选满 4 张，先移除一张再添加",
+      "error": {
+        "over_limit": "最多只能选 {{max}} 张参考图",
+        "bad_type": "{{name}} 不是图片（仅支持 PNG/JPEG/WebP）",
+        "too_large": "{{name}} 超过 8MB 上限",
+        "upload_failed": "上传失败：{{msg}}"
+      }
+    },
     "gm_style_editor": {
       "title": "叙事风格(线性可调)",
       "desc_script": "当前显示的是本剧本的【有效风格】(已叠加你的个人默认)。只调你想为本剧本特别定制的旋钮,未调的继续跟随你的个人默认 / 平台默认。",

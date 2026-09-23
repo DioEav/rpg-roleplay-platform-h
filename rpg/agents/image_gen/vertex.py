@@ -8,7 +8,20 @@ from __future__ import annotations
 
 from typing import Any
 
-from agents.image_gen.base import ImageGenError
+from agents.image_gen.base import ImageGenError, reference_images
+
+
+def _reference_image_cap(model: str) -> int | None:
+    """该 Vertex 模型支持的参考图张数上限;不支持返回 None。
+
+    Gemini 图像模型(名字含 image)走 GenerateContent 的多模态 contents —— 与文本并列塞
+    image part 即可 i2i/多图融合;官方建议 ≤3 张(更多效果递减),代码截 6 张留余量。
+    Imagen 系是纯文生图,不吃参考图。上限数字以官方文档为准。
+    """
+    m = (model or "").lower()
+    if "imagen" in m:
+        return None
+    return 6 if "image" in m else None
 
 
 def generate(
@@ -48,10 +61,25 @@ def generate(
         credentials=credentials,
     )
 
+    # 参考图(i2i):与文本并列塞进 contents —— Gemini 图像模型原生吃多模态输入。
+    # contents 接受 str 与 Part 混排(SDK 把 str 转 text part);上限不支持的模型(Imagen)
+    # **显式抛错**,不静默丢图。
+    contents: list[Any] = [prompt]
+    refs = reference_images(params)
+    if refs:
+        _cap = _reference_image_cap(model)
+        if _cap is None:
+            raise ImageGenError(
+                f"vertex: 模型「{model}」不支持参考图 —— Imagen 是纯文生图,"
+                f"请改选 Gemini 图像模型（名字含 image）"
+            )
+        for _b, _mime in refs[:_cap]:
+            contents.append(types.Part.from_bytes(data=_b, mime_type=_mime))
+
     try:
         resp = client.models.generate_content(
             model=model,
-            contents=[prompt],
+            contents=contents,
             config=types.GenerateContentConfig(response_modalities=["TEXT", "IMAGE"]),
         )
     except Exception as exc:

@@ -52,7 +52,7 @@ from typing import Any
 
 import httpx
 
-from agents.image_gen.base import ImageGenError, decode_b64, download_url
+from agents.image_gen.base import ImageGenError, decode_b64, download_url, reference_images, to_data_url
 from core.outbound import safe_httpx_client
 
 # ── Endpoint constants ──────────────────────────────────────────────────────
@@ -88,13 +88,18 @@ def _is_legacy_model(model: str) -> bool:
 
 def _build_new_body(model: str, prompt: str, params: dict) -> dict[str, Any]:
     """Build request body for the new messages-based API."""
+    # content 数组在 text 之后追加 {"image": dataURL} part —— 新 messages API 原生支持
+    # 这种 part(qwen-image-edit 等)。上限 3 张,以官方文档为准;旧 wanx 异步 API 不走这里。
+    content: list[dict[str, Any]] = [{"text": prompt}]
+    for _b, _mime in reference_images(params)[:3]:
+        content.append({"image": to_data_url(_b, _mime)})
     body: dict[str, Any] = {
         "model": model,
         "input": {
             "messages": [
                 {
                     "role": "user",
-                    "content": [{"text": prompt}],
+                    "content": content,
                 }
             ]
         },
@@ -318,6 +323,13 @@ def generate(
     legacy = _is_legacy_model(model)
 
     if legacy:
+        # 旧 wanx 异步 text2image API 没有参考图入口 —— **显式抛错**而不是静默丢图,
+        # 否则用户以为融合生效了(新 messages API / qwen-image-edit 才支持)。
+        if reference_images(params):
+            raise ImageGenError(
+                f"dashscope: 模型「{model}」是旧版 wanx 异步接口，不支持参考图 —— "
+                f"请改用 qwen-image-edit 等新 messages API 模型"
+            )
         endpoint = _SUBMIT_LEGACY
         body = _build_legacy_body(model, prompt, params)
     else:

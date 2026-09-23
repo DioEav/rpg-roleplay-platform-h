@@ -187,6 +187,42 @@ def wait_for_image(image_id: int, *, timeout_s: float = 90.0, poll_s: float = 1.
 
 # ── Worker handler ───────────────────────────────────────────────────────
 
+# 参考图 URL → MIME(端点侧魔数白名单只允许这四种,按扩展名反查即可)
+_REF_MIME_BY_EXT: dict[str, str] = {
+    "png": "image/png", "jpg": "image/jpeg", "jpeg": "image/jpeg", "webp": "image/webp",
+}
+
+
+def _ref_storage_key(url: str) -> str:
+    """站内参考图 URL → storage_key。
+    · /api/storage/ai_images/x.png → ai_images/x.png      (store_bytes 返回的新写法)
+    · /api/images/file/x.png       → ai_images/x.png      (store_image 的落盘目录/旧写法)
+    """
+    if url.startswith("/api/storage/"):
+        return url[len("/api/storage/"):]
+    return "ai_images/" + url.rsplit("/", 1)[-1]
+
+
+def _resolve_reference_images(urls: list[str]) -> list[tuple[bytes, str]]:
+    """参考图 URL → [(bytes, mime), ...]。**只读本地文件,不发任何外网请求**。
+
+    worker 与 API 同磁盘,站内路径直接 resolve_path 读盘;端点侧已做前缀白名单,
+    所以这里不可能解析到外部地址。任何一张失败都抛错 —— 静默丢参考图会产出**完全不同**
+    的图,比整单失败更难排查。
+    """
+    from platform_app import storage  # lazy,避免循环
+
+    out: list[tuple[bytes, str]] = []
+    for u in urls:
+        key = _ref_storage_key(u)
+        path = storage.resolve_path(key)          # 越界/穿越 → ValueError 抛给调用方
+        if not path.is_file():
+            raise RuntimeError(f"参考图文件不存在: {key}")
+        ext = key.rsplit(".", 1)[-1].lower()
+        out.append((path.read_bytes(), _REF_MIME_BY_EXT.get(ext, "image/png")))
+    return out
+
+
 async def handle_image_gen(payload: dict[str, Any]) -> None:
     """postproc_worker 调用的 handler，在独立进程内跑。
 
@@ -243,9 +279,16 @@ async def handle_image_gen(payload: dict[str, Any]) -> None:
     try:
         from agents.image_gen.dispatch import generate_image_bytes  # type: ignore[import]
         size: str | None = extra.get("size") or None
-        params: dict[str, Any] = {k: v for k, v in extra.items() if k != "ref"}
+        # ref 是旧的审计字段、reference_urls 是 URL 形式 —— 两者都不直接进 provider 参数:
+        # 后者就地转换成字节(下面)。各适配器只认 params["reference_images"]。
+        params: dict[str, Any] = {k: v for k, v in extra.items() if k not in ("ref", "reference_urls")}
         if size:
             params["size"] = size
+        # 参考图(i2i):extra 里只存站内 URL(队列 payload 不膨胀),此处读盘成字节放进 params。
+        # 任一张解析失败即抛 → 下面的 except 会把这单落 failed(见 _resolve_reference_images 注释)。
+        _ref_urls: list[str] = list(extra.get("reference_urls") or [])
+        if _ref_urls:
+            params["reference_images"] = _resolve_reference_images(_ref_urls)
 
         raw_results = await asyncio.to_thread(
             generate_image_bytes,

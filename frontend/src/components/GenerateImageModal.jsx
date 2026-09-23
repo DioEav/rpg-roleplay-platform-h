@@ -10,6 +10,7 @@ import CSAlert from '@cloudscape-design/components/alert';
 import CSStatusIndicator from '@cloudscape-design/components/status-indicator';
 import AgentModelPicker from './AgentModelPicker.jsx';
 import ImageSizePicker from './ImageSizePicker.jsx';
+import ReferenceImagePicker from './ReferenceImagePicker.jsx';
 import AvatarImg from './AvatarImg.jsx';
 import { chatImageAnchor } from './game/chat-image-anchor.js';
 import { useImageGeneration } from '../hooks/useImageGeneration.js';
@@ -48,6 +49,7 @@ export default function GenerateImageModal({
 
   const [prompt, setPrompt] = useState(defaultPrompt);
   const [size, setSize] = useState('');
+  const [refs, setRefs] = useState([]);   // 参考图(i2i)站内 URL 列表,≤4 张
   const [selModel, setSelModel] = useState({ api_id: '', model: '' });
   // 生成成功后的结果 URL。非空 = 弹窗切到「结果视图」（不再自动关闭）。
   const [doneUrl, setDoneUrl] = useState('');
@@ -105,6 +107,8 @@ export default function GenerateImageModal({
     if (attach) body.attach = attach;
     if (saveId != null) body.save_id = saveId;
     if (size) body.size = size;
+    // 参考图(i2i):站内 URL 列表,后端 _sanitize_refs 白名单/去重/截断 → worker 读盘成字节
+    if (refs.length) body.refs = refs;
     // 存档绑定的生图把"当前最后一条助手消息的绝对索引"一起写进 ai_images.message_index。
     // **点击时**读锚点(不是 render 快照)——此后删本地对话,旧索引匹配不到任何消息,
     // 图不会漂到新对话的最新消息上(用户上报的"删了对话图片爬到新消息")。
@@ -224,6 +228,8 @@ export default function GenerateImageModal({
         <CSFormField label={t('components.generate_image_modal.size_label')} description={t('components.generate_image_modal.size_description')}>
           <ImageSizePicker kind={kind} value={size} onChange={setSize} />
         </CSFormField>
+        {/* 参考图(i2i):自带 label/说明,不套 CSFormField(它已有自己的 .rif 结构) */}
+        <ReferenceImagePicker refs={refs} onChange={setRefs} />
       </CSSpaceBetween>
       )}
     </CSModal>

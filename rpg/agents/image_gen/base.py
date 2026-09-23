@@ -54,3 +54,19 @@ def decode_b64(b64_str: str) -> bytes:
         return base64.b64decode(b64_str)
     except Exception as exc:
         raise ImageGenError(f"base64 decode error: {exc}") from exc
+
+
+def reference_images(params: dict | None) -> list[tuple[bytes, str]]:
+    """从 params 取参考图字节列表 [(bytes, mime), ...]（i2i 用）。
+
+    参考图由 worker 侧（image_jobs）把站内文件读成字节后写进 `params["reference_images"]` ——
+    各适配器只读、不改格式。上游吃的形式分两派：Ark / DashScope / chat 模态要 base64
+    dataURL（用 `to_data_url`），OpenAI 的 `/images/edits` 直接用 bytes（multipart）。
+    """
+    refs = (params or {}).get("reference_images") or []
+    return [r for r in refs if isinstance(r, tuple) and len(r) == 2 and r[0]]
+
+
+def to_data_url(data: bytes, mime: str) -> str:
+    """bytes → `data:{mime};base64,...`（Ark seedream / DashScope content / chat 模态通用）。"""
+    return f"data:{mime};base64,{base64.b64encode(data).decode('ascii')}"

@@ -157,6 +157,38 @@
 .ms-lib__cell img { width: 100%; height: 100%; object-fit: cover; display: block; }
 .ms-lib__empty { grid-column: 1/-1; text-align: center; color: var(--muted-2); font-size: 12.5px; padding: 30px 0; }
 
+/* ── 参考图选择器（i2i,ReferenceImagePicker） ────────────────── */
+.rif { display: flex; flex-direction: column; gap: 8px; }
+.rif__row { display: flex; align-items: center; gap: 8px; }
+.rif__row--end { justify-content: flex-end; }
+.rif__btn {
+  height: 28px; padding: 0 12px; font-size: 12.5px; font-weight: 600;
+  border: 1px solid var(--line-strong); border-radius: var(--r-2);
+  background: var(--panel-2); color: var(--text); cursor: pointer;
+  transition: border-color .15s, background .15s;
+}
+.rif__btn:hover:not(:disabled) { border-color: var(--accent-edge); background: var(--panel-3); }
+.rif__btn:disabled { opacity: .5; cursor: not-allowed; }
+.rif__btn.is-active { border-color: var(--accent); color: var(--accent); }
+.rif__btn--primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+.rif__btn--primary:hover:not(:disabled) { background: var(--accent); filter: brightness(1.08); }
+.rif__count { margin-left: auto; font-size: 12px; color: var(--muted-2); }
+.rif__hint { font-size: 12px; color: var(--muted-2); }
+.rif__full { font-size: 12px; color: var(--warn, #b58900); }
+.rif__err { font-size: 12.5px; color: var(--danger); }
+.rif__sel { max-height: 140px; }
+.rif__cell { position: relative; }
+/* 删除钮盖在缩略图右上角:半透明圆底,悬浮变红 —— 与 × 的可点区域足够大 */
+.rif__rm {
+  position: absolute; top: 2px; right: 2px; width: 20px; height: 20px;
+  display: flex; align-items: center; justify-content: center;
+  padding: 0; border: 0; border-radius: 50%; font-size: 14px; line-height: 1;
+  background: rgba(0, 0, 0, .62); color: #fff; cursor: pointer;
+}
+.rif__rm:hover { background: var(--danger, #c0392b); }
+.rif__lib { display: flex; flex-direction: column; gap: 8px; padding: 10px; border: 1px solid var(--line); border-radius: var(--r-2); background: var(--panel-2); }
+.rif__libempty { text-align: center; color: var(--muted-2); font-size: 12.5px; padding: 18px 0; }
+
 /* 生成中 / 状态条 */
 .ms-status { display: flex; align-items: center; gap: 8px; font-size: 12.5px; color: var(--muted); margin-top: 10px; }
 .ms-spin { width: 14px; height: 14px; border-radius: 50%; border: 2px solid var(--line-strong); border-top-color: var(--accent); animation: ms-spin .7s linear infinite; }

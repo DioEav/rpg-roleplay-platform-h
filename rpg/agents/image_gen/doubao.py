@@ -31,7 +31,7 @@ from typing import Any
 
 import httpx
 
-from agents.image_gen.base import ImageGenError, decode_b64, download_url
+from agents.image_gen.base import ImageGenError, decode_b64, download_url, reference_images, to_data_url
 from core.outbound import safe_httpx_client
 
 _DEFAULT_BASE = "https://ark.cn-beijing.volces.com/api/v3"
@@ -48,7 +48,22 @@ _SEEDREAM_SIZES: tuple[tuple[int, int], ...] = (
 
 
 def _is_seedream(model: str) -> bool:
-    return "seedream" in (model or "").lower()
+    return "seedream" in (model or "").lower"
+
+
+def _reference_image_cap(model: str) -> int | None:
+    """该 doubao 模型支持的参考图张数上限;不支持返回 None。
+
+    Ark 同一个域名下是两个产品:seedream 4.x 走 `image` 字段(单图=改写/多图=融合,
+    官方上限 10 张),seededit-3.0 是编辑专用(只收 1 张 + 指令),seedream 3.x 纯 t2i。
+    上限数字以官方文档为准 —— 超出由本函数截断,不在调用方报错。
+    """
+    m = (model or "").lower()
+    if "seededit" in m:
+        return 1
+    if "seedream-4" in m or "seedream_4" in m:
+        return 10
+    return None
 
 
 def _coerce_seedream_size(size_str: str | None) -> str:
@@ -145,6 +160,18 @@ def generate(
     # doubao seedream 最小面积约束:小尺寸会被直接拒(整单失败)→ 按宽高比放大到下限。
     if isinstance(body.get("size"), str):
         body["size"] = _clamp_doubao_size(body["size"])
+
+    # 参考图(i2i):Ark seedream 4.x 的 `image` 字段(base64 dataURL 数组),seededit 单张。
+    # 不支持的模型**显式抛错**而不是静默忽略 —— 悄悄丢掉参考图会让人以为融合生效了。
+    refs = reference_images(params)
+    if refs:
+        _cap = _reference_image_cap(model)
+        if _cap is None:
+            raise ImageGenError(
+                f"doubao: 模型「{model}」不支持参考图 —— 请改选 seedream 4.x(seedream-4*)"
+                f"或 seededit 系模型"
+            )
+        body["image"] = [to_data_url(b, mime) for b, mime in refs[:_cap]]
 
     headers = {
         "Authorization": f"Bearer {api_key}",

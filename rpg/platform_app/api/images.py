@@ -17,7 +17,7 @@ from __future__ import annotations
 import secrets
 from typing import Any
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, File, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse
 
 from ..db import connect, init_db
@@ -47,6 +47,68 @@ def store_image(data: bytes, *, user_id: int, kind: str, ext: str = "png") -> st
     filename = f"ai_{int(user_id)}_{secrets.token_hex(12)}.{ext_clean}"
     _key, url = storage.store_bytes(data, kind="ai_images", filename=filename)
     return url
+
+
+# ══════════════════════════════════════════════════════════════════════
+#  参考图（i2i）
+# ══════════════════════════════════════════════════════════════════════
+
+_REF_MAX_BYTES = 8 * 1024 * 1024   # 8 MB —— 与头像上传同规格
+_REF_MAX_COUNT = 10                # Ark seedream 4.x 官方上限;其余适配器各自再截
+# worker 取参考图字节**只读本地文件、不发任何外网请求**,所以白名单外的 URL 在入队前
+# 就丢弃(SSRF 面为零)。两条前缀覆盖新旧两种落盘 URL 写法。
+_REF_URL_PREFIXES: tuple[str, ...] = ("/api/storage/ai_images/", "/api/images/file/")
+
+
+def _sanitize_refs(raw: Any) -> list[str]:
+    """校验 body.refs:仅保留 list[str] 里的站内前缀、去重、截到 _REF_MAX_COUNT。
+
+    非法项静默丢弃 —— 参考图是增强项,一张不可用不该让整单生图失败(真正的错误
+    如"该模型不支持参考图"由适配器显式抛出,两者不可混淆)。
+    """
+    if not isinstance(raw, list):
+        return []
+    out: list[str] = []
+    for item in raw:
+        u = str(item or "").strip()
+        if not u or u in out or not u.startswith(_REF_URL_PREFIXES):
+            continue
+        out.append(u)
+        if len(out) >= _REF_MAX_COUNT:
+            break
+    return out
+
+
+@router.post("/api/images/ref-upload")
+async def api_upload_reference_image(request: Request, file: UploadFile = File(...)):
+    """上传一张参考图(i2i 用),返回站内 URL。
+
+    魔数白名单 PNG/JPEG/WebP + 8MB 上限(复用 api/me/_shared 的 _detect_image_mime,
+    与头像上传同规格)。**刻意不 register_asset**:参考图是草稿,进图库会被当成品展示;
+    文件落 ai_images 存储(读取白名单已含该 kind),孤儿文件由存储侧统一治理。
+    """
+    user = require_user(request)
+    user_id: int = int(user["id"])
+
+    data = await file.read()
+    if len(data) > _REF_MAX_BYTES:
+        return json_response(
+            {"ok": False, "error": f"文件过大（上限 {_REF_MAX_BYTES // 1024 // 1024} MB）"},
+            status_code=400,
+        )
+    try:
+        from .me._shared import _detect_image_mime  # 共享魔数工具(与头像上传同源)
+        _mime, ext = _detect_image_mime(data)
+    except ValueError as exc:
+        return json_response({"ok": False, "error": str(exc)}, status_code=400)
+    except Exception as exc:
+        return json_response({"ok": False, "error": f"MIME 校验不可用: {exc}"}, status_code=500)
+
+    from platform_app import storage  # lazy import，避免循环
+    token = secrets.token_hex(12)
+    filename = f"ref_{user_id}_{token}.{ext}"
+    _key, url = storage.store_bytes(data, kind="ai_images", filename=filename)
+    return json_response({"ok": True, "url": url})
 
 
 # ══════════════════════════════════════════════════════════════════════
@@ -214,7 +276,7 @@ async def api_image_file(filename: str, request: Request) -> FileResponse:
 async def api_generate_image(request: Request):
     """UI 按钮入口：接收生图请求，入队异步 job，立即返回 {image_id, status}。
 
-    body: {prompt, kind, api_id?, model?, ref?, attach?, save_id?, message_index?}
+    body: {prompt, kind, api_id?, model?, ref?, attach?, save_id?, message_index?, refs?}
 
     attach 可选，格式：
       {"type": "user_avatar"}
@@ -264,6 +326,8 @@ async def api_generate_image(request: Request):
     import re as _re_size
     _raw_size = str(body.get("size") or "").strip()
     size: str | None = _raw_size if _re_size.match(r"^\d{1,5}[x*:]\d{1,5}$", _raw_size) else None
+    # 参考图(i2i):站内 URL 列表,≤10、去重、白名单前缀;非法项静默丢弃(见 _sanitize_refs)
+    refs: list[str] = _sanitize_refs(body.get("refs"))
 
     # 校验 attach 结构 + 入队前归属鉴权
     if attach is not None:
@@ -327,6 +391,8 @@ async def api_generate_image(request: Request):
         _gen_extra["ref"] = ref
     if size:
         _gen_extra["size"] = size
+    if refs:
+        _gen_extra["reference_urls"] = refs
     result: dict = enqueue_image_generation(
         user_id,
         prompt,

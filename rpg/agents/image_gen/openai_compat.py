@@ -20,7 +20,7 @@ from typing import Any
 
 import httpx
 
-from agents.image_gen.base import ImageGenError, decode_b64, download_url
+from agents.image_gen.base import ImageGenError, decode_b64, download_url, reference_images, to_data_url
 from core.outbound import safe_httpx_client
 
 _CONNECT_TIMEOUT = 10.0
@@ -95,6 +95,15 @@ def _strip_data_uri(s: str) -> str:
     return s
 
 
+def _ext_for_mime(mime: str) -> str:
+    """multipart 文件名后缀:mime → 扩展名(multipart 无扩展名时 provider 会挑食)。"""
+    return {
+        "image/png": "png",
+        "image/jpeg": "jpg",
+        "image/webp": "webp",
+    }.get((mime or "").lower(), "png")
+
+
 def _try_images_api(
     base: str, headers: dict[str, str], prompt: str, model: str, params: dict, api_id: str
 ) -> list[bytes]:
@@ -123,6 +132,11 @@ def _try_images_api(
     if resp.status_code != 200:
         _raise_http(resp, api_id, "images/generations")
 
+    return _parse_images_payload(resp, api_id, "images/generations")
+
+
+def _parse_images_payload(resp: httpx.Response, api_id: str, what: str) -> list[bytes]:
+    """解析 Images API 响应的 data 列表(generations 与 edits 共用形状)。"""
     try:
         payload = resp.json()
     except Exception as exc:
@@ -138,8 +152,46 @@ def _try_images_api(
         if b:
             out.append(b)
     if not out:
-        raise ImageGenError("openai_compat: images/generations 返回空(无 url/b64)")
+        raise ImageGenError(f"openai_compat: {what} 返回空(无 url/b64)")
     return out
+
+
+def _try_images_edit(
+    base: str, headers: dict[str, str], prompt: str, model: str, params: dict, api_id: str
+) -> list[bytes]:
+    """带参考图走 OpenAI Images API 的 /images/edits(**multipart**,gpt-image-1 / dall-e-2)。
+
+    返回 [] 表示「端点不存在 → 回退 chat 模态」(中转站常见:只有 generations 没有 edits)。
+    注意本适配器全程用 safe_httpx_client 直连(不用 OpenAI SDK),multipart 由 httpx 组:
+    `image[]` 是 gpt-image-1 的多图字段名(dall-e-2 只吃单个 image,服务端会自行校验,
+    超限的 4xx 由 _raise_http 如实带出)。
+    """
+    endpoint = f"{base}/images/edits"
+    refs = reference_images(params)[:16]  # gpt-image-1 官方 image[] 上限,以文档为准
+
+    data: dict[str, Any] = {"model": model, "prompt": prompt}
+    if params.get("size"):
+        data["size"] = str(params["size"])
+    # 字段名必须是 image[](gpt-image-1 多图约定);httpx 对同名字段逐个出一个 part。
+    files = [
+        ("image[]", (f"ref_{i}.{_ext_for_mime(mime)}", blob, mime))
+        for i, (blob, mime) in enumerate(refs)
+    ]
+
+    try:
+        with safe_httpx_client(timeout=_READ_TIMEOUT) as client:
+            resp = client.post(endpoint, data=data, files=files, headers=headers)
+    except httpx.TimeoutException as exc:
+        raise ImageGenError(f"openai_compat: images/edits 超时 ({exc})") from exc
+    except Exception as exc:
+        raise ImageGenError(f"openai_compat: 网络错误 ({exc})") from exc
+
+    if resp.status_code in (404, 405):
+        return []
+    if resp.status_code != 200:
+        _raise_http(resp, api_id, "images/edits")
+
+    return _parse_images_payload(resp, api_id, "images/edits")
 
 
 def _collect_chat_images(message: dict[str, Any]) -> list[bytes]:
@@ -164,13 +216,25 @@ def _collect_chat_images(message: dict[str, Any]) -> list[bytes]:
 
 
 def _try_chat_modality(
-    base: str, headers: dict[str, str], prompt: str, model: str, api_id: str
+    base: str, headers: dict[str, str], prompt: str, model: str, api_id: str,
+    params: dict | None = None,
 ) -> list[bytes]:
-    """OpenRouter 等:chat/completions + modalities=["image","text"],图在 message 里。"""
+    """OpenRouter 等:chat/completions + modalities=["image","text"],图在 message 里。
+
+    带参考图时 content 从纯字符串改为 part 数组:text part + N 个 image_url part
+    (dataURL 形式,上游 OpenAI 兼容约定),截 4 张。
+    """
     endpoint = f"{base}/chat/completions"
+    content: Any = prompt
+    refs = reference_images(params)
+    if refs:
+        parts: list[dict[str, Any]] = [{"type": "text", "text": prompt}]
+        for blob, mime in refs[:4]:
+            parts.append({"type": "image_url", "image_url": {"url": to_data_url(blob, mime)}})
+        content = parts
     body = {
         "model": model,
-        "messages": [{"role": "user", "content": prompt}],
+        "messages": [{"role": "user", "content": content}],
         "modalities": ["image", "text"],
     }
     try:
@@ -216,13 +280,28 @@ def generate(
         raise ImageGenError(f"openai_compat: {api_id} 缺少 API Key")
     base = _resolve_base_url(api_id, base_url)
     headers = _headers(api_key)
+    params = params or {}
+    refs = reference_images(params)
+
+    # dall-e-3 官方明确不支持 edits/参考图(请求会 4xx),显式给出可执行的下一步。
+    if refs and "dall-e-3" in (model or "").lower():
+        raise ImageGenError(
+            f"openai_compat: 模型「{model}」不支持参考图 —— 请改选 gpt-image-1 或 dall-e-2"
+        )
 
     # OpenRouter 等只有 chat 图像模态(无 /images/generations)→ 直接走,免打误导性 401。
     if api_id in _CHAT_MODALITY_IMAGE_PROVIDERS:
-        return _try_chat_modality(base, headers, prompt, model, api_id)
+        return _try_chat_modality(base, headers, prompt, model, api_id, params)
 
-    images = _try_images_api(base, headers, prompt, model, params or {}, api_id)
+    # 带参考图优先走 /images/edits(multipart);端点不存在(404/405)→ 回退 chat 模态。
+    if refs:
+        images = _try_images_edit(base, headers, prompt, model, params, api_id)
+        if images:
+            return images
+        return _try_chat_modality(base, headers, prompt, model, api_id, params)
+
+    images = _try_images_api(base, headers, prompt, model, params, api_id)
     if images:
         return images
     # /images/generations 不存在(404/405)→ 回退 chat 图像模态
-    return _try_chat_modality(base, headers, prompt, model, api_id)
+    return _try_chat_modality(base, headers, prompt, model, api_id, params)
