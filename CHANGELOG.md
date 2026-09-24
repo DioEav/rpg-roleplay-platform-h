@@ -9,6 +9,24 @@ Version scheme: **SemVer** `MAJOR.MINOR.PATCH[-channel.N][+build]` since `v0.5.0
 
 ## [Unreleased]
 
+## [1.88.1] - 2026-09-21 (@ a22d2639d)
+
+### Fixed
+- **助手里原样出现 DeepSeek 的工具调用标记(`<｜DSML｜invoke …>`),或一排「失败 · 未知工具」。** 反馈 #106 + 同一用户的群截图(他以为缺了工具要去安装)。根因:text-marker 降级路径的调用格式只写在 GM 的系统提示里,助手等其它调用方从来没告诉模型 `<<TOOL_CALL>>` 里该写哪些字段 —— DeepSeek 要么改吐原生 DSML(解析器不认,原样外发),要么写成 OpenAI 习惯的 `{"name","arguments"}`(参数对上、工具名没对上 → 空名 → 「未知工具」,回给模型的也只有这四个字,于是原样重试)。
+  - 新增 `agents/gm/backends/_dsml.py`:流式识别 DSML(兼容竖线成对、半角 `|`、丢 `function_` 前缀等走样形态),native 与 text-marker 两条循环都把它当工具调用执行,正文里不再外发;截断的半截调用整段丢弃。
+  - 新增 `helpers.parse_tool_marker`:工具名认 `tool`/`name`/`tool_name`/`function`,参数认 `arguments`/`args`/`parameters`/`params`/`input`,`server/tool` 与 `server__tool` 自动拆开;助手/降级循环与 GM 内联循环共用(以前各写一份)。真缺工具名时回给模型的提示写明缺什么、附正确格式。
+  - `_format_tools_for_prompt` 自带调用格式,不再依赖调用方的系统提示里碰巧写了。
+- **工具降级判定太宽:一次内容风控 400 就让该用户此后每轮都走降级路径。** 首跳带 tools 被 400 拒时,以前直接在进程内永久记成「不支持 native tools」;可 400 还包括内容风控、上下文超长、消息格式错。现在 400 只算候选:本轮先不带 tools 重试,被接受才记住;同样被拒说明与 tools 无关,照常报错、什么也不记。请求次数与原来相同。
+- **向量嵌入把自己加的供应商的 key 发到了 api.openai.com。** 反馈 #104:千问 key 做向量报「API Key 无效(401)」,拉模型却正常。用户贴回的原始报错是 OpenAI 的格式(已用假 key 对两家实测比对)。嵌入取接口地址只查内置模板,自加供应商查不到 → 空地址 → 默认 OpenAI;聊天走在线目录所以正常。现在静态模板优先、在线目录兜底,召回侧共用同一个解析;**非 OpenAI 供应商查不到地址时拒发**;401/404 等报错写出实际请求的主机。
+- 退参自愈改用「400 + 确实发了可选调参」判据,不再嗅探报错文本;价格表补最长前缀回退(带日期后缀的型号此前「有能力标签、没价格」)。
+
+### Changed
+- 依赖:openai 3.6 → 3.13、google-genai 2.20 → 2.23、google-auth 2.58、psycopg 3.3.5、PyJWT 2.14、anyio 4.15 等;前端 react/react-dom 19.3.0、vite 8.3、vitest 5、cloudscape 组件等。
+
+### Notes
+- 桌面版自 v1.85.0 起首次发版,同时带上 1.86.0–1.88.0:2026-09 新发布模型适配与定价/能力表校准(1.86.0)、xAI (Grok) 进入供应商列表(1.87.0)、DeepSeek V4.1 适配 —— 现役型号、思考模式开关接线、带 tools 多轮回传 reasoning_content(1.88.0)。
+
+
 ## [1.85.0] - 2026-08-29 (@ 5b5895c87)
 
 ### Added

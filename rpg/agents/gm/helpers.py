@@ -97,6 +97,14 @@ def _format_tools_for_prompt(tools: list[dict[str, Any]]) -> str:
         "也不该从你的正文里读到它的存在。需要切换/搭建角色时直接发工具调用 marker,搭好后"
         "用沉浸的故事正文自然承接,不解说幕后操作。",
         "",
+        # 格式说明必须跟着清单走:GM 的 _SYSTEM_BASE 里写了,但助手等其它调用方的 system 里没有,
+        # 模型只看到「<<TOOL_CALL>>」一个词、不知道里面装什么,DeepSeek 就改用它原生的 DSML
+        # 标记 → 解析器不认、原样漏给用户(反馈 #106)。
+        "【工具调用格式】每次调用单独输出一段:"
+        '<<TOOL_CALL>>{"server_id":"<清单里斜杠前的部分>","tool":"<斜杠后的部分>","arguments":{…}}<<END_TOOL_CALL>>,'
+        "写完 <<END_TOOL_CALL>> 立即停止本轮输出、等工具结果。只用这一种格式,"
+        "不要输出 function_calls / invoke / DSML 之类的其它工具标记。",
+        "",
         "【本轮可用 MCP 工具清单】",
     ]
     for t in tools[:40]:  # 防止 prompt 过长
@@ -120,6 +128,57 @@ def _format_tools_for_prompt(tools: list[dict[str, Any]]) -> str:
     return "\n".join(lines)
 
 
+_MARKER_NAME_KEYS = ("tool", "name", "tool_name", "function_name")
+_MARKER_ARG_KEYS = ("arguments", "args", "parameters", "params", "input")
+_MARKER_FORMAT = '<<TOOL_CALL>>{"server_id":"...","tool":"...","arguments":{...}}<<END_TOOL_CALL>>'
+
+
+def parse_tool_marker(raw: str, tools: list[dict[str, Any]] | None = None) -> tuple[str, str, dict[str, Any]]:
+    """<<TOOL_CALL>> 里的 JSON → (server_id, tool, arguments)。解析不了抛 ValueError(信息给模型看)。
+
+    约定格式是 {"server_id","tool","arguments"},但模型没被告知或记混时,常写成 OpenAI 的
+    {"name","arguments"} / {"function":{"name","arguments"}}、或把清单里的 `server/tool` 整个塞进
+    tool。以前只认 tool 字段 → 工具名为空 → 助手面板一排「未知工具」,模型收到的报错也不说缺什么,
+    就一直重试(群反馈截图:ui_describe / ask_user_choice 参数都对,名字全丢)。
+    """
+    # 函数内导入,理由同 _openai_text_marker_loop
+    from agents.gm.backends._dsml import resolve_tool_ref
+
+    data = json.loads((raw or "").strip())
+    if not isinstance(data, dict):
+        raise ValueError("工具调用必须是一个 JSON 对象")
+    fn = data.get("function")
+    if isinstance(fn, dict):
+        data = {**fn, **{k: v for k, v in data.items() if k != "function"}}
+    elif isinstance(fn, str) and "name" not in data:
+        data = {**data, "name": fn}
+    name = next((str(data[k]).strip() for k in _MARKER_NAME_KEYS
+                 if isinstance(data.get(k), str) and data[k].strip()), "")
+    if not name:
+        raise ValueError(f"缺少工具名(tool 字段)。格式:{_MARKER_FORMAT}")
+    args: Any = next((data[k] for k in _MARKER_ARG_KEYS if data.get(k) not in (None, "")), {})
+    if isinstance(args, str):
+        try:
+            args = json.loads(args)
+        except Exception:
+            args = {}
+    if not isinstance(args, dict):
+        args = {}
+    server_id = str(data.get("server_id") or data.get("server") or "").strip()
+    if not server_id:
+        server_id, name = resolve_tool_ref(name, tools)
+    else:
+        for sep in ("/", "__"):
+            if name.startswith(server_id + sep):
+                name = name[len(server_id) + len(sep):]
+                break
+    return server_id, name, args
+
+
+def _marker_retry_hint(exc: Exception) -> str:
+    return f"【系统】上一条工具调用无法执行:{exc}。请按 {_MARKER_FORMAT} 重新生成,或放弃工具调用。"
+
+
 def _openai_text_marker_loop(
     backend, system, messages, mcp_tools, max_iterations, max_tokens, mcp_call,
 ) -> Iterator[dict[str, Any]]:
@@ -132,6 +191,9 @@ def _openai_text_marker_loop(
     本函数 yields 同样的 text/tool_call/tool_result 事件，与 native 路径
     interchangeable。
     """
+    # 函数内导入:agents.gm.backends 包初始化会反过来 import 本模块
+    from agents.gm.backends._dsml import DsmlStreamFilter, resolve_tool_ref
+
     system_with_tools = system + _format_tools_for_prompt(mcp_tools)
     START = "<<TOOL_CALL>>"
     END = "<<END_TOOL_CALL>>"
@@ -142,7 +204,11 @@ def _openai_text_marker_loop(
         buffer = ""
         in_tool = False
         tool_invoked = False
-        for chunk in backend.stream(system_with_tools, messages, max_tokens=max_tokens):
+        dsml = DsmlStreamFilter()  # 模型没按 <<TOOL_CALL>> 写、改吐 DeepSeek 原生标记时兜底
+        for raw_chunk in backend.stream(system_with_tools, messages, max_tokens=max_tokens):
+            chunk = dsml.feed(raw_chunk)
+            if not chunk:
+                continue
             buffer += chunk
             while True:
                 if not in_tool:
@@ -170,16 +236,11 @@ def _openai_text_marker_loop(
                 in_tool = False
                 tool_invoked = True
                 try:
-                    tool_data = json.loads(tool_json_raw.strip())
-                    server_id = str(tool_data.get("server_id", ""))
-                    tool_name = str(tool_data.get("tool", ""))
-                    arguments = tool_data.get("arguments") or {}
-                    if not isinstance(arguments, dict):
-                        arguments = {}
+                    server_id, tool_name, arguments = parse_tool_marker(tool_json_raw, mcp_tools)
                 except Exception as exc:
-                    yield {"type": "tool_error", "error": f"工具调用 JSON 解析失败: {exc}", "raw": tool_json_raw[:200]}
+                    yield {"type": "tool_error", "error": f"工具调用解析失败: {exc}", "raw": tool_json_raw[:200]}
                     messages.append({"role": "assistant", "content": accumulated_text + START + tool_json_raw + END})
-                    messages.append({"role": "user", "content": "【系统】上一条工具调用 JSON 解析失败，请重新生成或放弃工具调用。"})
+                    messages.append({"role": "user", "content": _marker_retry_hint(exc)})
                     accumulated_text = ""
                     break
                 yield {"type": "tool_call", "server_id": server_id, "tool": tool_name, "arguments": arguments}
@@ -206,6 +267,39 @@ def _openai_text_marker_loop(
             if tool_invoked:
                 break
         if not tool_invoked:
+            buffer += dsml.finish()
+            if dsml.calls and not in_tool:
+                if buffer:
+                    accumulated_text += buffer
+                    yield {"type": "text", "text": buffer}
+                    buffer = ""
+                # 回放给模型时改写成规范的 <<TOOL_CALL>>,下一跳照着学,而不是继续吐 DSML
+                marker_text = ""
+                result_blocks = []
+                for name, arguments in dsml.calls:
+                    server_id, tool_name = resolve_tool_ref(name, mcp_tools)
+                    yield {"type": "tool_call", "server_id": server_id, "tool": tool_name, "arguments": arguments}
+                    try:
+                        result = mcp_call(server_id, tool_name, arguments)
+                    except Exception as exc:
+                        result = {"ok": False, "error": f"call_tool 异常: {exc}"}
+                    yield {
+                        "type": "tool_result", "ok": bool(result.get("ok")),
+                        "result": result.get("result"), "error": result.get("error"),
+                    }
+                    marker_text += START + json.dumps(
+                        {"server_id": server_id, "tool": tool_name, "arguments": arguments},
+                        ensure_ascii=False) + END
+                    result_blocks.append(
+                        f"【工具结果：{server_id}/{tool_name}】\n{json.dumps(result, ensure_ascii=False)[:2000]}")
+                messages.append({"role": "assistant", "content": accumulated_text + marker_text})
+                messages.append({
+                    "role": "user",
+                    "content": "\n\n".join(result_blocks)
+                    + "\n\n请基于工具结果继续本轮回应（不要重复正文，可继续描写或追加状态标签）。",
+                })
+                accumulated_text = ""
+                continue
             if in_tool:
                 yield {"type": "tool_error", "error": "工具调用未闭合", "raw": buffer[:200]}
                 messages.append({"role": "assistant", "content": accumulated_text + START + buffer})

@@ -8,6 +8,7 @@ from typing import Any
 
 import httpx
 
+from agents.gm.backends._dsml import DsmlStreamFilter, resolve_tool_ref
 from agents.gm.helpers import _openai_text_marker_loop
 from core.logging import get_logger
 
@@ -96,9 +97,10 @@ def _merge_tuning(*parts: dict) -> dict:
 
 
 def _is_tools_unsupported(exc: Exception) -> bool:
-    """仅「400 BadRequest」才视为 provider 不支持 tools 参数 → 降级 text marker。
-    429 限流 / 401 鉴权 / 5xx / 超时 等是瞬时/配置错误,**不可**据此把 (api,model) 永久标记为
-    不支持(类级 set 进程内共享,会让该 worker 此后所有该模型 GM 对话静默降级,且难复现)。"""
+    """仅「400 BadRequest」才**可能**是 provider 不支持 tools 参数 → 本轮试 text marker。
+    429 限流 / 401 鉴权 / 5xx / 超时 等是瞬时/配置错误,连试都不试。
+    400 也只是候选:要不要把 (api,model) 记成不支持,由不带 tools 的重试是否被接受来定
+    (见 stream_with_mcp_loop;类级 set 进程内共享,记错了该 worker 此后所有对话都静默降级)。"""
     try:
         from openai import BadRequestError
     except ImportError:
@@ -516,6 +518,9 @@ class _OpenAICompatBackend:
             current_text = ""
             current_reasoning = ""
             finish_reason: str | None = None
+            # 中转站没接 DeepSeek 的 DSML 解析器时,工具调用会以 <｜DSML｜…> 文本落进 content。
+            # 这里扣下不外发,解析成调用补进 tool_calls_buf(反馈 #106)。
+            dsml = DsmlStreamFilter()
             try:
                 _tuning = self._tuning_kwargs(0.9)  # task 141: 采样 + 思考控制(extra_body 已深合并)
                 stream = self._create(
@@ -544,7 +549,7 @@ class _OpenAICompatBackend:
                             if rtext:
                                 current_reasoning += rtext
                                 yield {"type": "reasoning", "text": rtext}
-                            ctext = getattr(delta, "content", None)
+                            ctext = dsml.feed(getattr(delta, "content", None) or "")
                             if ctext:
                                 current_text += ctext
                                 yield {"type": "text", "text": ctext}
@@ -573,9 +578,22 @@ class _OpenAICompatBackend:
                 # 仅「首次尝试 + 确属 400 不支持 tools」才标记降级。429/401/5xx/超时等瞬时/鉴权错误
                 # 必须上抛(让 harness 正常重试/报错),否则会把该 api+model 永久误标降级。
                 if first_attempt and _is_tools_unsupported(exc):
-                    log.warning(f"[gm] {self.api_id}/{self.model_name} native tools rejected (400): {exc} → text marker fallback")
-                    self._unsupported_combos.add(combo_key)
-                    yield from _openai_text_marker_loop(self, system, messages, mcp_tools, max_iterations, max_tokens, mcp_call)
+                    # 400 不等于「不支持 tools」:内容风控、上下文超长、消息格式不对也都是 400。
+                    # 以前见 400 就把 (api, model, user) 永久记成不支持,一次风控拒绝就让这个用户
+                    # 此后每一轮都走 text-marker 降级路径(反馈 #106 那位用户多半就是这么进去的)。
+                    # 改成看结果:本轮先不带 tools 走 text-marker,这个请求被接受 = 问题确实出在
+                    # tools,这时才记;同样被拒 = 跟 tools 无关,异常照常上抛,什么也不记。
+                    # 与 _create 的退参自愈同一个原则:记忆放在重试成功之后。
+                    log.warning(f"[gm] {self.api_id}/{self.model_name} 带 tools 的首跳被拒(400): {exc}"
+                                f" → 本轮改走 text marker,不带 tools 能通才记为不支持")
+                    marked = False
+                    for ev in _openai_text_marker_loop(self, system, messages, mcp_tools, max_iterations, max_tokens, mcp_call):
+                        if not marked:
+                            self._unsupported_combos.add(combo_key)
+                            marked = True
+                            log.warning(f"[gm] {self.api_id}/{self.model_name} 不带 tools 的请求被接受"
+                                        f" → 本进程内记为不支持 native tools")
+                        yield ev
                     return
                 # 少数中转站会把 assistant.reasoning_content 当非法字段 400 拒(自己吐得出、却收不回)。
                 # 剥掉重发一次:失去的只是思考连续性,总比整轮崩掉强。stream=True 的 400 在 create()
@@ -591,6 +609,22 @@ class _OpenAICompatBackend:
                 # 非 tools-不支持(瞬时/鉴权/5xx)或后续 iteration 异常：let it bubble
                 raise
             first_attempt = False
+
+            _tail = dsml.finish()
+            if _tail:
+                current_text += _tail
+                yield {"type": "text", "text": _tail}
+            if dsml.seen:
+                log.warning(f"[gm] {self.api_id}/{self.model_name} 在正文里吐了 DSML 工具标记,"
+                            f"已拦下并解析出 {len(dsml.calls)} 个调用")
+            _next = max(tool_calls_buf, default=-1) + 1
+            for _j, (_name, _args) in enumerate(dsml.calls):
+                _sid, _tool = resolve_tool_ref(_name, mcp_tools)
+                tool_calls_buf[_next + _j] = {
+                    "id": f"call_dsml_{_iteration}_{_j}",
+                    "name": f"{_sid}{sep}{_tool}" if _sid else _tool,
+                    "arguments": json.dumps(_args, ensure_ascii=False),
+                }
 
             if not tool_calls_buf:
                 # 没有 tool_calls → 本轮结束
@@ -650,10 +684,15 @@ class _OpenAICompatBackend:
                     "type": "tool_call", "server_id": server_id,
                     "tool": tool_name, "arguments": args,
                 }
-                try:
-                    result = mcp_call(server_id, tool_name, args)
-                except Exception as exc:
-                    result = {"ok": False, "error": f"call_tool 异常: {exc}"}
+                if not tool_name:
+                    # 个别中转站流式回传 tool_calls 时丢了 function.name。别拿空名去路由(只会得到
+                    # 一句「未知工具」,用户以为缺了什么要装),直接告诉模型缺的是名字。
+                    result = {"ok": False, "error": "这次工具调用没有工具名,未执行。请带上工具名重新调用。"}
+                else:
+                    try:
+                        result = mcp_call(server_id, tool_name, args)
+                    except Exception as exc:
+                        result = {"ok": False, "error": f"call_tool 异常: {exc}"}
                 yield {
                     "type": "tool_result", "ok": bool(result.get("ok")),
                     "result": result.get("result"), "error": result.get("error"),
