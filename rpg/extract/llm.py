@@ -97,8 +97,14 @@ def parse_json(raw: str) -> Any:
 
     薄包装 core.json_parse.parse_llm_json;**对外签名不变**:解析失败仍
     raise ValueError(触发 complete_json 调用方重试)。
+
+    allow_truncated=True(与 import_pipeline._parse_json 同口径):弧级/章级提取的
+    schema 输出较长,密集段会被 max_tokens 截断(生产实测吞噬星空 ch150 段,5500
+    上限下整弧半份 JSON 被整份丢弃 → 空壳弧)。截断响应按「已完整的部分」打捞
+    (丢掉末尾残缺字段 + 补闭合)—— 半份实体对跨弧聚类仍有用,整份丢掉才是浪费。
+    实在打捞不出仍抛 ValueError,调用方重试兜底不变。
     """
-    result = parse_llm_json(raw)
+    result = parse_llm_json(raw, allow_truncated=True)
     if result is None:
         if not raw:
             raise ValueError("空响应")

@@ -53,7 +53,10 @@
       "cancel_fail": "取消请求失败",
       "dispatched": "重做任务已派发",
       "dispatch_fail": "派发失败",
-      "rebuild_done": "重做完成"
+      "rebuild_done": "重做完成",
+      "rebuild_partial": "重做完成,但部分内容可能不完整",
+      "rebuild_failed": "重做失败",
+      "rebuild_cancelled": "重做已取消"
     },
     "chunks": {
       "title": "章节切片",
@@ -7622,13 +7625,21 @@
   "module_status": {
     "action_detail": "明细",
     "count_unit": "条",
+    "cover_chapters": "覆盖 {{total}} 章",
     "protagonist_badge_title": "主角",
     "source_mixed_llm": "可选 LLM",
     "source_zero_llm": "零 LLM",
     "time_days_ago": "{{count}} 天前",
     "time_hours_ago": "{{count}} 小时前",
     "time_just_now": "刚刚",
-    "time_minutes_ago": "{{count}} 分钟前"
+    "time_minutes_ago": "{{count}} 分钟前",
+    "unit_anchors": "个",
+    "unit_canon": "个",
+    "unit_cards": "张",
+    "unit_chunks": "块",
+    "unit_embeddings": "个",
+    "unit_facts": "条",
+    "unit_worldbook": "条"
   },
   "policy_banner": {
     "days_until_effective": "{{count}} 天后生效",

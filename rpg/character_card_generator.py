@@ -425,7 +425,7 @@ def _call_llm_for_card(
         )
         text = backend.call_structured(
             full_sys, [{"role": "user", "content": user_msg}],
-            max_tokens=2000,
+            max_tokens=4096,
         )
         return _parse_json_safely(text), backend_kind
     except Exception as exc:
@@ -442,7 +442,7 @@ def _anthropic_emit_card(backend, system: str, user_msg: str) -> dict | None:
     try:
         resp = backend.client.messages.create(
             model=backend.model_name,
-            max_tokens=2000,
+            max_tokens=4096,
             temperature=0.7,
             system=system,
             messages=[{"role": "user", "content": user_msg}],
@@ -636,7 +636,7 @@ def _v_critic_score(draft: dict, slice_: dict, user_id: int) -> dict:
         }
         text = backend.call_structured(
             sys, [{"role": "user", "content": json.dumps(payload, ensure_ascii=False)[:6000]}],
-            max_tokens=300,
+            max_tokens=4096,
         )
         parsed = _parse_json_safely(text) or {}
         score = float(parsed.get("score") or 0.0)

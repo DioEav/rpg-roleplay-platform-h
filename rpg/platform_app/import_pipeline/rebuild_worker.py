@@ -17,7 +17,7 @@ from .rebuild_modules import (
 )
 from .rebuild_registry import REBUILD_MODULES
 from .runner import _finalize_cancelled, finalize_job_if_unterminated
-from .stages_llm import _stage_worldbook
+from .stages_llm import _resolve_extractor_llm, _stage_worldbook
 
 
 def _run_module_rebuild(
@@ -166,10 +166,15 @@ def _rebuild_cards(ctl, user_id, script_id, body) -> dict:
                                overall_progress=overall, overall_total=100)
             except Exception:
                 pass
+        # 模型兜底与 estimate/凭证闸同源(_resolve_extractor_llm):此前硬编码
+        # deepseek/deepseek-v4-flash,而 schedule_module_rebuild 的 require_user_llm_credential
+        # 校验的是用户提取模型凭证 —— 没配 deepseek key 的用户过闸后执行必败,且失败被
+        # extract_chapter 吞成空壳 → 假「重做完成」(实测 script 1 五连 done、0 实体 0 token)。
+        _def_api, _def_model = _resolve_extractor_llm(user_id)
         result = rebuild_cards_with_llm(
             user_id, script_id, chapter_max=cmax,
-            model=str(body.get("model") or "deepseek-v4-flash"),
-            api_id=str(body.get("api_id") or "deepseek"),
+            model=str(body.get("model") or _def_model),
+            api_id=str(body.get("api_id") or _def_api),
             progress_cb=_cards_progress,
         )
     else:
@@ -208,22 +213,28 @@ def _rebuild_canon(ctl, user_id, script_id, body) -> dict:
                                stage_total=max(total, 1))
             except Exception:
                 pass
+        # 模型兜底与 estimate/凭证闸同源(_resolve_extractor_llm),同 _rebuild_cards:
+        # 硬编码 deepseek 会让没配 deepseek key 的用户「过闸即必败」,失败再被吞成空壳。
+        _def_api, _def_model = _resolve_extractor_llm(user_id)
         r = run_llm_extraction(
             user_id, script_id,
             algorithm=str(body.get("algorithm") or "arc"),
-            model=str(body.get("model") or "deepseek-v4-flash"),
-            api_id=str(body.get("api_id") or "deepseek"),
+            model=str(body.get("model") or _def_model),
+            api_id=str(body.get("api_id") or _def_api),
             confirmed=True,
             progress_cb=_canon_progress,
         )
         with connect() as _dbc:
             after = _count(_dbc, "kb_canon_entities", script_id) if r.get("ok") else before
+        # partial_failures 必须透传(此前写死 []):arc 管线 success_ratio<0.9 时标了
+        # 失败弧明细,丢掉的话 worker 收不到 → done_with_errors 退化成 done,用户看不到
+        # 「成功 N/共 M 弧」之外的任何异常线索。
         result = {
             "ok": bool(r.get("ok")),
             "source": "llm_extract",
             "before_count": before,
             "after_count": after,
-            "partial_failures": [],
+            "partial_failures": list(r.get("partial_failures") or []),
             "error": r.get("error") if not r.get("ok") else "",
         }
     return result

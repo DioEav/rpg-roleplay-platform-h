@@ -172,7 +172,7 @@ def _call_anthropic_tools(model: str, user_prompt: str, user_id: int | None) -> 
     client = Anthropic(api_key=key)
     resp = client.messages.create(
         model=model,
-        max_tokens=2048,
+        max_tokens=4096,
         system=_SYSTEM_PROMPT,
         messages=[{"role": "user", "content": user_prompt}],
         tools=COMMAND_TOOLS,
@@ -242,7 +242,7 @@ def _call_vertex_tools(model: str, user_prompt: str, user_id: int | None) -> lis
     text = backend.call_structured(
         system=system_prompt,
         messages=[{"role": "user", "content": user_prompt}],
-        max_tokens=1500,
+        max_tokens=4096,
     )
     return _parse_tool_call_json_array(text)
 

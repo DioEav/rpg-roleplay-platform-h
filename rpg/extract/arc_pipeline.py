@@ -80,11 +80,13 @@ def extract_arc(llm: ExtractLLM, arc: list[dict], *, era: str,
                 power_system: list[str] | None = None,
                 known_entities: list[str] | None = None,
                 k_picks: int = 3, per_chapter_chars: int = 2500,
-                max_tokens: int = 5500) -> Any:
+                max_tokens: int = 10000) -> Any:
     """LLM 抽一个弧。复用 per_chapter.extract_chapter 的 schema(章 → 弧的语义升维)。
 
     v28: identity/background 进 entity schema 后,弧级实体集更易撑爆原 4000 上限
     (弧含 3 代表章 + 弧角色全集,密度高于单章),提到 5500。
+    生产实测(吞噬星空 ch150 战斗密集段)5500 仍被 max_tokens 截断 → 半份 JSON
+    被解析器整份丢弃 → 弧空壳。提到 10000,配合 parse_json 的截断打捞双保险。
 
     返回 ChapterExtract,其中:
       chapter = 弧首章 chapter_index(用作 first_revealed_chapter)
@@ -200,13 +202,19 @@ def run_arc_extraction(
                     power_system=seed.power_system,
                     known_entities=seed.entity_vocab,
                 )
-                return idx, ex
+                # extract_chapter 把 LLM 异常/空响应吞成空壳(raw_ok=False)。不检查的话
+                # 全部弧失败也会被计成 100% 成功(ok=True、0 实体、0 token),用户只看到
+                # 「重做完成」。空壳按失败处理:走同一套重试退避,最终计入 failed_arcs。
+                if ex is None or not getattr(ex, "raw_ok", True):
+                    last_exc = RuntimeError("弧段提取返回空壳(LLM 调用失败, raw_ok=False)")
+                else:
+                    return idx, ex
             except Exception as exc:
                 last_exc = exc
-                if attempt == 3:
-                    return idx, None
-                import time as _t
-                _t.sleep(0.5 * (2 ** attempt))
+            if attempt == 3:
+                break
+            import time as _t
+            _t.sleep(0.5 * (2 ** attempt))
         if last_exc is not None:
             with failed_lock:
                 arc_min = arc[0].get("chapter_index", 0) if arc else 0
@@ -244,7 +252,7 @@ def run_arc_extraction(
                           "succeeded": succeeded, "failed": len(arcs) - succeeded})
 
     if not extracts:
-        return {"ok": False, "error": "全部弧段 LLM 提取失败"}
+        return {"ok": False, "error": "全部弧段 LLM 提取失败(共 %d 弧,无一成功;请检查「设置→API 设置」里知识提取模型的凭证是否可用)" % len(arcs)}
 
     # 4.5) era fallback:Pass 0 共识门严会返空,从 N 弧 Pass 1 二次共识(要求 ≥ 25% 弧投同票)
     if not era and extracts:

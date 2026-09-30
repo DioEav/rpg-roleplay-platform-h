@@ -2433,7 +2433,7 @@
       "sent_notice": "Verification code sent to {{mask}}. Please verify within 10 minutes."
     },
     "login_code": {
-      "not_registered": "No account exists for this email \u2014 switched you to sign-up (email prefilled).",
+      "not_registered": "No account exists for this email — switched you to sign-up (email prefilled).",
       "desc": "Enter your verified email and we will send a one-time sign-in code.",
       "email_label": "Email",
       "email_required": "Please enter a valid email address",
@@ -2969,7 +2969,7 @@
       "overlay_edit_tip": "Edit",
       "overlay_delete_tip": "Delete",
       "overlay_editing": "Editing an existing entry",
-      "overlay_ph_title": "Title (e.g. Broken Sword \u00b7 Remnant)",
+      "overlay_ph_title": "Title (e.g. Broken Sword · Remnant)",
       "overlay_ph_content": "Entry text",
       "overlay_ph_keys": "Trigger keywords, comma-separated (optional)",
       "overlay_priority": "Priority",
@@ -2979,7 +2979,7 @@
       "overlay_updated": "Changes saved",
       "overlay_update_failed": "Failed to save",
       "overlay_delete_confirm": "Delete this worldbook entry?",
-      "overlay_empty": "No custom worldbook entries yet. Use the \u201c+\u201d at the top right to add one."
+      "overlay_empty": "No custom worldbook entries yet. Use the “+” at the top right to add one."
     },
     "characters": {
       "on_stage": "On Stage",
@@ -3980,7 +3980,10 @@
       "cancel_fail": "Cancel request failed",
       "dispatched": "Rebuild job dispatched",
       "dispatch_fail": "Dispatch failed",
-      "rebuild_done": "Rebuild complete"
+      "rebuild_done": "Rebuild complete",
+      "rebuild_partial": "Rebuild finished, but some parts may be incomplete",
+      "rebuild_failed": "Rebuild failed",
+      "rebuild_cancelled": "Rebuild cancelled"
     },
     "chunks": {
       "title": "Chapter chunks",
@@ -7625,13 +7628,21 @@
   "module_status": {
     "action_detail": "Details",
     "count_unit": "entries",
+    "cover_chapters": "covers {{total}} chapters",
     "protagonist_badge_title": "Protagonist",
     "source_mixed_llm": "Optional LLM",
     "source_zero_llm": "No LLM",
     "time_days_ago": "{{count}} day ago",
     "time_hours_ago": "{{count}} hr ago",
     "time_just_now": "just now",
-    "time_minutes_ago": "{{count}} min ago"
+    "time_minutes_ago": "{{count}} min ago",
+    "unit_anchors": "anchors",
+    "unit_canon": "entities",
+    "unit_cards": "cards",
+    "unit_chunks": "chunks",
+    "unit_embeddings": "vectors",
+    "unit_facts": "entries",
+    "unit_worldbook": "entries"
   },
   "policy_banner": {
     "days_until_effective": "{{count}} day(s) until effective",

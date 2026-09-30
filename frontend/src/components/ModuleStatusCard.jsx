@@ -23,6 +23,20 @@ const MODULE_META = {
   embeddings:    { source: 'zero_llm' },
 };
 
+/* 每模块的计数单位(替代通用「条」)。
+   cover: true = done/total 是跨单位比值(块数/章数、事实数/章数),不渲染成
+   「4499/1487」分数和百分比进度条(看起来像超 100%),改渲染「4499 块 · 覆盖 1487 章」。
+   后端 chunks 的 total 就是章节数(listing.py _build),只作"每章至少 1 块"的下限校验。 */
+const MODULE_UNITS = {
+  chunks:        { unitKey: 'module_status.unit_chunks',     cover: true },
+  chapter_facts: { unitKey: 'module_status.unit_facts',      cover: true },
+  canon:         { unitKey: 'module_status.unit_canon' },
+  cards:         { unitKey: 'module_status.unit_cards' },
+  worldbook:     { unitKey: 'module_status.unit_worldbook' },
+  anchors:       { unitKey: 'module_status.unit_anchors' },
+  embeddings:    { unitKey: 'module_status.unit_embeddings' },
+};
+
 /* ── Status badge helpers ── */
 function statusGlyph(status) {
   switch (status) {
@@ -127,12 +141,21 @@ export function ModuleStatusCard({
   const rebuildDisabled = !!activeJobId || status === 'running';
   const isProtagonist  = metadata && metadata.is_protagonist;
 
-  /* ── progress bar ── */
-  const progress = charProgressBar(doneCount, totalCount);
-
   /* ── count display parts ── */
   const hasBoth = doneCount != null && totalCount != null && totalCount > 0;
   const hasDone = doneCount != null;
+
+  /* ── 单位与跨单位(cover)展示 ── */
+  const unitInfo = MODULE_UNITS[module] || null;
+  const unitStr = unitInfo
+    ? t(unitInfo.unitKey, { defaultValue: t('module_status.count_unit', { defaultValue: '条' }) })
+    : t('module_status.count_unit', { defaultValue: '条' });
+  // cover 格式只在 done/total 都有值时用;缺 total 时退回单数字 + 单位
+  const useCover = !!(unitInfo && unitInfo.cover && hasBoth);
+
+  /* ── progress bar ── */
+  // cover 格式下 done/total 是跨单位比值(块数/章数),百分比无意义,不渲染进度条
+  const progress = useCover ? null : charProgressBar(doneCount, totalCount);
 
   /* ── card root class ── */
   let cardCls = s.card;
@@ -192,17 +215,27 @@ export function ModuleStatusCard({
       <div className={s.cardBody}>
         {/* Count */}
         <div className={s.countBlock}>
-          {hasBoth ? (
+          {useCover ? (
+            <>
+              {/* 跨单位格式:「4499 块 · 覆盖 1487 章」— done 与 total 单位不同,不渲染成分数 */}
+              <span className={s.countNum}>{doneCount}</span>
+              <span className={s.countUnit}>{unitStr}</span>
+              <span className={s.countSep}>·</span>
+              <span className={s.countTotal}>
+                {t('module_status.cover_chapters', { total: totalCount, defaultValue: `覆盖 ${totalCount} 章` })}
+              </span>
+            </>
+          ) : hasBoth ? (
             <>
               <span className={s.countNum}>{doneCount}</span>
               <span className={s.countSep}>/</span>
               <span className={s.countTotal}>{totalCount}</span>
-              <span className={s.countUnit}>{t('module_status.count_unit')}</span>
+              <span className={s.countUnit}>{unitStr}</span>
             </>
           ) : hasDone ? (
             <>
               <span className={s.countNum}>{doneCount}</span>
-              <span className={s.countUnit}>{t('module_status.count_unit')}</span>
+              <span className={s.countUnit}>{unitStr}</span>
             </>
           ) : (
             <span className={s.countDash}>—</span>

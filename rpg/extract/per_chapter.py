@@ -7,10 +7,13 @@ discover-then-link 的 link:带 已发现词表 + 钉死纪元种子 读每章 �
 from __future__ import annotations
 
 import json
+import logging
 from dataclasses import dataclass, field
 from typing import Any
 
 from extract.llm import ExtractLLM
+
+log = logging.getLogger(__name__)
 
 # 每章输出 JSON schema(给模型看的契约)
 # v28: entities 加 identity / background,与玩家 PC 角色卡字段对齐 → 同套 schema 渲染
@@ -172,7 +175,21 @@ def extract_chapter(llm: ExtractLLM, chapter_num: int, chapter_text: str, *, era
                       prev_summary=prev_summary, title_descriptor=title_descriptor)
     try:
         data = llm.complete_json(system, user, max_tokens=max_tokens)
-    except Exception:
+    except Exception as exc:
+        # 吞异常返回空壳是设计内的 best-effort(单章失败不炸整本),但必须留日志:
+        # 否则「全部弧空壳 → 假 ok=True → 重做完成」这种故障没有任何线索可查。
+        # finish_reason 从 backend.last_usage 取:length=被 max_tokens 截断,
+        # stop=正常收尾但内容畸形,空=请求本身没到收包阶段(网络/构造失败)。
+        finish_reason = "?"
+        try:
+            _usage = dict(getattr(llm._backend, "last_usage", {}) or {})
+            finish_reason = str(_usage.get("finish_reason") or "?")
+        except Exception:
+            pass
+        log.warning(
+            "extract_chapter ch%s LLM 调用失败,返回空壳(raw_ok=False, finish_reason=%s): %s: %s",
+            chapter_num, finish_reason, type(exc).__name__, str(exc)[:200],
+        )
         return ChapterExtract(chapter=chapter_num, raw_ok=False)
     if not isinstance(data, dict):
         return ChapterExtract(chapter=chapter_num, raw_ok=False)

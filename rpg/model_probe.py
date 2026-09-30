@@ -762,7 +762,7 @@ def probe_availability(api_id: str, model_real_name: str | None = None, timeout_
         text = gm._backend.call(
             system="只回复一个字符：1",
             messages=[{"role": "user", "content": "1"}],
-            max_tokens=8,
+            max_tokens=80,
         )
         latency = int((time.monotonic() - start) * 1000)
         result = {

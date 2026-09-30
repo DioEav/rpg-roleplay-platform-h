@@ -93,7 +93,7 @@ def run_writing(cases: list[dict], harness, on_progress=None) -> dict[str, Any]:
     rows = []
     errors = 0
     for i, case in enumerate(cases):
-        gen = harness.chat(writing_messages(case), max_tokens=800) if hasattr(harness, "chat") else harness.generate(case)
+        gen = harness.chat(writing_messages(case), max_tokens=4096) if hasattr(harness, "chat") else harness.generate(case)
         if isinstance(gen, str) and gen.startswith("__GEN_ERROR__"):
             errors += 1
             continue

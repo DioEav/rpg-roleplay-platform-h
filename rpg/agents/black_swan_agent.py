@@ -434,7 +434,7 @@ def _make_harness_caller(
             user_prompt=user_prompt,
             user_id=user_id,
             tool_schema=schema,  # 三通道都启用强 schema(enum 锁 NPC ID 等)
-            max_tokens=600,
+            max_tokens=4096,
             timeout_sec=20,
             agent_kind="black_swan",
             no_think=True,

@@ -223,6 +223,21 @@ export function useScriptRebuild(scriptId) {
     // reload status → 让所有卡片刷新计数
     reload();
     try { window.dispatchEvent(new CustomEvent('rpg-scripts-updated')); } catch (_) {}
+    // SSE 的 done 事件对 done/done_with_errors/failed/cancelled 都会发,此前不看状态
+    // 一律弹「重做完成」(ok)—— 任务失败用户也只看到成功提示。按终态区分。
+    const st = String((finalJob && finalJob.status) || '').trim();
+    if (st === 'failed') {
+      window.__apiToast?.(t('modules.toast.rebuild_failed', { defaultValue: '重做失败' }), { kind: 'danger', duration: 4000 });
+      return;
+    }
+    if (st === 'cancelled') {
+      window.__apiToast?.(t('modules.toast.rebuild_cancelled', { defaultValue: '重做已取消' }), { kind: 'info', duration: 2800 });
+      return;
+    }
+    if (st === 'done_with_errors') {
+      window.__apiToast?.(t('modules.toast.rebuild_partial', { defaultValue: '重做完成,但部分内容可能不完整' }), { kind: 'warn', duration: 4000 });
+      return;
+    }
     window.__apiToast?.(t('modules.toast.rebuild_done', { defaultValue: '重做完成' }), { kind: 'ok', duration: 2800 });
   }, [reload, t]);
 

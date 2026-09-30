@@ -588,7 +588,7 @@ def tick_experiment(exp_id: int, *, manual: bool = False) -> dict:
                 # (4人cast+threads+facts)800 装不下,扩容是根因修,重试只是保险丝。
                 # 结构化微任务禁深思(268 实锤族)+空正文护栏
                 text, _u = call_agent_json_guarded(api_id, model, sys_p, usr_p, user_id,
-                                                   tool_schema=None, max_tokens=1600, timeout_sec=60,
+                                                   tool_schema=None, max_tokens=4096, timeout_sec=60,
                                                    no_think=True, agent_kind="rath_scheduler",
                                                    log_tag="rath_scheduler")
                 data = S.parse_scheduler_output(text or "")

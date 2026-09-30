@@ -133,7 +133,7 @@ def judge_pair(case: dict, resp_a: str, resp_b: str, dim: str, harness) -> dict[
     ]
     raw = ""
     try:
-        raw = harness.chat(messages, max_tokens=120)
+        raw = harness.chat(messages, max_tokens=4096)
     except Exception as e:
         return {"dim": dim, "winner": "tie", "reason": "harness_error", "raw": str(e)}
 

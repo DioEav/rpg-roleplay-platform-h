@@ -829,7 +829,7 @@ class GameMaster:
     # _OPENING_PROMPT/600。是否贴原著、用什么开场文案、给多大预算,由【调用方流水线】(游戏/酒馆/
     # 编辑器各自)决定后传入——底层绝不认识 rail/原著/steering 这类某条流水线专属的概念。
     def generate_opening(self, state, retrieved_context: str = "", *,
-                         prompt: str | None = None, max_tokens: int = 600) -> str:
+                         prompt: str | None = None, max_tokens: int = 5000) -> str:
         self._active_state = state
         system   = self._build_system()
         self._reset_backend_usage()
@@ -837,7 +837,7 @@ class GameMaster:
         return self._backend.call(system, messages, max_tokens=max_tokens)
 
     def generate_opening_stream(self, state, retrieved_context: str = "", *, stop_event=None,
-                                prompt: str | None = None, max_tokens: int = 600) -> Iterator[str]:
+                                prompt: str | None = None, max_tokens: int = 5000) -> Iterator[str]:
         self._active_state = state
         system   = self._build_system()
         self._reset_backend_usage()

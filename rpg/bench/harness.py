@@ -49,7 +49,7 @@ class RecordedHarness(Harness):
 class OpenAICompatHarness(Harness):
     def __init__(self, name: str, model: str, base_url: str, api_key: str,
                  system_prompt: str = DEFAULT_GM_SYSTEM, canon_in_system: bool = True,
-                 max_tokens: int = 900, temperature: float = 0.7, timeout: int = 120):
+                 max_tokens: int = 4096, temperature: float = 0.7, timeout: int = 120):
         self.name = name
         self.model = model
         self.base_url = base_url.rstrip("/")
