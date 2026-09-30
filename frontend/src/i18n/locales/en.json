@@ -4011,8 +4011,11 @@
       "llm_enrich_help": "Default is zero-LLM and free. When checked, re-extracts the period state for the range; falls back to the free version if no key."
     },
     "worldbook": {
-      "title": "Worldbook",
-      "desc": "Collection of worldbuilding entries, persistent reference in GM context"
+      "desc": "Collection of worldbuilding entries, persistent reference in GM context",
+      "llm_help_off": "By default, resident setting entries are aggregated from KB entities — zero LLM, free, instant. Rebuild KB entities first, then run this to sync the latest entities.",
+      "llm_help_on": "A single LLM call distills setting entries from chapter facts (≤20; good at relationships/concepts). Entries coexist with the canon-aggregated ones — same-title collisions keep the earlier one, no overwriting; your hand-edited entries always win.",
+      "llm_label": "Extract worldbook entries with LLM (uses your API key)",
+      "title": "Worldbook"
     },
     "anchors": {
       "title": "Timeline anchors",

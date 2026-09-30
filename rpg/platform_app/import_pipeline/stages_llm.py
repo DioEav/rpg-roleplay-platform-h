@@ -470,6 +470,14 @@ def _stage_worldbook(ctl: JobController, user_id: int, script_id: int) -> int:
             return 0
         book_id = int(book_row["id"])
 
+        # 重生成语义:llm_pipeline 条目归本路径自管,跑之前先清掉上一轮的,
+        # 避免旧条目残留;extracted(canon 路径)与 editor(用户手编)条目不动。
+        db.execute(
+            "delete from worldbook_entries where script_id=%s "
+            "and coalesce(metadata->>'source','') = 'llm_pipeline'",
+            (script_id,),
+        )
+
         # 用 chapter_facts 摘要 + locations/factions/concepts 作为输入（比原始文本信噪比高）
         fact_rows = db.execute(
             "select chapter, summary, locations, factions, concepts "
@@ -534,7 +542,8 @@ def _stage_worldbook(ctl: JobController, user_id: int, script_id: int) -> int:
     )
     prompt = (
         era_iron_rule +
-        "根据下面的章节摘要和高频实体，提取重要的世界观条目（地点/势力/概念），返回严格 JSON 数组：\n"
+        "根据下面的章节摘要和高频实体，提取重要的世界观条目（地点/势力/概念），"
+        "返回严格 JSON **数组**——即使只提取到 1 条,顶层也必须是 [ ] 包裹的数组,不是裸对象 { }:\n"
         "[{\"name\":\"...\",\"keys\":[\"关键词1\",\"关键词2\"],\"content\":\"≤200字解释\",\"priority\":80}]\n"
         "数量上限 20。\n\n" + seed
     )
@@ -555,6 +564,10 @@ def _stage_worldbook(ctl: JobController, user_id: int, script_id: int) -> int:
         cost = float(compute_cost(api_id, model, last))
         ctl.add_usage(int(last.get("input_tokens", 0)), int(last.get("output_tokens", 0)), cost)
         entries = _parse_json(raw) or []
+        # 实测(吞噬星空×mimo):模型偶尔把单条目直接返回成裸对象而非数组。
+        # 带 name 的 dict 包一层收下,不能整份丢弃 —— 否则阶段恒 0 条、假性失败。
+        if isinstance(entries, dict) and entries.get("name"):
+            entries = [entries]
         if not isinstance(entries, list):
             entries = []
         count = 0
@@ -573,7 +586,7 @@ def _stage_worldbook(ctl: JobController, user_id: int, script_id: int) -> int:
                       priority  = excluded.priority,
                       metadata  = excluded.metadata,
                       updated_at = now()
-                    where coalesce(worldbook_entries.metadata->>'source','') <> 'editor'
+                    where coalesce(worldbook_entries.metadata->>'source','') not in ('editor','extracted')
                     """,
                     (
                         book_id, script_id,
@@ -584,9 +597,9 @@ def _stage_worldbook(ctl: JobController, user_id: int, script_id: int) -> int:
                         Jsonb({"source": "llm_pipeline"}),
                     ),
                 )
-                # rowcount=1 表示插入或更新成功;冲突且 where 不满足(editor 条目)时 rowcount=0。
-                # psycopg3:rowcount 在 execute() 返回的 cursor 上,不在 Connection 上
-                # (旧代码 `db.rowcount` → AttributeError,整个 worldbook LLM 抽取阶段崩、条目没入库)。
+                # 只**新增**不覆盖:editor(用户手编)与 extracted(canon 路径产物)同名时
+                # rowcount=0 跳过 —— 两路产物叠加、互不顶掉,重跑 canon 也不会丢 LLM 条目。
+                # rowcount=1 表示插入或更新成功。
                 count += (getattr(_cur, "rowcount", 0) or 0)
         ctl.update(stage_progress=1)
         # phase_backend: 标记 worldbook 阶段写了多少条 — 0 当作 partial 让上层标 done_with_errors

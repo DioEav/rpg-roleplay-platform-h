@@ -19,11 +19,14 @@ export function RebuildEstimateModal({ open, module, scriptId, estimate, loading
   const { t } = useTranslation();
   const isCards = module === 'cards';
   const isEmbeddings = module === 'embeddings';
+  const isWorldbook = module === 'worldbook';
 
   // 进度感知角色卡:cards 重建的「重建到第 N 章」+「LLM 丰富」本地状态。
   // 改动 → debounce 后回调 onOptionsChange(带 chapter_max / mode)重估。
   const [chapterMax, setChapterMax] = React.useState('');
   const [llmEnrich, setLlmEnrich] = React.useState(false);
+  // 世界书:默认 canon 聚合(零 LLM);勾选后走单次 LLM 抽取(source='llm')。
+  const [wbLlm, setWbLlm] = React.useState(false);
   // 按类型重嵌:embeddings 的 include 勾选本地态。默认全选 = 后端不传 include 时的行为,
   // 所以打开弹窗时不需要额外重估一次。
   const [embedKinds, setEmbedKinds] = React.useState(EMBED_KINDS);
@@ -36,6 +39,9 @@ export function RebuildEstimateModal({ open, module, scriptId, estimate, loading
     if (open && isEmbeddings) {
       const inc = options && Array.isArray(options.include) ? options.include.filter((k) => EMBED_KINDS.includes(k)) : null;
       setEmbedKinds(inc && inc.length ? inc : EMBED_KINDS);
+    }
+    if (open && isWorldbook) {
+      setWbLlm(!!(options && (options.source === 'llm' || options.mode === 'llm')));
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, module]);
@@ -70,6 +76,13 @@ export function RebuildEstimateModal({ open, module, scriptId, estimate, loading
   const onLlmToggle = (checked) => {
     setLlmEnrich(checked);
     emitOptions(chapterMax, checked);  // toggle 立即重估(影响 token/成本)
+  };
+
+  // 世界书来源切换:勾选 = LLM 抽取(source='llm');取消 = canon 聚合(零 LLM)。
+  // 两者都立即重估(needs_llm / token 成本随 source 变化)。
+  const onWbLlmToggle = (checked) => {
+    setWbLlm(checked);
+    if (onOptionsChange) onOptionsChange(checked ? { source: 'llm' } : {});
   };
 
   if (!open) return null;
@@ -179,6 +192,27 @@ export function RebuildEstimateModal({ open, module, scriptId, estimate, loading
             </label>
             <span style={{ fontSize: 11, color: 'var(--muted-2, #9a8f78)', marginLeft: 24 }}>
               {t('modules.cards.llm_enrich_help', { defaultValue: '默认零 LLM、免费。勾选后按区间重抽该时期态；无 Key 会自动降级到免费版。' })}
+            </span>
+          </div>
+        )}
+
+        {/* 世界书:canon 聚合(默认,零 LLM) vs LLM 抽取(可选) */}
+        {isWorldbook && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginBottom: 14,
+                        padding: '12px 14px', border: '1px solid var(--border, #d8d2c4)', borderRadius: 6 }}>
+            <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, cursor: 'pointer' }}>
+              <input
+                type="checkbox"
+                checked={wbLlm}
+                onChange={(e) => onWbLlmToggle(e.target.checked)}
+                disabled={loading}
+              />
+              <span>{t('modules.worldbook.llm_label', { defaultValue: '用 LLM 抽取世界观条目（消耗你的 API Key）' })}</span>
+            </label>
+            <span style={{ fontSize: 11, color: 'var(--muted-2, #9a8f78)' }}>
+              {wbLlm
+                ? t('modules.worldbook.llm_help_on', { defaultValue: '单次 LLM 调用从章节事实提炼设定条目(≤20 条,擅长关系/概念类设定)。与知识库人物聚合出的条目叠加共存,同名时保留先建的一条,不会互相覆盖;你手编的条目永远优先。' })
+                : t('modules.worldbook.llm_help_off', { defaultValue: '默认从「知识库人物」聚合常驻设定条目,零 LLM、免费、秒完成;先重做「知识库人物」再点本项可同步最新实体。' })}
             </span>
           </div>
         )}

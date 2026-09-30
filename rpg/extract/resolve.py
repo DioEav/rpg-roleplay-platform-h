@@ -943,12 +943,14 @@ def build_constant_worldbook(db, script_id: int, book_id: int, seed) -> int:
     GM 几乎拿不到设定厚度。拆分后 search_canon / get_worldbook 检索到的是独立背景
     描述,GM 叙事有真实原著感。
     """
-    # 清旧 extracted 之外的条目
+    # 清旧:只清 extracted/editor/llm_pipeline 之外的条目。
+    # editor=编辑器 agent 写的(upsert_worldbook_entry),重建保留不删,否则用户同步进
+    # 世界书的设定下次重建知识库就丢了(harness 审计 P1)。
+    # llm_pipeline=世界书 LLM 路径(_stage_worldbook)的产物,它自己重生成时自清理,
+    # canon 重建不得越界删 —— 否则「先跑 LLM 世界书、再点免费重建」会把 LLM 条目全洗掉。
     db.execute(
-        # 只清「既非 extracted 又非 editor」的旧条目;editor=编辑器 agent 写的(upsert_worldbook_entry),
-        # 重建保留不删,否则用户同步进世界书的设定下次重建知识库就丢了(harness 审计 P1)。
         "delete from worldbook_entries where script_id=%s and book_id=%s "
-        "and coalesce(metadata->>'source','') not in ('extracted','editor')",
+        "and coalesce(metadata->>'source','') not in ('extracted','editor','llm_pipeline')",
         (script_id, book_id),
     )
 
@@ -1112,11 +1114,14 @@ def build_constant_worldbook(db, script_id: int, book_id: int, seed) -> int:
               keys=excluded.keys,
               insertion_position=excluded.insertion_position,
               metadata=excluded.metadata, updated_at=now()
-            where coalesce(worldbook_entries.metadata->>'source','') <> 'editor'
+            where coalesce(worldbook_entries.metadata->>'source','') not in ('editor','llm_pipeline')
             """,
             (book_id, script_id, title, content, Jsonb(keys), priority, ipos,
              Jsonb({"source": "extracted"})),
         )
+        # 同名冲突时 editor 与 llm_pipeline 条目不覆盖(各路产物叠加,先到先得);
+        # refreshed 的是 extracted 自己的旧条目。written 计数含被保护跳过的行,
+        # 与 before/after_count 口径一致(真实条数以表内 count 为准)。
         written += 1
     return written
 

@@ -17,7 +17,9 @@ const MODULE_META = {
   chunks:        { source: 'zero_llm' },
   chapter_facts: { source: 'zero_llm' },
   canon:         { source: 'llm' },
-  cards:         { source: 'llm' },
+  /* cards 与 worldbook 同款「可选 LLM」:默认 rebuild_cards_from_canon 零 LLM(从
+     canon/facts 反推,恒免费),仅勾选「LLM 丰富重建」(mode=llm)才烧 API。 */
+  cards:         { source: 'mixed' },
   worldbook:     { source: 'mixed' },
   anchors:       { source: 'zero_llm' },
   embeddings:    { source: 'zero_llm' },
