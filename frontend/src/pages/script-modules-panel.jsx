@@ -1,13 +1,14 @@
 /* script-modules-panel.jsx — Rebuild Panel 编排层 (phase_rebuild_panel).
-   职责:把 ModuleStatusCard / ModuleMatrixOverview / RebuildJobBanner / RebuildEstimateModal 串成一个
+   职责:把 ModuleStatusCard / ModuleMatrixOverview / RebuildEstimateModal 串成一个
    可在 ScriptDetailPanel 内消费的 React hook + view 组件.
+   进度横条(RebuildJobBanner)已按需求全面移除:hook 内无头订阅 SSE 驱动终态 toast
+   与模块卡「运行中」态,5s 轮询兜底断流。
 
    核心 useScriptRebuild(scriptId) 返回:
      - statusPayload     当前 /modules-status 快照
      - statusLoading     是否在 reload 状态
      - activeJob         { job_id, kind, module, before_count, after_count, overall_progress, ... }
      - openEstimate({ module, options? })  打开 estimate modal
-     - bannerProps       传给 <RebuildJobBanner>
      - matrixProps       传给 <ModuleMatrixOverview>
      - modalProps        传给 <RebuildEstimateModal>
      - cardProps(module) 传给单卡 <ModuleStatusCard module={...} {...cardProps('canon')} />
@@ -26,7 +27,6 @@ import CSSpaceBetween from '@cloudscape-design/components/space-between';
 
 import { ModuleStatusCard } from '../components/ModuleStatusCard.jsx';
 import { ModuleMatrixOverview } from '../components/ModuleMatrixOverview.jsx';
-import { RebuildJobBanner } from '../components/RebuildJobBanner.jsx';
 import { RebuildEstimateModal } from '../components/RebuildEstimateModal.jsx';
 
 // 收敛处置④:「知识库中心」新增三张模块卡(后端并行注册,契约:
@@ -130,10 +130,10 @@ export function useScriptRebuild(scriptId) {
 
   React.useEffect(() => { reload(); }, [reload]);
 
-  // 兜底轮询:RebuildJobBanner 的 SSE 在 on_error 里什么都不做,部署重启 / 网络抖动断流后
-  // 永远收不到 on_done → activeJob 一直卡「运行中」、其他「重做」按钮被禁用
-  // (用户反馈:所有子项重做都用不了)。activeJob 存在时每 5s 直接查该 job 真实状态,
-  // 终态(done/failed/cancelled)或查不到即本地清理 + reload 刷新真实计数。瞬时错误不误清。
+  // 兜底轮询:部署重启 / 网络抖动断流后永远收不到 on_done → activeJob 一直卡「运行中」、
+  // 其他「重做」按钮被禁用(用户反馈:所有子项重做都用不了)。activeJob 存在时每 5s 直接查
+  // 该 job 真实状态,终态(done/failed/cancelled)或查不到即本地清理 + reload 刷新真实计数。
+  // 瞬时错误不误清。
   React.useEffect(() => {
     const jid = activeJob && (activeJob.job_id || activeJob.id);
     if (!jid || !scriptId) return undefined;
@@ -153,6 +153,56 @@ export function useScriptRebuild(scriptId) {
     return () => { alive = false; clearInterval(iv); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeJob && (activeJob.job_id || activeJob.id), scriptId, reload]);
+
+  // 终态处理(toast 按终态区分 + 清理 + 刷新)。原先挂在 RebuildJobBanner 的 SSE 回调上,
+  // 横条 UI 全面移除后改为 hook 无头订阅(下方),行为不变:进度仍驱动模块卡「运行中」态。
+  const onJobDone = React.useCallback((finalJob) => {
+    setActiveJob(null);
+    // reload status → 让所有卡片刷新计数
+    reload();
+    try { window.dispatchEvent(new CustomEvent('rpg-scripts-updated')); } catch (_) {}
+    // SSE 的 done 事件对 done/done_with_errors/failed/cancelled 都会发,此前不看状态
+    // 一律弹「重做完成」(ok)—— 任务失败用户也只看到成功提示。按终态区分。
+    const st = String((finalJob && finalJob.status) || '').trim();
+    if (st === 'failed') {
+      window.__apiToast?.(t('modules.toast.rebuild_failed', { defaultValue: '重做失败' }), { kind: 'danger', duration: 4000 });
+      return;
+    }
+    if (st === 'cancelled') {
+      window.__apiToast?.(t('modules.toast.rebuild_cancelled', { defaultValue: '重做已取消' }), { kind: 'info', duration: 2800 });
+      return;
+    }
+    if (st === 'done_with_errors') {
+      window.__apiToast?.(t('modules.toast.rebuild_partial', { defaultValue: '重做完成,但部分内容可能不完整' }), { kind: 'warn', duration: 4000 });
+      return;
+    }
+    window.__apiToast?.(t('modules.toast.rebuild_done', { defaultValue: '重做完成' }), { kind: 'ok', duration: 2800 });
+  }, [reload, t]);
+
+  // 无头 SSE 订阅:进度横条 UI 已按需求全部移除(顶部 tab 上方 + 知识库中心),但
+  // 终态 toast / 快速终态感知(activeJob 及时清零,解除其他卡片禁用)仍由 SSE 驱动;
+  // 上面的 5s 轮询作为断流兜底,两者对终态的处理幂等。
+  React.useEffect(() => {
+    const jid = activeJob && (activeJob.job_id || activeJob.id);
+    if (!jid || !window.api?.scripts?.streamImport) return undefined;
+    let alive = true;
+    const es = window.api.scripts.streamImport(jid, {
+      on_message: (jb) => {
+        if (!alive || !jb || typeof jb !== 'object') return;
+        const next = { ...jb, job_id: jb.job_id || jb.id || jid };
+        setActiveJob((prev) => (
+          prev && (prev.job_id || prev.id) === (next.job_id || jid) ? { ...prev, ...next } : prev
+        ));
+      },
+      on_done: (jb) => { if (alive) onJobDone(jb); },
+      on_error: () => {},
+    });
+    return () => {
+      alive = false;
+      try { es && es.close && es.close(); } catch (_) {}
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeJob && (activeJob.job_id || activeJob.id), scriptId, onJobDone]);
 
   const runEstimate = React.useCallback(async (module, options) => {
     setEstimate(null);
@@ -218,29 +268,6 @@ export function useScriptRebuild(scriptId) {
     }
   }, [pendingModule, pendingOptions, scriptId, closeEstimate, t]);
 
-  const onBannerDone = React.useCallback((finalJob) => {
-    setActiveJob(null);
-    // reload status → 让所有卡片刷新计数
-    reload();
-    try { window.dispatchEvent(new CustomEvent('rpg-scripts-updated')); } catch (_) {}
-    // SSE 的 done 事件对 done/done_with_errors/failed/cancelled 都会发,此前不看状态
-    // 一律弹「重做完成」(ok)—— 任务失败用户也只看到成功提示。按终态区分。
-    const st = String((finalJob && finalJob.status) || '').trim();
-    if (st === 'failed') {
-      window.__apiToast?.(t('modules.toast.rebuild_failed', { defaultValue: '重做失败' }), { kind: 'danger', duration: 4000 });
-      return;
-    }
-    if (st === 'cancelled') {
-      window.__apiToast?.(t('modules.toast.rebuild_cancelled', { defaultValue: '重做已取消' }), { kind: 'info', duration: 2800 });
-      return;
-    }
-    if (st === 'done_with_errors') {
-      window.__apiToast?.(t('modules.toast.rebuild_partial', { defaultValue: '重做完成,但部分内容可能不完整' }), { kind: 'warn', duration: 4000 });
-      return;
-    }
-    window.__apiToast?.(t('modules.toast.rebuild_done', { defaultValue: '重做完成' }), { kind: 'ok', duration: 2800 });
-  }, [reload, t]);
-
   const cardProps = React.useCallback((module) => {
     const m = (statusPayload && statusPayload.modules && statusPayload.modules[module]) || {};
     return {
@@ -257,12 +284,6 @@ export function useScriptRebuild(scriptId) {
     };
   }, [statusPayload, scriptId, activeJob, openEstimate]);
 
-  const bannerProps = {
-    scriptId,
-    activeJob,
-    onChange: (j) => setActiveJob(j),
-    onDone: onBannerDone,
-  };
   const matrixProps = {
     scriptId,
     status: statusPayload,
@@ -289,20 +310,20 @@ export function useScriptRebuild(scriptId) {
     reload,
     openEstimate,
     cardProps,
-    bannerProps,
     matrixProps,
     modalProps,
   };
 }
 
-/* ModuleRebuildPanel — 「知识库中心」tab 用,把 matrix + banner + modal 合成一个 view.
-   ScriptDetailPanel 在 "modules"(知识库中心)tab 直接 <ModuleRebuildPanel scriptId={s.id} /> */
+/* ModuleRebuildPanel — 「知识库中心」tab 用,把 matrix + modal 合成一个 view.
+   ScriptDetailPanel 在 "modules"(知识库中心)tab 直接 <ModuleRebuildPanel scriptId={s.id} />
+   进度横条已按需求全面移除(顶部 tab 上方 + 本 tab):任务进度由 hook 无头 SSE 订阅驱动
+   模块卡「运行中」态,终态弹 toast,5s 轮询兜底断流。 */
 export function ModuleRebuildPanel({ scriptId }) {
   const { t } = useTranslation();
   const rb = useScriptRebuild(scriptId);
   return (
     <CSSpaceBetween size="l">
-      <RebuildJobBanner {...rb.bannerProps} />
       <ModuleMatrixOverview {...rb.matrixProps} />
       {/* 收敛处置④:三张新模块卡——与既有 7 模块走同一套 rb.cardProps/openEstimate 机制,
           端点 POST /api/scripts/{id}/rebuild/{module}[/estimate] 自动成立(后端并行注册)。 */}

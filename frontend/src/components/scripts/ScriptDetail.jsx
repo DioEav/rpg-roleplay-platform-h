@@ -16,7 +16,6 @@ import AvatarImg from '../AvatarImg.jsx';
 import MediaStudio from '../MediaStudio.jsx';
 import { ModuleStatusCard } from '../ModuleStatusCard.jsx';
 import { ModuleMatrixOverview } from '../ModuleMatrixOverview.jsx';
-import { RebuildJobBanner } from '../RebuildJobBanner.jsx';
 import { RebuildEstimateModal } from '../RebuildEstimateModal.jsx';
 import { scriptPlayBlockReason } from './shared.js';
 import { VersionHistoryDrawer } from './VersionHistoryDrawer.jsx';
@@ -402,8 +401,10 @@ function ScriptDetailPanel({ script: s, savesCount, scriptSaves = [], embedStatu
         {isOwner && (
           <SharingModeSelector script={s} currentUserId={currentUserId} onChanged={onReload} />
         )} */}
-      {/* phase_rebuild_panel: 活跃重做任务通知条,所有 tab 共享 */}
-      <RebuildJobBanner {...rb.bannerProps} />
+      {/* phase_rebuild_panel: 活跃重做任务进度条不再渲染在 tab 栏上方(概览等所有 tab
+          顶部都不显示,群反馈)。进度/取消保留在「知识库中心」tab 内部的
+          ModuleRebuildPanel 里(点重做的地方,上下文相关);完成/失败 toast 由
+          useScriptRebuild 的 5s 轮询 + 模块卡状态刷新兜底。 */}
       {playBlock && (
         <CSAlert type="warning" header={t('scripts.my.play_block_title')}>
           {playBlock}
