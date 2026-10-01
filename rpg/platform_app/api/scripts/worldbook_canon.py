@@ -33,9 +33,15 @@ _CANON_LIST_COLS = (
 
 @router.get("/api/scripts/{script_id}/canon-entities")
 async def api_script_canon_entities(
-    script_id: int, limit: int | None = None, cursor: str | None = None, user=Depends(require_user)
+    script_id: int, limit: int | None = None, cursor: str | None = None,
+    type: str | None = None, user=Depends(require_user)
 ):
-    """列出 canon 实体全字段(分页),供 MD 编辑器按实体类型拉取。owner 或 subscriber 可读。"""
+    """列出 canon 实体全字段(分页),供 MD 编辑器按实体类型拉取。owner 或 subscriber 可读。
+
+    type: 可选类型过滤(character/faction/location/item/concept)。编辑器的类型筛选按钮
+    一直传这个参数,但端点此前没接 —— 参数被静默忽略,选「物品」也返回全量实体
+    (按 importance 排序前排全是人物),标题计数恒等于总数。
+    """
     from ...db import cursor_id, limit_value, page_payload
     page_limit = limit_value(limit)
     before_id = cursor_id(cursor)
@@ -53,11 +59,13 @@ async def api_script_canon_entities(
         rows = db.execute(
             f"""
             select {_CANON_LIST_COLS} from kb_canon_entities
-            where script_id = %s and (%s::bigint is null or id < %s)
+            where script_id = %s
+              and (%s::text is null or type = %s)
+              and (%s::bigint is null or id < %s)
             order by importance desc, id desc
             limit %s
             """,
-            (script_id, before_id, before_id, page_limit + 1),
+            (script_id, type, type, before_id, before_id, page_limit + 1),
         ).fetchall()
     return json_response({"ok": True, **page_payload([dict(r) for r in rows], page_limit)})
 

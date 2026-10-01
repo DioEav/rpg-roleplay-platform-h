@@ -608,7 +608,8 @@ export function CanonEntityEditorView({ scriptId, ownerId, currentUserId }) {
           }
           description={t('scripts.edit.canon.description')}
         >
-          {t('scripts.edit.canon.title')}
+          {/* 类型筛选生效时标题带上类型名(如「知识库人物 · 物品」),计数即该类型条数 */}
+          {t('scripts.edit.canon.title')}{typeFilter !== 'all' ? ` · ${t(`scripts.edit.canon.type_${typeFilter}`)}` : ''}
         </CSHeader>
       }
       filter={
