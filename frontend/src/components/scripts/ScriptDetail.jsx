@@ -500,7 +500,10 @@ function ScriptDetailPanel({ script: s, savesCount, scriptSaves = [], embedStatu
             </div>
           </div>
         ) },
-        { id: 'params', label: t('scripts.editor.tab_params'), content: (
+        /* 「参数」tab(script_overrides 覆盖设定)按需求隐藏(不删代码,恢复=取消注释)。
+           功能本身仍在:JSON 编辑入口 OverridesModal、getOverrides/saveOverrides API、
+           下方 effect 的 params 数据加载分支全部保留。 */
+        /* { id: 'params', label: t('scripts.editor.tab_params'), content: (
           <CSSpaceBetween size="s">
             <CSBox color="text-body-secondary" fontSize="body-s">{t('scripts.editor.overrides_desc')}</CSBox>
             <pre style={{ margin: 0, padding: '10px 12px', background: 'var(--bg-deep)', border: '1px solid var(--line-soft)', borderRadius: 8, fontSize: 12.5, lineHeight: 1.55, maxHeight: 280, overflow: 'auto', whiteSpace: 'pre-wrap' }}>
@@ -508,7 +511,7 @@ function ScriptDetailPanel({ script: s, savesCount, scriptSaves = [], embedStatu
             </pre>
             <CSButton iconName="edit" onClick={() => onEditOverrides(s)}>{t('scripts.editor.edit_overrides')}</CSButton>
           </CSSpaceBetween>
-        ) },
+        ) }, */
         { id: 'world', label: t('scripts.editor.tab_world'), content: (
           /* 收敛处置⑤:重做卡从内容 tab 删除——本 tab 只留编辑器本体,
              重建/富化操作统一去「知识库中心」。 */
