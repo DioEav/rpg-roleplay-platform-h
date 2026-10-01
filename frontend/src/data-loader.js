@@ -317,6 +317,9 @@ function normalizeScript(s) {
     // owner 判定字段必须透传(原来只在 _raw 里 → ScriptDetailPanel 的 s.owner_id===currentUserId
     // 恒 undefined===id → isOwner 恒 false,作者改不了自己剧本的叙事风格/分享模式)。
     owner_id: s.owner_id,
+    // 封面必须透传:白名单漏了它 → 刷新后 s.cover_image_url=undefined,概览封面消失
+    // (写库是好的,image_jobs attach 写回与 /cover-url 都落 scripts.cover_image_url,纯显示断链)。
+    cover_image_url: s.cover_image_url || null,
     is_subscribed: !!s.is_subscribed,
     _raw: s,
   };
