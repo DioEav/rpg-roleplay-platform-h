@@ -320,6 +320,9 @@ function normalizeScript(s) {
     // 封面必须透传:白名单漏了它 → 刷新后 s.cover_image_url=undefined,概览封面消失
     // (写库是好的,image_jobs attach 写回与 /cover-url 都落 scripts.cover_image_url,纯显示断链)。
     cover_image_url: s.cover_image_url || null,
+    // 游戏就绪度必须透传:列表"状态"列的数据源 —— 漏了它状态列恒显示"—"
+    // (结构:{ok, missing[], items:[{key, ok, count, total}]},5 维:chunks/embeddings/canon/worldbook/anchors)
+    readiness: s.readiness || null,
     is_subscribed: !!s.is_subscribed,
     _raw: s,
   };

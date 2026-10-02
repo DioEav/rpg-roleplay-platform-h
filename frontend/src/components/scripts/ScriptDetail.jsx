@@ -458,7 +458,8 @@ function ScriptDetailPanel({ script: s, savesCount, scriptSaves = [], embedStatu
                 </CSSpaceBetween>
               ) },
               { label: t('scripts.my.share'), value: s.is_public ? <CSStatusIndicator type="success">{t('scripts.my.is_public')}</CSStatusIndicator> : <CSStatusIndicator type="stopped">{t('scripts.editor.not_public')}</CSStatusIndicator> },
-              { label: t('scripts.editor.script_id'), value: <span className="mono">{s.uid}</span> },
+              /* 剧本 ID 行按需求隐藏(不删:i18n 键 scripts.editor.script_id 保留,恢复=取消注释) */
+              /* { label: t('scripts.editor.script_id'), value: <span className="mono">{s.uid}</span> }, */
             ]} />
             {/* phase_rebuild_panel: 7 模块状态矩阵 — 取代旧 embed 单卡 */}
             <ModuleMatrixOverview {...rb.matrixProps} />

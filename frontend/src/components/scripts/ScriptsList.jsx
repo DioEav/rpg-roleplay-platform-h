@@ -347,7 +347,7 @@ function ScriptsListView() {
                 <CSBox fontWeight="bold" color="text-status-inactive">{s.title}</CSBox>
                 <CSBadge color="grey">{t('scripts.page.placeholder_coming_soon')}</CSBadge>
               </div>
-              <CSBox fontSize="body-s" color="text-status-inactive">{s.uid} · {t('scripts.page.placeholder_unavailable')}</CSBox>
+              <CSBox fontSize="body-s" color="text-status-inactive">{t('scripts.page.placeholder_unavailable')}</CSBox>
             </div>
           ) : (
             <div>
@@ -358,7 +358,8 @@ function ScriptsListView() {
                 {s.sharing_mode === 'public' && <CSBadge color="green">{t('scripts.share.badge_public')}</CSBadge>}
                 {s.forked_from_script_id && <CSBadge color="severity-neutral">fork</CSBadge>}
               </div>
-              <CSBox fontSize="body-s" color="text-body-secondary">{s.uid} · {t('scripts.my.updated')} {s.updated_at}</CSBox>
+              {/* 剧本 ID(uid)按需求隐藏,不删:搜索框仍可用 uid 匹配定位 */}
+              <CSBox fontSize="body-s" color="text-body-secondary">{t('scripts.my.updated')} {s.updated_at}</CSBox>
             </div>
           )
         ) },
