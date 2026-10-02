@@ -7645,6 +7645,7 @@
     "unit_anchors": "anchors",
     "unit_canon": "entities",
     "unit_cards": "cards",
+    "unit_chapters": "chapters",
     "unit_chunks": "chunks",
     "unit_embeddings": "vectors",
     "unit_facts": "entries",

@@ -59,6 +59,10 @@ async def api_script_modules_status(script_id: int, user=Depends(require_user)):
 
         chunks_done = _scalar("select count(*) as c from document_chunks where script_id = %s")
         facts_done = _scalar("select count(*) as c from chapter_facts where script_id = %s")
+        # 阶段划分(第 4 张额外卡):done = 已有阶段标签的章数,total = 总章数
+        story_phase_done = _scalar(
+            "select count(*) as c from chapter_facts where script_id = %s and coalesce(story_phase,'') <> ''"
+        )
         canon_done = _scalar("select count(*) as c from kb_canon_entities where script_id = %s")
         cards_done = _scalar("select count(*) as c from character_cards where script_id = %s and card_type='npc'")
         wb_done = _scalar("select count(*) as c from worldbook_entries where script_id = %s")
@@ -147,6 +151,7 @@ async def api_script_modules_status(script_id: int, user=Depends(require_user)):
         "modules": [
             _build("chunks", chunks_done, max(chapter_count, 1)),
             _build("chapter-facts", facts_done, max(chapter_count, 1)),
+            _build("story_phase", story_phase_done, max(chapter_count, 1)),
             _build("canon", canon_done, 0),
             _build("cards", cards_done, 0),
             _build("worldbook", wb_done, 0),

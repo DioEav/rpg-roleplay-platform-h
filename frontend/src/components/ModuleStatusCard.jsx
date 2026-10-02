@@ -38,7 +38,7 @@ const MODULE_UNITS = {
   worldbook:     { unitKey: 'module_status.unit_worldbook' },
   anchors:       { unitKey: 'module_status.unit_anchors' },
   embeddings:    { unitKey: 'module_status.unit_embeddings' },
-  story_phase:   { unitKey: 'module_status.unit_facts' },
+  story_phase:   { unitKey: 'module_status.unit_chapters' },
 };
 
 /* ── Status badge helpers ── */

@@ -91,7 +91,7 @@ def _stage_story_phase_llm(ctl: JobController, user_id: int, script_id: int) -> 
         step = max(1, total // 30)
         sample = rows[::step][:30]
     lines = "\n".join(
-        f"第{r['chapter']}章《{r['title']}》: {(r['summary'] or '')[:120]}"
+        f"第{r['chapter']}章《{r['title']}》: {(r['summary'] or '')[:1000]}"
         for r in sample
     )
     prompt = (
