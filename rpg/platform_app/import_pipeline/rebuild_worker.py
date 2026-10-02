@@ -17,7 +17,7 @@ from .rebuild_modules import (
 )
 from .rebuild_registry import REBUILD_MODULES
 from .runner import _finalize_cancelled, finalize_job_if_unterminated
-from .stages_llm import _resolve_extractor_llm, _stage_worldbook
+from .stages_llm import _resolve_extractor_llm, _stage_story_phase_llm, _stage_worldbook
 
 
 def _run_module_rebuild(
@@ -60,6 +60,8 @@ def _run_module_rebuild(
             result = _rebuild_worldbook_enrich(ctl, user_id, script_id, body)
         elif module == "world_key":
             result = _rebuild_world_key(ctl, user_id, script_id, body)
+        elif module == "story_phase":
+            result = _rebuild_story_phase(ctl, user_id, script_id, body)
         else:
             result = {"ok": False, "error": f"unhandled module: {module}"}
         # ③ 收尾前先看取消:模块自己在检查点退出后会带 cancelled=True 回来;没带的模块
@@ -286,6 +288,79 @@ def _rebuild_anchors(ctl, user_id, script_id, body) -> dict:
             "partial_failures": [],
             "error": r.get("error") if not r.get("ok") else "",
         }
+    return result
+
+
+def _rebuild_story_phase(ctl, user_id, script_id, body) -> dict:
+    """阶段划分重做:LLM 把章节分到 开端/发展前期/中期/后期/结局 五阶段 →
+    聚合 phase_digests → 把锚点的 story_phase 按章节重叠回填(多数阶段)。
+
+    锚点**只更新 story_phase 字段**,不整表重建 —— 时间线锚点可能被用户手编过
+    (keywords/story_time_label),rebuild_timeline_from_db 全量重算会冲掉这些编辑。
+    前置:chapter_facts 非空(阶段划分以章节事实的摘要为输入)。
+    """
+    from .stages_core import _stage_phase_digests
+    with connect() as _dbc:
+        facts_n = _count(_dbc, "chapter_facts", script_id)
+    if facts_n == 0:
+        return {
+            "ok": False, "source": "story_phase",
+            "error": "chapter_facts 为空,请先重做「章节事实」再划分阶段",
+            "partial_failures": [],
+        }
+
+    # 1) LLM 阶段划分。重做语义 = 重新划分:先清空旧阶段(_stage_story_phase_llm 只补
+    #    story_phase 为空的行,不清空的话第二次重做会静默 no-op);LLM 失败/解析失败时
+    #    该函数内建 5 段均分兜底,不会把 chapter_facts 留空。单次调用,无取消检查点需求。
+    with connect() as db:
+        db.execute("update chapter_facts set story_phase = '' where script_id = %s", (script_id,))
+    _stage_story_phase_llm(ctl, user_id, script_id)
+
+    # 2) phase_digests 聚合(供 worldbook_agent.consult 按阶段取锚)
+    n_phases = _stage_phase_digests(script_id)
+
+    # 3) 锚点 story_phase 回填:每锚取其章节范围内 chapter_facts 的多数阶段
+    with connect() as db:
+        before = int(db.execute(
+            "select count(*) as c from script_timeline_anchors "
+            "where script_id = %s and coalesce(story_phase,'') <> ''",
+            (script_id,),
+        ).fetchone()["c"])
+        cur = db.execute(
+            """
+            update script_timeline_anchors a
+               set story_phase = m.phase, updated_at = now()
+              from (
+                select a2.id as anchor_id,
+                       (select cf.story_phase
+                          from chapter_facts cf
+                         where cf.script_id = a2.script_id
+                           and cf.chapter between a2.chapter_min and a2.chapter_max
+                           and coalesce(cf.story_phase,'') <> ''
+                         group by cf.story_phase
+                         order by count(*) desc
+                         limit 1) as phase
+                from script_timeline_anchors a2
+                where a2.script_id = %(sid)s
+              ) m
+             where a.id = m.anchor_id and coalesce(m.phase,'') <> ''
+            """,
+            {"sid": script_id},
+        )
+        after = int(db.execute(
+            "select count(*) as c from script_timeline_anchors "
+            "where script_id = %s and coalesce(story_phase,'') <> ''",
+            (script_id,),
+        ).fetchone()["c"])
+
+    result = {
+        "ok": True,
+        "source": "story_phase_llm",
+        "before_count": before,
+        "after_count": after,
+        "partial_failures": [],
+        "extra": {"phases": n_phases, "facts": facts_n, "anchors_phased": after - before},
+    }
     return result
 
 

@@ -54,6 +54,13 @@ const EXTRA_MODULE_CARDS = [
     descKey: 'modules.world_key.desc',
     descDefault: '多世界书(无限流/穿越)按世界切段,LLM 确认边界',
   },
+  {
+    id: 'story_phase',
+    titleKey: 'modules.story_phase.title',
+    titleDefault: '阶段划分',
+    descKey: 'modules.story_phase.desc',
+    descDefault: 'LLM 把章节划分到 开端/发展/结局 五阶段,重算阶段摘要与锚点归属',
+  },
 ];
 
 export function useScriptRebuild(scriptId) {

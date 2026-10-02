@@ -34,6 +34,11 @@ REBUILD_MODULES = {
     #   仅 options.use_llm=True 时追加 LLM 窄确认 —— 与 worldbook/cards 同款「按 body 覆盖
     #   needs_llm」范式,故此处基线登记为 False,下方 estimate/schedule 按 use_llm 校正。
     "world_key":     ("rebuild_world_key",    "世界线回填",   False),
+    # · story_phase: LLM 把章节划分到 开端/发展前期/中期/后期/结局 五阶段,再聚合
+    #   phase_digests + 回填锚点归属。导入 full_pipeline 里的 _stage_story_phase_llm
+    #   只在导入时跑一次 —— 导入管线失败/老剧本永远没有阶段数据(时间线全挤在
+    #   「未分阶段」桶,出生点分组退化为机械均分),这里给独立的补跑口子。
+    "story_phase":   ("rebuild_story_phase",  "阶段划分",   True),
 }
 
 

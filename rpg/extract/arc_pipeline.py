@@ -86,7 +86,7 @@ def pick_representative_chapters(arc: list[dict], k: int = 3) -> list[dict]:
 def extract_arc(llm: ExtractLLM, arc: list[dict], *, era: str,
                 power_system: list[str] | None = None,
                 known_entities: list[str] | None = None,
-                k_picks: int = 3, per_chapter_chars: int = 2500,
+                k_picks: int = 3, per_chapter_chars: int = 6000,
                 max_tokens: int = 10000) -> Any:
     """LLM 抽一个弧。复用 per_chapter.extract_chapter 的 schema(章 → 弧的语义升维)。
 
@@ -94,6 +94,10 @@ def extract_arc(llm: ExtractLLM, arc: list[dict], *, era: str,
     (弧含 3 代表章 + 弧角色全集,密度高于单章),提到 5500。
     生产实测(吞噬星空 ch150 战斗密集段)5500 仍被 max_tokens 截断 → 半份 JSON
     被解析器整份丢弃 → 弧空壳。提到 10000,配合 parse_json 的截断打捞双保险。
+
+    2026-10: per_chapter_chars 2500 → 6000 —— 标准网文章节 2500-6000 字,2500 帽
+    会截掉 99% 代表章的后 23-60%;6000 后 99.9% 代表章全章覆盖(成本:单弧输入
+    ~8k → ~10.3k tok)。估算侧 budget._ARC_CHARS_PER_PICK 已同步。
 
     返回 ChapterExtract,其中:
       chapter = 弧首章 chapter_index(用作 first_revealed_chapter)

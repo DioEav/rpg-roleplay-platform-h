@@ -27,6 +27,7 @@ _TASK_IMPORT_KIND_LABELS = {
     "rebuild_anchors": "时间线重建",
     "rebuild_embeddings": "向量重嵌入",
     "cards_audit": "AI 复核角色卡",
+    "rebuild_story_phase": "阶段划分",
 }
 _TASK_IMAGE_KIND_LABELS = {
     "chat": "聊天生图", "cover": "封面生图", "avatar": "头像生图",

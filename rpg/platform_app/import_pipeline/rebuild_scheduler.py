@@ -122,6 +122,7 @@ def estimate_module_rebuild(
             "facts_refine": ["chapter_facts"],
             "worldbook_enrich": ["worldbook_entries"],
             "world_key": ["chapter_facts", "script_timeline_anchors"],
+            "story_phase": ["chapter_facts", "phase_digests", "script_timeline_anchors"],
         }.get(module, [kind])
         if module in {"chapter-facts", "anchors"} and chunks_total == 0:
             prereqs.append({
@@ -144,6 +145,19 @@ def estimate_module_rebuild(
                 "hint": "当前没有规范实体(知识库人物为空),请先重做「知识库人物」,"
                         "或将世界书来源改为 LLM 生成。",
             })
+        # story_phase 以章节事实的摘要为输入,facts 为空则无从划分
+        if module == "story_phase":
+            with connect() as db:
+                facts_total = _scalar(db, "select count(*) as c from chapter_facts where script_id = %s")
+            if facts_total == 0:
+                prereqs.append({
+                    "key": "chapter_facts",
+                    "label": "章节事实",
+                    "ok": False,
+                    "hint": "当前剧本还没有章节事实,请先重做「章节事实」。",
+                    "count": 0,
+                    "total": max(chapter_count, 1),
+                })
         # facts_refine 精炼的是已有 chapter_facts 行(UPDATE,不新增),facts 为空则无可精炼。
         if module == "facts_refine":
             with connect() as db:
@@ -196,6 +210,8 @@ def estimate_module_rebuild(
                 est_in, est_out = _estimate_tokens_worldbook_enrich(script_id, body)
             elif module == "world_key":              # 必是 use_llm=True(否则 needs_llm=False)
                 est_in, est_out = _estimate_tokens_world_key(script_id)
+            elif module == "story_phase":
+                est_in, est_out = _estimate_tokens_story_phase()
             if est_in or est_out:
                 tokens_est = est_in + est_out
                 try:
@@ -462,3 +478,10 @@ def _estimate_tokens_world_key(script_id) -> tuple[int, int]:
     est_in = _n_segments * 1000
     est_out = _n_segments * 150
     return est_in, est_out
+
+
+def _estimate_tokens_story_phase() -> tuple[int, int]:
+    # 阶段划分 = **一次** LLM 调用(_stage_story_phase_llm):≤30 章采样摘要
+    # (每行 章号+标题+120 字摘要 ≈ 150 字) → 输出 5 段 JSON 数组(~200 tok)。
+    # 输入按采样上限计(章节更多也不会超过 30 行);输出固定极小。
+    return 6000, 400

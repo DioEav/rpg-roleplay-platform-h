@@ -86,6 +86,7 @@ async def api_script_modules_status(script_id: int, user=Depends(require_user)):
             "rebuild_facts_refine": "facts_refine",
             "rebuild_worldbook_enrich": "worldbook_enrich",
             "rebuild_world_key": "world_key",
+            "rebuild_story_phase": "story_phase",
         }
         job_rows = db.execute(
             "select kind, job_id, status, finished_at, created_at "

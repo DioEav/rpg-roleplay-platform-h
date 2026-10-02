@@ -155,10 +155,12 @@ def build_user(chapter_text: str, *, known_entities: list[str] | None = None,
         parts.append("【上一章梗概(仅供时序连续,勿照抄)】" + prev_summary[:200])
     if title_descriptor:
         parts.append("【本章内容提示】" + title_descriptor)
-    # 控制长度(便宜模型上下文 + 成本):截到 ~6000 字
+    # 控制长度(便宜模型上下文 + 成本):截到 ~10000 字。
+    # 2026-10: 6000 → 10000 —— 帽子只对超长章生效(≤6000 字的章零成本变化),
+    # 覆盖超长章后半段的首发实体/事件;估算侧 budget._PER_CH_CHARS 同步。
     body = chapter_text.strip()
-    if len(body) > 6000:
-        body = body[:6000] + "…(后略)"
+    if len(body) > 10000:
+        body = body[:10000] + "…(后略)"
     parts.append("【本章正文】\n" + body)
     return "\n\n".join(parts)
 

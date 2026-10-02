@@ -78,14 +78,27 @@ class _Row(dict):
 
 
 def test_input_scales_with_chapter_length():
-    """短章书:弧输入 = 3×章长+词表;长章书:被执行侧 2500 截断帽封顶。"""
+    """短章书:弧输入 = 3×章长+词表;长章书:被执行侧 6000 截断帽封顶(2026-10 2500→6000)。"""
     short = estimate(_FakeDB2(866, avg_chars=1000), 1, model="gemini-3.5-flash", algorithm="arc")
     assert short["arc_input_per_call"] == 3 * 1000 + 500  # 3500,不再用静态 8000 高估
     long_b = estimate(_FakeDB2(866, avg_chars=6000), 1, model="gemini-3.5-flash", algorithm="arc")
-    assert long_b["arc_input_per_call"] == 3 * 2500 + 500  # 8000,截断帽封顶
+    assert long_b["arc_input_per_call"] == 3 * 6000 + 500  # 18500,截断帽 6000 封顶
     assert short["est_input_tokens"] < long_b["est_input_tokens"]
     # 种子输入同步动态:短章书 min(1000,4000)=1000+300
     assert short["est_input_tokens"] == short["arcs"] * 3500 + 12 * 1300
+
+
+def test_per_chapter_input_dynamic():
+    """逐章输入动态化:min(平均章长, 10000)+700;avg=2500 时与旧静态 3200 精确连续。"""
+    e = estimate(_FakeDB2(866, avg_chars=3266), 1, model="gemini-3.5-flash")  # 默认 per_chapter
+    assert e["est_input_tokens"] == 866 * (3266 + 700) + 12 * (3266 + 300)
+    # 连续性:avg 2500(旧静态常数的校准点)= 2500+700 = 3200 = 旧 _PER_CH_INPUT
+    # 种子 min(2500,4000)+300 = 2800 = 旧 _SEED_PER_CALL_INPUT,同样精确连续
+    e2500 = estimate(_FakeDB2(866, avg_chars=2500), 1, model="gemini-3.5-flash")
+    assert e2500["est_input_tokens"] == 866 * 3200 + 12 * 2800
+    # 长章书:正文被执行侧 10000 帽封顶;种子被执行侧 4000 帽封顶
+    e_long = estimate(_FakeDB2(866, avg_chars=20000), 1, model="gemini-3.5-flash")
+    assert e_long["est_input_tokens"] == 866 * (10000 + 700) + 12 * (4000 + 300)
 
 
 def test_output_calibration_uses_measured_history():

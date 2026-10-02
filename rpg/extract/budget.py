@@ -21,7 +21,8 @@ MODEL_PRICING: dict[str, dict] = {
 #   实测 输入均值 2930/章(正文截6000字符≈2900 + 词表/摘要)、输出均值 2069/章
 #   (固定schema三元组JSON比预想大得多)。取实测 + 小头寸,宁可略高不低估(BYOK 用户付费,
 #   报价宁高勿低,避免超账单)。全书重算 ≈ $1.0,贴实测 $0.98。
-_PER_CH_INPUT = 3200    # 实测 2930 + 词表随书增长头寸
+_PER_CH_CHARS = 10000   # = per_chapter.build_user 截断帽(改执行要同步;2026-10 6000→10000)
+_PER_CH_OVERHEAD = 700  # 词表(80 实体名)+ 字段说明骨架
 _PER_CH_OUTPUT = 2200   # 实测 2069 + 头寸(原 800 严重低估)
 # Pass0 自举:采样 ~min(12, chapters) 章 NER
 _SEED_SAMPLE = 12
@@ -36,7 +37,7 @@ _SEED_PER_CALL_OUTPUT = 1200
 #   种子采样(extract.seed.bootstrap_vocab):每章截 4000 字 + prompt 骨架。
 # 中文 ~1 字 ≈ 1 token,按字符数直接计。
 _ARC_PICKS = 3
-_ARC_CHARS_PER_PICK = 2500   # = extract_arc.per_chapter_chars(执行侧截断帽,改执行要同步)
+_ARC_CHARS_PER_PICK = 6000   # = extract_arc.per_chapter_chars(执行侧截断帽,改执行要同步;2026-10 2500→6000)
 _ARC_VOCAB_TOKENS = 500      # 已知实体词表的 prompt 预算(entity_vocab 上限 120 名)
 _SEED_CHARS = 4000           # = bootstrap_vocab 的 [:4000](改执行要同步)
 _SEED_OVERHEAD = 300         # 种子 prompt 骨架(NER 指令/字段说明)
@@ -51,6 +52,13 @@ _PER_ARC_OUTPUT = 9000
 _ARC_OUTPUT_MIN_SAMPLES = 20
 _ARC_OUTPUT_SAMPLE = 60
 # 种子输出:NER 词表 JSON,实测均值 ~540(先验 1200 保守,量小不影响大局,保留)
+
+
+def _per_ch_input_per_call(avg_chapter_chars: float) -> int:
+    """逐章单次输入 = min(章长, 10000) + 词表/骨架(对齐 per_chapter.build_user)。
+    avg 回退 2500 时 = 3200,与旧静态常数精确连续。"""
+    avg = max(0.0, float(avg_chapter_chars or 0))
+    return int(min(avg, _PER_CH_CHARS) + _PER_CH_OVERHEAD)
 
 
 def _arc_input_per_call(avg_chapter_chars: float) -> int:
@@ -184,7 +192,7 @@ def estimate(db, script_id: int, *, model: str = "gemini-3.5-flash",
     else:
         chapters = min(total, sample_chapters) if sample_chapters else total
         seed_calls = min(_SEED_SAMPLE, chapters)
-        in_tok = int(chapters * _PER_CH_INPUT + seed_calls * _seed_input_per_call(avg_chapter_chars))
+        in_tok = int(chapters * _per_ch_input_per_call(avg_chapter_chars) + seed_calls * _seed_input_per_call(avg_chapter_chars))
         out_tok = chapters * _PER_CH_OUTPUT + seed_calls * _SEED_PER_CALL_OUTPUT
         unit_label = f"{chapters} 章"
         n_arcs = 0

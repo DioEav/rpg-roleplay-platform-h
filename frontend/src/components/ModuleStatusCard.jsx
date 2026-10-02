@@ -23,6 +23,7 @@ const MODULE_META = {
   worldbook:     { source: 'mixed' },
   anchors:       { source: 'zero_llm' },
   embeddings:    { source: 'zero_llm' },
+  story_phase:   { source: 'llm' },
 };
 
 /* 每模块的计数单位(替代通用「条」)。
@@ -37,6 +38,7 @@ const MODULE_UNITS = {
   worldbook:     { unitKey: 'module_status.unit_worldbook' },
   anchors:       { unitKey: 'module_status.unit_anchors' },
   embeddings:    { unitKey: 'module_status.unit_embeddings' },
+  story_phase:   { unitKey: 'module_status.unit_facts' },
 };
 
 /* ── Status badge helpers ── */
