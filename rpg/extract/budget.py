@@ -25,40 +25,117 @@ _PER_CH_INPUT = 3200    # 实测 2930 + 词表随书增长头寸
 _PER_CH_OUTPUT = 2200   # 实测 2069 + 头寸(原 800 严重低估)
 # Pass0 自举:采样 ~min(12, chapters) 章 NER
 _SEED_SAMPLE = 12
-_SEED_PER_CALL_INPUT = 2800
 _SEED_PER_CALL_OUTPUT = 1200
 # 嵌入(Vertex text-embedding-004)≈ 平台承担/极廉,不计入 BYOK 报价
 
-# 弧段算法每弧估算(实测 deepseek-v4-flash 二战书 40 弧):
-#   输入 ≈ 3 章正文(各 2500 字)+ 词表 ~2400 字 ≈ ~7000-8000 tok
-#   输出 ≈ 弧级 ChapterExtract schema ~3000 tok(弧主线 + 全实体 + events + concepts)
-# 实测校准(吞噬星空 1487 章 × mimo-v2.6-flash,4 次完整重抽,token_usage 记账):
-#   输入均值 ≈ 7.3k tok/弧(与 8000 假设吻合,保留);
-#   输出均值 ≈ 8.7k tok/弧 —— v28 schema(identity/background/aliases)+ 弧级实体全集,
-#   3000 假设低估 ~2.9 倍 → 9000(宁可略高不低估,BYOK 报价宁高勿低)。
-_PER_ARC_INPUT = 8000
+# ── 弧段算法:输入侧动态化(2026-10)─────────────────────────────────────────
+# 单次调用的输入由**执行侧参数**决定,不再是静态常数:
+#   弧提取(extract_arc):3 个代表章(首/中/末) × min(章长, 2500) + 实体词表。
+#     per_chapter_chars=2500 是执行侧截断帽 → 章再长单次输入也不涨(上限口径);
+#     章短于 2500 时按实际章长计(旧静态 8000 会高估短章书 ~2x)。
+#   种子采样(extract.seed.bootstrap_vocab):每章截 4000 字 + prompt 骨架。
+# 中文 ~1 字 ≈ 1 token,按字符数直接计。
+_ARC_PICKS = 3
+_ARC_CHARS_PER_PICK = 2500   # = extract_arc.per_chapter_chars(执行侧截断帽,改执行要同步)
+_ARC_VOCAB_TOKENS = 500      # 已知实体词表的 prompt 预算(entity_vocab 上限 120 名)
+_SEED_CHARS = 4000           # = bootstrap_vocab 的 [:4000](改执行要同步)
+_SEED_OVERHEAD = 300         # 种子 prompt 骨架(NER 指令/字段说明)
+
+# ── 弧段算法:输出侧先验 + 自校准(2026-10)───────────────────────────────────
+# 弧输出 = 弧级 ChapterExtract JSON(弧摘要 + 全实体含 identity/background/aliases)。
+# 输出规模取决于**实体密度**,无法从章长推出 → 先验常数 + 按本剧本历史记账自校准:
+# 先验 9000 来自吞噬星空 1487 章 × mimo-v2.6-flash 4 次完整重抽实测均值 8.7k
+# (原 3000 低估 ~2.9 倍);同用户同剧本同模型有 ≥20 条 token_usage 记账时,
+# 用最近 60 条的输出均值替代先验 —— 跑过一次的书估算越跑越准。
 _PER_ARC_OUTPUT = 9000
+_ARC_OUTPUT_MIN_SAMPLES = 20
+_ARC_OUTPUT_SAMPLE = 60
+# 种子输出:NER 词表 JSON,实测均值 ~540(先验 1200 保守,量小不影响大局,保留)
+
+
+def _arc_input_per_call(avg_chapter_chars: float) -> int:
+    """单弧输入 tokens = 3 代表章 × min(章长, 2500) + 词表(对齐 extract_arc 执行参数)。"""
+    avg = max(0.0, float(avg_chapter_chars or 0))
+    return int(_ARC_PICKS * min(avg, _ARC_CHARS_PER_PICK) + _ARC_VOCAB_TOKENS)
+
+
+def _seed_input_per_call(avg_chapter_chars: float) -> int:
+    """种子单次输入 = min(章长, 4000) + 骨架(对齐 bootstrap_vocab 截断)。"""
+    avg = max(0.0, float(avg_chapter_chars or 0))
+    return int(min(avg, _SEED_CHARS) + _SEED_OVERHEAD)
+
+
+def _measured_arc_output(db, user_id: int, script_id: int, model: str) -> float | None:
+    """本剧本历史弧提取的输出均值(token_usage 真实记账,同用户+同剧本+同模型)。
+
+    取最近 90 天内 _ARC_OUTPUT_SAMPLE 条的均值(覆盖一次完整重抽,重试尖峰被摊平);
+    样本 < _ARC_OUTPUT_MIN_SAMPLES(没跑过/刚换模型/太久没跑)返回 None → 退回先验。
+    90 天窗口同时是性能护栏:配合 user_id 走 idx_token_usage_user_time 索引范围扫描,
+    避免大表 Seq Scan;过旧的样本本就该过期(书/模型状态可能已变)。
+    查询失败绝不抛 —— 估算器不能因为记账表抖动而 500。
+    """
+    try:
+        row = db.execute(
+            """select avg(output_tokens) as avg_out, count(*) as n from (
+                 select output_tokens from token_usage
+                 where user_id = %s and created_at > now() - interval '90 days'
+                   and metadata->>'script_id' = %s
+                   and metadata->>'source' = 'extract'
+                   and metadata->>'algorithm' = 'arc'
+                   and model_real_name = %s and output_tokens > 0
+                 order by id desc limit %s
+               ) t""",
+            (int(user_id), str(int(script_id)), str(model or ""), _ARC_OUTPUT_SAMPLE),
+        ).fetchone()
+        if not row:
+            return None
+        n = int(row.get("n") or 0)
+        avg_out = row.get("avg_out")
+        if n < _ARC_OUTPUT_MIN_SAMPLES or avg_out is None:
+            return None
+        val = float(avg_out)
+        return val if val > 0 else None
+    except Exception:
+        return None
 
 
 def _model_price(model: str) -> dict:
     return MODEL_PRICING.get(model, MODEL_PRICING["gemini-3.5-flash"])
 
 
+def _default_target_arcs() -> int:
+    """目标弧数单一真源(EXTRACTION_TARGET_ARCS)的惰性解析。
+
+    budget 刻意保持零模块级依赖(被多处懒加载引用),不能顶层 import arc_pipeline
+    (会拉起整条提取依赖链,且与 llm_extract 顶层 import 形成潜在环),故惰性取;
+    取不到(异常/环)退回 100 —— 与常量当前值一致。
+    """
+    try:
+        from extract.arc_pipeline import EXTRACTION_TARGET_ARCS
+        return int(EXTRACTION_TARGET_ARCS)
+    except Exception:
+        return 100
+
+
 def estimate(db, script_id: int, *, model: str = "gemini-3.5-flash",
              sample_chapters: int | None = None, batch_discount: bool = False,
-             algorithm: str = "per_chapter", target_arcs: int = 100,
-             chapter_min: int | None = None, chapter_max: int | None = None) -> dict:
+             algorithm: str = "per_chapter", target_arcs: int | None = None,
+             chapter_min: int | None = None, chapter_max: int | None = None,
+             user_id: int | None = None) -> dict:
     """估算一次提取的成本(确定性,跑前可知)。
 
     algorithm:
       'per_chapter': 每章 1 LLM(老算法,1166 章 ≈ $1.4 / deepseek-v4-flash)。
-      'arc'        : 每弧 1 LLM(新算法,40 弧 ≈ $0.05)。
+      'arc'        : 每弧 1 LLM(新算法,1487 章 ≈ 106 弧)。
     sample_chapters: 只提前 N 章(懒/增量提取场景);None=全可提取章。
                      arc 模式下忽略(弧段算法必须看全书等分)。
-    target_arcs: arc 模式下的目标弧数(默认 40,split_arcs 会按 min/max 钳)。
+    target_arcs: arc 模式下的目标弧数;None(默认)= 解析单一真源
+                 EXTRACTION_TARGET_ARCS,split_arcs 会按 min/max 钳。
     batch_discount: Batch API 五折(若接)。
+    user_id: 提供时(arc 模式)启用输出侧自校准 —— 用该用户在本剧本同模型下的
+             历史记账均值替代先验常数;不提供或样本不足退回先验。
     """
-    sql = ("select count(*) c from script_chapters "
+    sql = ("select count(*) c, coalesce(sum(word_count),0) chars from script_chapters "
            "where script_id=%s and exclude_from_extraction=false")
     args: list = [script_id]
     if chapter_min is not None:
@@ -71,8 +148,17 @@ def estimate(db, script_id: int, *, model: str = "gemini-3.5-flash",
     total = int(row["c"]) if row else 0
     if total <= 0:
         return {"ok": False, "error": "无可提取章节", "chapters": 0}
+    if target_arcs is None:
+        target_arcs = _default_target_arcs()
+    # 平均章长(字)。全 0(异常数据/空壳)→ 退回标准章长假设,防止输入估算塌缩到词表预算
+    total_chars = float(row.get("chars") or 0)
+    avg_chapter_chars = (total_chars / total) if total and total_chars > 0 else 2500.0
 
     price = _model_price(model)
+
+    # 输出侧自校准状态(arc 分支填充;per_chapter 分支保持 None/False)
+    out_per_arc: float | None = None
+    output_calibrated = False
 
     if algorithm == "arc":
         # 弧数公式必须与执行侧 split_arcs 完全一致(同一套 min5/max40 钳制),
@@ -82,14 +168,23 @@ def estimate(db, script_id: int, *, model: str = "gemini-3.5-flash",
         desired = min(desired, max(1, total // 5))
         n_arcs = max(1, desired)
         seed_calls = min(_SEED_SAMPLE, total)
-        in_tok = n_arcs * _PER_ARC_INPUT + seed_calls * _SEED_PER_CALL_INPUT
-        out_tok = n_arcs * _PER_ARC_OUTPUT + seed_calls * _SEED_PER_CALL_OUTPUT
+        # 输入侧动态:3 代表章 × min(平均章长, 2500) + 词表;种子 min(章长, 4000) + 骨架
+        in_per_arc = _arc_input_per_call(avg_chapter_chars)
+        in_tok = n_arcs * in_per_arc + seed_calls * _seed_input_per_call(avg_chapter_chars)
+        # 输出侧自校准:有本剧本同模型历史记账 → 用实测均值;否则先验 9000
+        out_per_arc = float(_PER_ARC_OUTPUT)
+        if user_id:
+            measured = _measured_arc_output(db, user_id, script_id, model)
+            if measured:
+                out_per_arc = measured
+                output_calibrated = True
+        out_tok = int(n_arcs * out_per_arc + seed_calls * _SEED_PER_CALL_OUTPUT)
         unit_label = f"{n_arcs} 弧"
         chapters = total
     else:
         chapters = min(total, sample_chapters) if sample_chapters else total
         seed_calls = min(_SEED_SAMPLE, chapters)
-        in_tok = chapters * _PER_CH_INPUT + seed_calls * _SEED_PER_CALL_INPUT
+        in_tok = int(chapters * _PER_CH_INPUT + seed_calls * _seed_input_per_call(avg_chapter_chars))
         out_tok = chapters * _PER_CH_OUTPUT + seed_calls * _SEED_PER_CALL_OUTPUT
         unit_label = f"{chapters} 章"
         n_arcs = 0
@@ -97,6 +192,18 @@ def estimate(db, script_id: int, *, model: str = "gemini-3.5-flash",
     usd = (in_tok / 1_000_000) * price["in"] + (out_tok / 1_000_000) * price["out"]
     if batch_discount:
         usd *= 0.5
+
+    # 透视字段:仅 arc 分支有值(per_chapter 分支不定义 out_per_arc,置 None 防.NameError)
+    in_per_arc_val = _arc_input_per_call(avg_chapter_chars) if algorithm == "arc" else None
+    out_per_arc_val = int(out_per_arc) if (algorithm == "arc" and out_per_arc is not None) else None
+    calibrated = bool(output_calibrated) if algorithm == "arc" else False
+
+    note = (
+        f"约 ${round(usd, 2)}({unit_label} × {model})。"
+        + ("⚠️ frontier 档,建议换 flash/haiku" if price["tier"] == "frontier" else "")
+    )
+    if algorithm == "arc" and calibrated:
+        note += f" 输出按上次实测 {out_per_arc_val} tok/弧校准。"
 
     return {
         "ok": True,
@@ -111,10 +218,12 @@ def estimate(db, script_id: int, *, model: str = "gemini-3.5-flash",
         "est_output_tokens": out_tok,
         "est_usd": round(usd, 3),
         "batch_discount": batch_discount,
-        "note": (
-            f"约 ${round(usd,2)}({unit_label} × {model})。"
-            + ("⚠️ frontier 档,建议换 flash/haiku" if price["tier"] == "frontier" else "")
-        ),
+        # 输入侧动态化/输出侧自校准的透视字段(前端可不消费,供调试与未来 UI 展示)
+        "avg_chapter_chars": round(avg_chapter_chars, 1),
+        "arc_input_per_call": in_per_arc_val,
+        "arc_output_per_call": out_per_arc_val,
+        "output_calibrated": calibrated,
+        "note": note,
     }
 
 

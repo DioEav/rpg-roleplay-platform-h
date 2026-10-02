@@ -185,9 +185,9 @@ def estimate_module_rebuild(
             #   worldbook-llm = 按 canon 规模的若干次抽取调用。
             est_in = est_out = 0
             if module == "canon":
-                est_in, est_out = _estimate_tokens_canon(script_id, llm_model)
+                est_in, est_out = _estimate_tokens_canon(script_id, llm_model, user_id=user_id)
             elif module == "cards":                 # 必是 source=='llm'(否则 needs_llm=False)
-                est_in, est_out = _estimate_tokens_cards(script_id, llm_model, body, chapter_count)
+                est_in, est_out = _estimate_tokens_cards(script_id, llm_model, body, chapter_count, user_id=user_id)
             elif module == "worldbook":             # 必是 source=='llm'(否则 needs_llm=False)
                 est_in, est_out = _estimate_tokens_worldbook(canon_total)
             elif module == "facts_refine":
@@ -339,7 +339,7 @@ def _gather_module_counts(db, script_id) -> dict:
     }
 
 
-def _estimate_tokens_canon(script_id, llm_model) -> tuple[int, int]:
+def _estimate_tokens_canon(script_id, llm_model, *, user_id: int | None = None) -> tuple[int, int]:
     # canon 全量重抽走 arc 算法。真实用量用 **arc 感知**的 extract.budget.estimate
     # (与 wizard /llm-extract/estimate 同一权威源)。target_arcs 引用单一真源常量:
     # 必须与执行路径(run_llm_extraction / run_arc_extraction)同值,否则估算弧数和
@@ -352,6 +352,7 @@ def _estimate_tokens_canon(script_id, llm_model) -> tuple[int, int]:
                 db, script_id, algorithm="arc",
                 model=(llm_model or "deepseek-v4-flash"),
                 target_arcs=EXTRACTION_TARGET_ARCS,
+                user_id=user_id,
             )
         est_in = int(_b.get("est_input_tokens") or 0)
         est_out = int(_b.get("est_output_tokens") or 0)
@@ -360,7 +361,7 @@ def _estimate_tokens_canon(script_id, llm_model) -> tuple[int, int]:
     return est_in, est_out
 
 
-def _estimate_tokens_cards(script_id, llm_model, body, chapter_count) -> tuple[int, int]:
+def _estimate_tokens_cards(script_id, llm_model, body, chapter_count, *, user_id: int | None = None) -> tuple[int, int]:
     # 丰富重建走 run_llm_extraction(arc),与 canon 同口径估;chapter_max 限区间。
     # target_arcs 引用单一真源常量(见 _estimate_tokens_canon 注释)。
     try:
@@ -376,6 +377,7 @@ def _estimate_tokens_cards(script_id, llm_model, body, chapter_count) -> tuple[i
                 db, script_id, algorithm="arc",
                 model=(llm_model or "deepseek-v4-flash"),
                 target_arcs=EXTRACTION_TARGET_ARCS,
+                user_id=user_id,
             )
         est_in = int(_b.get("est_input_tokens") or 0)
         est_out = int(_b.get("est_output_tokens") or 0)

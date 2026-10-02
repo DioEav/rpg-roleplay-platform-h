@@ -216,6 +216,7 @@ async def api_script_llm_extract_estimate(request: Request, script_id: int, user
             batch_discount=bool(body.get("batch_discount")),
             chapter_min=body.get("chapter_min"),
             chapter_max=body.get("chapter_max"),
+            user_id=user["id"],
         )
     est["scope"] = scope
     return json_response(est, status_code=200 if est.get("ok") else 400)

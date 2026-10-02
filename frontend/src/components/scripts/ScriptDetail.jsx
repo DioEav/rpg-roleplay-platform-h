@@ -544,7 +544,10 @@ function ScriptDetailPanel({ script: s, savesCount, scriptSaves = [], embedStatu
               header: (c) => (
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                    <AvatarImg src={c.avatar_path || null} name={c.name || '?'} size={48} shape="rounded" zoomable />
+                    {/* 只在有图时渲染头像:无图的首字占位(如「娑娑罗普」单独拎一个"娑")按需求去掉 */}
+                    {c.avatar_path && (
+                      <AvatarImg src={c.avatar_path} name={c.name || '?'} size={48} shape="rounded" zoomable />
+                    )}
                     <CSBox variant="h3" padding="n">
                       {c.name || t('scripts.editor.unnamed_npc')}
                       {c.full_name && c.full_name !== c.name && (

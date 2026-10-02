@@ -65,7 +65,8 @@ def run_llm_extraction(
 
         # 跑前预算(算法感知,arc/per_chapter 分开估)
         est = estimate(db, script_id, model=model, algorithm=algorithm,
-                       target_arcs=target_arcs, sample_chapters=sample_chapters)
+                       target_arcs=target_arcs, sample_chapters=sample_chapters,
+                       user_id=user_id)
         if not est.get("ok"):
             return {"ok": False, "error": est.get("error", "无可提取章节")}
 
