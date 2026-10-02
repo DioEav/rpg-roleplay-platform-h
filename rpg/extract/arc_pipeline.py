@@ -31,8 +31,15 @@ from extract.llm import ExtractLLM
 from extract.per_chapter import extract_chapter
 from extract.seed import build_seed
 
+# ── 提取目标弧数的单一真源 ────────────────────────────────────────────────────
+# 导入向导(_stage_canon_extract)与重做路径(run_llm_extraction)必须引用同一个值,
+# 否则同一本书导入和重做后的时间线锚点密度不一致(病灶:run_llm_extraction 曾带旧
+# 默认 40,导入默认 100 → 1487 章书导入 106 弧、重做 40 弧,锚点掉 60%)。
+# 100 = 数据质量 #3 的既有决策(约 12 章/锚);以后改密度只改这一个数字。
+EXTRACTION_TARGET_ARCS = 100
 
-def split_arcs(chapters: list[dict], *, target_arcs: int = 100,
+
+def split_arcs(chapters: list[dict], *, target_arcs: int = EXTRACTION_TARGET_ARCS,
                min_arc_size: int = 5, max_arc_size: int = 40) -> list[list[dict]]:
     """按 chapter_index 等分成 ~target_arcs 段(保持时序,书长自适应)。
 
@@ -122,7 +129,7 @@ def run_arc_extraction(
     author_worldlines: list[dict] | None = None,
     model: str = "deepseek-v4-flash",
     api_id: str = "deepseek",
-    target_arcs: int = 100,
+    target_arcs: int = EXTRACTION_TARGET_ARCS,
     concurrency: int = 10,
     chapter_min: int | None = None,
     chapter_max: int | None = None,

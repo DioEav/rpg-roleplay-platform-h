@@ -92,7 +92,6 @@ export function RebuildEstimateModal({ open, module, scriptId, estimate, loading
   const cost            = estimate?.cost_est ?? estimate?.est_usd;
   const approx          = !!estimate?.approximate;  // LLM 路径=粗略估算,标「≈」避免看着像精确值
   const model           = estimate?.model;
-  const affects         = Array.isArray(estimate?.affects) ? estimate.affects : [];
   const prereqs         = Array.isArray(estimate?.prereqs) ? estimate.prereqs : [];
   const hasBlockingPrereq = prereqs.some(p => p && p.ok === false);
   const noEmbedKind     = isEmbeddings && embedKinds.length === 0;
@@ -234,44 +233,25 @@ export function RebuildEstimateModal({ open, module, scriptId, estimate, loading
         {/* Loaded + ok */}
         {!loading && ok && (
           <>
-            {/* KV grid: tokens / cost / model */}
-            <div className={s.estimateKVRow}>
-              <div className={s.estimateKVItem}>
-                <span className={s.estimateKVLabel}>
-                  {t('modules.estimate.tokens', { defaultValue: 'Tokens' })}
-                </span>
-                <span className={`${s.estimateKVValue} ${isZeroLlm ? s.estimateKVValueFree : ''}`}>
-                  {tokens != null ? `${approx ? '≈ ' : ''}${Number(tokens).toLocaleString()}` : '0'}
-                </span>
-              </div>
-              <div className={s.estimateKVItem}>
-                <span className={s.estimateKVLabel}>
-                  {t('modules.estimate.cost', { defaultValue: '预估成本' })}
-                </span>
-                <span className={`${s.estimateKVValue} ${isZeroLlm ? s.estimateKVValueFree : ''}`}>
-                  {cost != null ? `${approx ? '≈ ' : ''}$${Number(cost).toFixed(3)}` : '$0.000'}
-                </span>
-              </div>
-              <div className={s.estimateKVItem}>
-                <span className={s.estimateKVLabel}>
-                  {t('modules.estimate.model', { defaultValue: '模型' })}
-                </span>
-                <span className={`${s.estimateKVValue}`} style={{ fontSize: 13, color: 'var(--muted)' }}>
-                  {model || (isZeroLlm ? '—' : '—')}
-                </span>
-              </div>
-            </div>
-
-            {/* Affects */}
-            {affects.length > 0 && (
-              <div>
-                <div className={s.estimateSectionLabel}>
-                  {t('modules.estimate.affects', { defaultValue: '影响的表' })}
+            {/* KV grid: tokens / model —— 仅 LLM 路径显示;预估成本已按需求移除
+                (单位倍数估算对第三方中转价目不可靠,实际用量以任务完成后的真实记账为准) */}
+            {!isZeroLlm && (
+              <div className={s.estimateKVRow}>
+                <div className={s.estimateKVItem}>
+                  <span className={s.estimateKVLabel}>
+                    {t('modules.estimate.tokens', { defaultValue: 'Tokens' })}
+                  </span>
+                  <span className={`${s.estimateKVValue} ${isZeroLlm ? s.estimateKVValueFree : ''}`}>
+                    {tokens != null ? `${approx ? '≈ ' : ''}${Number(tokens).toLocaleString()}` : '0'}
+                  </span>
                 </div>
-                <div className={s.estimateTagRow}>
-                  {affects.map((a) => (
-                    <span key={a} className={s.estimateTag}>{a}</span>
-                  ))}
+                <div className={s.estimateKVItem}>
+                  <span className={s.estimateKVLabel}>
+                    {t('modules.estimate.model', { defaultValue: '模型' })}
+                  </span>
+                  <span className={`${s.estimateKVValue}`} style={{ fontSize: 13, color: 'var(--muted)' }}>
+                    {model || '—'}
+                  </span>
                 </div>
               </div>
             )}

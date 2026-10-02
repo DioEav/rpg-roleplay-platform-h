@@ -11,6 +11,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import Any
 
+from extract.arc_pipeline import EXTRACTION_TARGET_ARCS
 from platform_app.db import connect
 from platform_app.knowledge._sync import _ensure_book
 
@@ -25,7 +26,9 @@ def run_llm_extraction(
     author_worldlines: list[dict] | None = None,
     model: str = "deepseek-v4-flash",
     api_id: str = "deepseek",
-    target_arcs: int = 40,
+    # 单一真源:与导入向导(_stage_canon_extract → run_arc_extraction 默认)同值,
+    # 保证同一本书导入和重做后的锚点密度一致(旧默认 40 会让重做后锚点掉 60%)。
+    target_arcs: int = EXTRACTION_TARGET_ARCS,
     concurrency: int = 15,
     sample_chapters: int | None = None,
     chapter_min: int | None = None,

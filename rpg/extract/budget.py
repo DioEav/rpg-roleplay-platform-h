@@ -32,8 +32,12 @@ _SEED_PER_CALL_OUTPUT = 1200
 # 弧段算法每弧估算(实测 deepseek-v4-flash 二战书 40 弧):
 #   输入 ≈ 3 章正文(各 2500 字)+ 词表 ~2400 字 ≈ ~7000-8000 tok
 #   输出 ≈ 弧级 ChapterExtract schema ~3000 tok(弧主线 + 全实体 + events + concepts)
+# 实测校准(吞噬星空 1487 章 × mimo-v2.6-flash,4 次完整重抽,token_usage 记账):
+#   输入均值 ≈ 7.3k tok/弧(与 8000 假设吻合,保留);
+#   输出均值 ≈ 8.7k tok/弧 —— v28 schema(identity/background/aliases)+ 弧级实体全集,
+#   3000 假设低估 ~2.9 倍 → 9000(宁可略高不低估,BYOK 报价宁高勿低)。
 _PER_ARC_INPUT = 8000
-_PER_ARC_OUTPUT = 3000
+_PER_ARC_OUTPUT = 9000
 
 
 def _model_price(model: str) -> dict:
@@ -71,8 +75,12 @@ def estimate(db, script_id: int, *, model: str = "gemini-3.5-flash",
     price = _model_price(model)
 
     if algorithm == "arc":
-        # 弧数 ≈ target_arcs 但受 min_arc_size=5 / max_arc_size=80 钳(对齐 split_arcs)
-        n_arcs = max(1, min(total // 5, max((total + 79) // 80, total // max(5, total // target_arcs))))
+        # 弧数公式必须与执行侧 split_arcs 完全一致(同一套 min5/max40 钳制),
+        # 否则长书估算弧数与实际跑的弧数对不上(旧公式 max_arc 用 80 → 长书少估)。
+        desired = max(1, total // max(5, total // max(1, target_arcs)))
+        desired = max(desired, (total + 40 - 1) // 40)
+        desired = min(desired, max(1, total // 5))
+        n_arcs = max(1, desired)
         seed_calls = min(_SEED_SAMPLE, total)
         in_tok = n_arcs * _PER_ARC_INPUT + seed_calls * _SEED_PER_CALL_INPUT
         out_tok = n_arcs * _PER_ARC_OUTPUT + seed_calls * _SEED_PER_CALL_OUTPUT
