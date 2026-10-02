@@ -9,7 +9,7 @@ from psycopg.types.json import Jsonb
 
 from ...db import connect
 from .._deps import json_response, require_user, value_error_response
-from ._shared import _require_owner, _write_commit, router
+from ._shared import _jsonable, _require_owner, _write_commit, router
 
 # ─── canon-entities CRUD ─────────────────────────────────────────────────────
 
@@ -96,7 +96,7 @@ async def api_canon_update(
         )
         db.commit()
 
-    return json_response({"ok": True, "entity": after, "commit_id": commit_id})
+    return json_response({"ok": True, "entity": _jsonable(after), "commit_id": commit_id})
 
 
 @router.post("/api/scripts/{script_id}/canon-entities")
@@ -180,7 +180,7 @@ async def api_canon_add(
         )
         db.commit()
 
-    return json_response({"ok": True, "entity": after, "commit_id": commit_id})
+    return json_response({"ok": True, "entity": _jsonable(after), "commit_id": commit_id})
 
 
 @router.delete("/api/scripts/{script_id}/canon-entities/{logical_key}")

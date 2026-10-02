@@ -222,6 +222,19 @@ def _norm_name(s: str) -> str:
     return re.sub(r"[\s·_、.\-]", "", _to_simplified(s).strip())
 
 
+# canon 实体类型白名单(LLM schema 枚举;organization 语义上就是 faction,LLM 偶尔会输出)
+CANON_TYPES = ("character", "faction", "location", "item", "concept")
+_CANON_TYPE_ALIASES = {"organization": "faction"}
+
+
+def normalize_canon_type(t: str | None) -> str | None:
+    """归一 LLM 输出的实体类型;枚举外返回 None(调用方丢弃)。纯函数,离线可测。"""
+    v = (t or "").strip().lower()
+    if v in _CANON_TYPE_ALIASES:
+        return _CANON_TYPE_ALIASES[v]
+    return v if v in CANON_TYPES else None
+
+
 # ── 音译变体归一(治『埃尔温·隆美尔』vs『艾尔温·隆美尔』被拆成两卡) ──────────────
 # 病灶:cluster_entities 的次信号(嵌入高相似)要求 ni[0]==nr[0](首字相同)才放行比较,
 # 但音译人名常见"首字用哪个同音字"因译者/LLM 批次而异(埃/艾、诺/娜…),首字不同就直接被
@@ -574,6 +587,23 @@ def resolve_and_write(db, script_id: int, chapter_extracts: list, *, embedder=No
         import logging as _lg
         _lg.getLogger(__name__).info("[resolve] RC4 剔除误标 character 的非人名: %s", _dropped[:20])
     canon = _kept
+
+    # 类型归一(LLM schema 枚举外的兜底):organization→faction(语义同势力),
+    # 其余未知类型(偶发 event 等)丢弃并 log —— 不入库,否则前端类型徽章/筛选枚举外
+    # 的值既没法翻译也没有筛选按钮,显示成裸类型名。
+    _type_clamped, _type_dropped = [], []
+    for c in canon:
+        nt = normalize_canon_type(c.type)
+        if nt is None:
+            _type_dropped.append(f"{c.name}({c.type})")
+            continue
+        if nt != c.type:
+            c.type = nt
+        _type_clamped.append(c)
+    if _type_dropped:
+        import logging as _lg
+        _lg.getLogger(__name__).info("[resolve] 丢弃枚举外类型实体: %s", _type_dropped[:20])
+    canon = _type_clamped
 
     # anti-bleed:把"其他卡的主名"从每张卡的 aliases 剔除(治别名串卡 / 主角别名磁铁残留——
     # 例:妮娅.aliases 误含 茜茜/伊瑟拉/艾森豪威尔 等本属其他角色的真名)。纯 Python,零 LLM。

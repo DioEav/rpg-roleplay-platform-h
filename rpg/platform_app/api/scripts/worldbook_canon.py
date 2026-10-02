@@ -4,6 +4,8 @@ worldbook 列表、canon 实体列表/详情(MD 编辑器按类型拉取)。纯�
 """
 from __future__ import annotations
 
+import re
+
 from fastapi import Depends
 
 from ... import knowledge
@@ -34,17 +36,21 @@ _CANON_LIST_COLS = (
 @router.get("/api/scripts/{script_id}/canon-entities")
 async def api_script_canon_entities(
     script_id: int, limit: int | None = None, cursor: str | None = None,
-    type: str | None = None, user=Depends(require_user)
+    type: str | None = None, q: str | None = None, order: str = "desc",
+    page: int | None = None, user=Depends(require_user)
 ):
-    """列出 canon 实体全字段(分页),供 MD 编辑器按实体类型拉取。owner 或 subscriber 可读。
+    """列出 canon 实体(服务端分页),供实体编辑器使用。owner 或 subscriber 可读。
 
-    type: 可选类型过滤(character/faction/location/item/concept)。编辑器的类型筛选按钮
-    一直传这个参数,但端点此前没接 —— 参数被静默忽略,选「物品」也返回全量实体
-    (按 importance 排序前排全是人物),标题计数恒等于总数。
+    分页语义(数据不设总量上限,按页展示):
+      · page(1-based) + limit(默认 200,单页上限 1000 防滥用,非数据截断) → offset 分页;
+      · 响应带 total = 当前过滤条件下的真实总数,前端计数/页码由此驱动;
+      · type: 类型过滤(character/faction/location/item/concept...);
+      · q:    模糊匹配 name/full_name/logical_key/entity_subtype(%,_ 已转义);
+      · order: importance 排序方向 asc|desc(默认 desc)。
+    兼容:旧式 cursor 单参翻页仍可用(不与 page 同用,走 page_payload 旧响应形状)。
     """
     from ...db import cursor_id, limit_value, page_payload
-    page_limit = limit_value(limit)
-    before_id = cursor_id(cursor)
+    page_limit = limit_value(limit, default=200, maximum=1000)
     with connect() as db:
         owned = db.execute(
             """select 1 from scripts s
@@ -56,18 +62,69 @@ async def api_script_canon_entities(
         ).fetchone()
         if not owned:
             return json_response({"ok": False, "error": "无权访问该剧本"}, status_code=403)
+
+        # 公共过滤片段:type 等值 + q 模糊(转义 LIKE 通配符)
+        q_pat = None
+        if (q or "").strip():
+            q_pat = "%" + re.sub(r"([\\%_])", r"\\\1", q.strip()) + "%"
+        where_extra = ""
+        args_extra: list = []
+        if type:
+            where_extra += " and type = %s"
+            args_extra.append(type)
+        if q_pat:
+            where_extra += (
+                " and (name ilike %s or coalesce(full_name,'') ilike %s "
+                "or logical_key ilike %s or coalesce(entity_subtype,'') ilike %s)"
+            )
+            args_extra.extend([q_pat] * 4)
+
+        # 旧式 cursor 翻页(兼容保留;page 参数优先)
+        before_id = cursor_id(cursor)
+        if page is None and before_id is not None:
+            rows = db.execute(
+                f"""
+                select {_CANON_LIST_COLS} from kb_canon_entities
+                where script_id = %s{where_extra}
+                  and id < %s
+                order by importance desc, id desc
+                limit %s
+                """,
+                (script_id, *args_extra, before_id, page_limit + 1),
+            ).fetchall()
+            return json_response({"ok": True, **page_payload([dict(r) for r in rows], page_limit)})
+
+        # 新式 offset 分页
+        try:
+            cur_page = max(1, int(page or 1))
+        except (TypeError, ValueError):
+            cur_page = 1
+        direction = "asc" if str(order).lower() == "asc" else "desc"
+        offset = (cur_page - 1) * page_limit
+
+        total_row = db.execute(
+            f"select count(*) as c from kb_canon_entities where script_id = %s{where_extra}",
+            (script_id, *args_extra),
+        ).fetchone()
+        total = int(total_row["c"]) if total_row else 0
         rows = db.execute(
             f"""
             select {_CANON_LIST_COLS} from kb_canon_entities
-            where script_id = %s
-              and (%s::text is null or type = %s)
-              and (%s::bigint is null or id < %s)
-            order by importance desc, id desc
-            limit %s
+            where script_id = %s{where_extra}
+            order by importance {direction} nulls last, id {direction}
+            limit %s offset %s
             """,
-            (script_id, type, type, before_id, before_id, page_limit + 1),
+            (script_id, *args_extra, page_limit, offset),
         ).fetchall()
-    return json_response({"ok": True, **page_payload([dict(r) for r in rows], page_limit)})
+    items = [dict(r) for r in rows]
+    return json_response({
+        "ok": True,
+        "items": items,
+        "total": total,
+        "page": cur_page,
+        "page_size": page_limit,
+        "has_more": offset + len(items) < total,
+    })
 
 
 @router.get("/api/scripts/{script_id}/canon-entities/{logical_key}")

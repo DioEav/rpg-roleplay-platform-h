@@ -86,3 +86,15 @@ def test_cluster_does_not_merge_distinct_names_even_if_embeddings_close():
     # 仅 薇欧拉/薇欧拉小姐(子串)合并 → 6;其余 5 个不同人保留,不因嵌入接近坍缩
     assert len(canon) == 6, [c.name for c in canon]
     assert len([c for c in canon if c.type == "character"]) == 6
+
+
+# ── normalize_canon_type:LLM 枚举外类型归一(organization→faction,未知→丢弃) ──
+def test_normalize_canon_type():
+    from extract.resolve import normalize_canon_type
+    assert normalize_canon_type("character") == "character"
+    assert normalize_canon_type("concept") == "concept"
+    assert normalize_canon_type("organization") == "faction"   # 别名归一
+    assert normalize_canon_type(" Organization ") == "faction"  # 大小写/空白容错
+    assert normalize_canon_type("event") is None                # 枚举外 → 丢弃
+    assert normalize_canon_type("") is None
+    assert normalize_canon_type(None) is None

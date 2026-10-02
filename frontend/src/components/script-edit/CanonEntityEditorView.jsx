@@ -4,6 +4,7 @@
    Mechanically extracted from pages/script-edit-canon.jsx (zero behavior change). */
 
 import React from 'react';
+import { createPortal } from 'react-dom';
 import { useTranslation } from 'react-i18next';
 
 import CSHeader from '@cloudscape-design/components/header';
@@ -16,6 +17,7 @@ import CSAlert from '@cloudscape-design/components/alert';
 import CSInput from '@cloudscape-design/components/input';
 import CSSelect from '@cloudscape-design/components/select';
 import CSTextFilter from '@cloudscape-design/components/text-filter';
+import CSPagination from '@cloudscape-design/components/pagination';
 import DetailDrawer from '../DetailDrawer.jsx';
 import CSTokenGroup from '@cloudscape-design/components/token-group';
 import CSExpandableSection from '@cloudscape-design/components/expandable-section';
@@ -25,13 +27,80 @@ import CSKeyValuePairs from '@cloudscape-design/components/key-value-pairs';
 import CSStatusIndicator from '@cloudscape-design/components/status-indicator';
 import CSSegmentedControl from '@cloudscape-design/components/segmented-control';
 
-import { snippet } from './helpers.js';
-
 /* ------------------------------------------------------------------ */
 /* Constants                                                             */
 /* ------------------------------------------------------------------ */
 const ENTITY_TYPES = ['character', 'faction', 'location', 'item', 'concept'];
 const IMPORTANCE_OPTIONS = [1, 2, 3, 4, 5].map((n) => ({ value: String(n), label: String(n) }));
+
+/* ParentCombobox — portal 化的可搜索上级选择浮层。
+   背景:Cloudscape Select 的下拉在组件内绝对定位渲染,表格触发横向滚动容器后被整体
+   裁掉(表现为下拉被遮挡/看不到内容)。portal 到 document.body 彻底逃离任何祖先的
+   overflow/层叠上下文(ImageLightbox 同款解法)。输入即筛,点击选项/回车选中,
+   点击外部/Escape 取消。 */
+function ParentCombobox({ anchorEl, options, onPick, onCancel, filterPlaceholder, emptyText }) {
+  const [text, setText] = React.useState('');
+  const [rect, setRect] = React.useState(null);
+
+  React.useEffect(() => {
+    if (anchorEl) setRect(anchorEl.getBoundingClientRect());
+    const onDocMouseDown = (e) => {
+      if (!e.target.closest || !e.target.closest('[data-parent-combobox]')) onCancel();
+    };
+    const onKeyDown = (e) => { if (e.key === 'Escape') onCancel(); };
+    document.addEventListener('mousedown', onDocMouseDown, true);
+    document.addEventListener('keydown', onKeyDown);
+    return () => {
+      document.removeEventListener('mousedown', onDocMouseDown, true);
+      document.removeEventListener('keydown', onKeyDown);
+    };
+  }, [anchorEl, onCancel]);
+
+  if (!rect) return null;
+  const q = text.trim().toLowerCase();
+  const filtered = (q
+    ? options.filter((o) => (o.label || '').toLowerCase().includes(q))
+    : options
+  ).slice(0, 30);
+
+  return createPortal(
+    <div data-parent-combobox style={{
+      position: 'fixed', left: rect.left, top: rect.bottom + 2,
+      minWidth: Math.max(rect.width, 240), maxHeight: 260, overflowY: 'auto', zIndex: 10000,
+      background: 'var(--color-background-container-content, #ffffff)',
+      border: '1px solid var(--color-border-control-default, #8c8c8c)', borderRadius: 8,
+      boxShadow: '0 6px 18px rgba(0,0,0,.28)', padding: 4,
+    }}>
+      <input
+        autoFocus
+        value={text}
+        placeholder={filterPlaceholder}
+        onChange={(e) => setText(e.target.value)}
+        onKeyDown={(e) => { if (e.key === 'Enter' && filtered[0]) onPick(filtered[0].value); }}
+        style={{
+          width: '100%', boxSizing: 'border-box', padding: '6px 9px', fontSize: 13, marginBottom: 4,
+          border: '1px solid var(--color-border-control-default, #8c8c8c)', borderRadius: 6,
+          background: 'transparent', color: 'var(--color-text-body-default, #16191f)',
+        }}
+      />
+      {filtered.length === 0 && (
+        <div style={{ padding: '7px 9px', fontSize: 12.5, color: 'var(--color-text-body-default, #5f6b7a)' }}>{emptyText}</div>
+      )}
+      {filtered.map((o) => (
+        <div
+          key={o.value || '(none)'}
+          onMouseDown={(e) => { e.preventDefault(); onPick(o.value); }}
+          onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(128,128,128,.16)'; }}
+          onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; }}
+          style={{ padding: '7px 9px', fontSize: 13, cursor: 'pointer', borderRadius: 6, color: 'var(--color-text-body-default, #16191f)' }}
+        >
+          {o.label}
+        </div>
+      ))}
+    </div>,
+    document.body,
+  );
+}
 
 /* ------------------------------------------------------------------ */
 /* CanonEntityEditorView                                                 */
@@ -44,10 +113,15 @@ export function CanonEntityEditorView({ scriptId, ownerId, currentUserId }) {
   const [items, setItems] = React.useState([]);
   const [loading, setLoading] = React.useState(true);
   const [reloadTick, setReloadTick] = React.useState(0);
+  // 服务端分页:数据量不设上限,按页拉取;total = 当前过滤条件下的真实总数(标题计数由此驱动)
+  const PAGE_SIZE = 200;
+  const [page, setPage] = React.useState(1);
+  const [total, setTotal] = React.useState(0);
 
   /* filters */
   const [typeFilter, setTypeFilter] = React.useState('all');
   const [query, setQuery] = React.useState('');
+  const [debouncedQ, setDebouncedQ] = React.useState(''); // 300ms 防抖后走服务端搜索
   const [sortDesc, setSortDesc] = React.useState(true);
 
   /* selection / split panel */
@@ -68,39 +142,49 @@ export function CanonEntityEditorView({ scriptId, ownerId, currentUserId }) {
   const [detailEdit, setDetailEdit] = React.useState({}); // pending field values for selected entity
   const [savingDetail, setSavingDetail] = React.useState(false);
 
-  /* ---- fetch ---- */
+  /* parent 下拉全量选项:分页后当页列表不全(且父实体可能不在本页),
+     首次进入「上级」编辑时惰性拉一次全量名称表,之后缓存复用 */
+  const [parentOptsAll, setParentOptsAll] = React.useState(null);
+  function loadParentOptions() {
+    if (parentOptsAll) return;
+    fetch(`${window.__API_BASE || ''}/api/scripts/${scriptId}/canon-entities?page=1&limit=1000&order=desc`, { credentials: 'include' })
+      .then((r) => r.json())
+      .then((j) => {
+        const list = Array.isArray(j) ? j : (j?.items || []);
+        setParentOptsAll(list.map((e) => ({ value: e.logical_key, label: e.name || e.logical_key })));
+      })
+      .catch(() => setParentOptsAll([]));
+  }
+
+  /* ---- fetch(服务端分页 + 过滤 + 排序) ---- */
   React.useEffect(() => {
     let cancelled = false;
     setLoading(true);
-    const params = new URLSearchParams({ limit: 500 });
+    const params = new URLSearchParams({ page: String(page), limit: String(PAGE_SIZE) });
     if (typeFilter && typeFilter !== 'all') params.set('type', typeFilter);
+    if (debouncedQ) params.set('q', debouncedQ);
+    params.set('order', sortDesc ? 'desc' : 'asc');
     const url = `${window.__API_BASE || ''}/api/scripts/${scriptId}/canon-entities?${params}`;
     fetch(url, { credentials: 'include' })
       .then((r) => r.json())
-      .then((j) => { if (!cancelled) setItems(Array.isArray(j) ? j : (j?.items || [])); })
-      .catch(() => { if (!cancelled) setItems([]); })
+      .then((j) => {
+        if (cancelled) return;
+        setItems(Array.isArray(j) ? j : (j?.items || []));
+        setTotal(Number(j?.total) || 0);
+      })
+      .catch(() => { if (!cancelled) { setItems([]); setTotal(0); } })
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
-  }, [scriptId, typeFilter, reloadTick]);
+  }, [scriptId, typeFilter, debouncedQ, sortDesc, page, reloadTick]);
 
-  /* ---- derived ---- */
-  const filtered = React.useMemo(() => {
-    let list = items;
-    if (query) {
-      const q = query.toLowerCase();
-      list = list.filter((e) =>
-        (e.name || '').toLowerCase().includes(q) ||
-        (e.logical_key || '').toLowerCase().includes(q) ||
-        (e.entity_subtype || '').toLowerCase().includes(q)
-      );
-    }
-    list = [...list].sort((a, b) => {
-      const ai = a.importance ?? 0;
-      const bi = b.importance ?? 0;
-      return sortDesc ? bi - ai : ai - bi;
-    });
-    return list;
-  }, [items, query, sortDesc]);
+  // 搜索防抖:300ms 后把输入发到服务端(q 参数),并回到第 1 页
+  React.useEffect(() => {
+    const t = setTimeout(() => { setDebouncedQ(query.trim()); setPage(1); }, 300);
+    return () => clearTimeout(t);
+  }, [query]);
+
+  /* ---- derived(排序/搜索均已在服务端完成,直接用当页数据) ---- */
+  const filtered = items;
 
   /* lookup parent name */
   const entityMap = React.useMemo(() => {
@@ -236,7 +320,7 @@ export function CanonEntityEditorView({ scriptId, ownerId, currentUserId }) {
     return (
       <CSSegmentedControl
         selectedId={typeFilter}
-        onChange={({ detail }) => setTypeFilter(detail.selectedId)}
+        onChange={({ detail }) => { setTypeFilter(detail.selectedId); setPage(1); }}
         options={segments}
       />
     );
@@ -261,7 +345,14 @@ export function CanonEntityEditorView({ scriptId, ownerId, currentUserId }) {
     }
     return (
       <span
-        style={{ cursor: readonly ? 'default' : 'text', borderBottom: readonly ? 'none' : '1px dashed var(--color-border-divider-default, #ccc)' }}
+        title={entity.name || ''}
+        style={{
+          cursor: readonly ? 'default' : 'text',
+          borderBottom: readonly ? 'none' : '1px dashed var(--color-border-divider-default, #ccc)',
+          // 名称列收窄:超长单行省略(悬停看全文,点「查看明细」/详情抽屉有完整信息)
+          display: 'inline-block', maxWidth: 140, verticalAlign: 'bottom',
+          overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+        }}
         onClick={() => !readonly && setEditCell({ key: entity.logical_key, field: 'name', value: entity.name || '' })}
       >
         {entity.name || '—'}
@@ -273,12 +364,19 @@ export function CanonEntityEditorView({ scriptId, ownerId, currentUserId }) {
   function CellImportance({ entity }) {
     const editing = editCell?.key === entity.logical_key && editCell?.field === 'importance';
     if (editing) {
+      // 数字输入而非下拉:canon importance 实际范围 1~数百(聚类次数/主角融合分),
+      // 旧版写死 1-5 选项 → 编辑 >5 的行显示空白、保存还会把大值覆盖成 ≤5。
       return (
-        <CSSelect
-          selectedOption={IMPORTANCE_OPTIONS.find((o) => o.value === String(editCell.value)) || null}
-          options={IMPORTANCE_OPTIONS}
-          onChange={({ detail }) => saveCell(entity, 'importance', detail.selectedOption.value)}
-          onBlur={() => setEditCell(null)}
+        <CSInput
+          autoFocus
+          inputMode="numeric"
+          value={editCell.value}
+          onChange={({ detail }) => setEditCell((c) => ({ ...c, value: detail.value.replace(/[^0-9]/g, '') }))}
+          onKeyDown={({ detail }) => {
+            if (detail.key === 'Enter') saveCell(entity, 'importance', editCell.value);
+            if (detail.key === 'Escape') setEditCell(null);
+          }}
+          onBlur={() => saveCell(entity, 'importance', editCell.value)}
         />
       );
     }
@@ -295,22 +393,37 @@ export function CanonEntityEditorView({ scriptId, ownerId, currentUserId }) {
   /* inline editable cell — parent */
   function CellParent({ entity }) {
     const editing = editCell?.key === entity.logical_key && editCell?.field === 'parent_logical_key';
+    const [anchorEl, setAnchorEl] = React.useState(null);
     const parentName = entity.parent_logical_key ? (entityMap[entity.parent_logical_key]?.name || entity.parent_logical_key) : '—';
+    // 选项源:全量表(惰性拉取后)优先,未加载时退回当页列表;排除自己(防自指),「无上级」恒为首项
+    const opts = [
+      { value: '', label: t('scripts.edit.canon.no_parent') },
+      ...(parentOptsAll || parentOptions).filter((o) => o.value !== entity.logical_key),
+    ];
     if (editing) {
-      const curOpt = parentOptions.find((o) => o.value === (editCell.value || '')) || parentOptions[0];
       return (
-        <CSSelect
-          selectedOption={curOpt}
-          options={parentOptions}
-          onChange={({ detail }) => saveCell(entity, 'parent_logical_key', detail.selectedOption.value || null)}
-          onBlur={() => setEditCell(null)}
-        />
+        <span
+          ref={setAnchorEl}
+          style={{ borderBottom: '1px dashed var(--color-border-divider-default, #ccc)', cursor: 'pointer' }}
+        >
+          {parentName}
+          {anchorEl && (
+            <ParentCombobox
+              anchorEl={anchorEl}
+              options={opts}
+              onPick={(v) => saveCell(entity, 'parent_logical_key', v || null)}
+              onCancel={() => setEditCell(null)}
+              filterPlaceholder={t('scripts.edit.canon.parent_filter_ph')}
+              emptyText={t('scripts.edit.canon.empty_search')}
+            />
+          )}
+        </span>
       );
     }
     return (
       <span
         style={{ cursor: readonly ? 'default' : 'pointer', borderBottom: readonly ? 'none' : '1px dashed var(--color-border-divider-default, #ccc)' }}
-        onClick={() => !readonly && setEditCell({ key: entity.logical_key, field: 'parent_logical_key', value: entity.parent_logical_key || '' })}
+        onClick={() => { if (!readonly) { loadParentOptions(); setEditCell({ key: entity.logical_key, field: 'parent_logical_key', value: entity.parent_logical_key || '' }); } }}
       >
         {parentName}
       </span>
@@ -526,32 +639,53 @@ export function CanonEntityEditorView({ scriptId, ownerId, currentUserId }) {
       id: 'name',
       header: t('scripts.edit.canon.col_name'),
       cell: (e) => <CellName entity={e} />,
-      sortingField: 'name',
+      minWidth: 120,
+      // 不设 sortingField:表格排序实际由右上角按钮按 importance 驱动(filtered useMemo),
+      // 设了只会渲染一个点了没反应的死箭头(误导)。
     },
     {
       id: 'type',
       header: t('scripts.edit.canon.col_type'),
-      cell: (e) => <CSBadge color={typeBadgeColor(e.type)}>{t(`scripts.edit.canon.type_${e.type}`) || e.type}</CSBadge>,
+      cell: (e) => <CSBadge color={typeBadgeColor(e.type)}>{t(`scripts.edit.canon.type_${e.type}`, { defaultValue: e.type })}</CSBadge>,
+      minWidth: 88,
     },
     {
       id: 'subtype',
-      header: t('scripts.edit.canon.col_subtype'),
+      header: (
+        // 实体在本书世界观里的功能标签(LLM 抽取时按语境生成,如 势力→宗门/军团、概念→力量体系/规则)
+        <span title={t('scripts.edit.canon.col_subtype_hint', { defaultValue: '实体的功能/形态标签(如 势力→宗门、军团;概念→力量体系、规则),由 LLM 按语境生成' })}>
+          {t('scripts.edit.canon.col_subtype')}
+        </span>
+      ),
       cell: (e) => e.entity_subtype || '—',
+      minWidth: 110,
     },
     {
       id: 'parent',
       header: t('scripts.edit.canon.col_parent'),
       cell: (e) => <CellParent entity={e} />,
+      minWidth: 130,
     },
     {
       id: 'importance',
       header: t('scripts.edit.canon.col_importance'),
       cell: (e) => <CellImportance entity={e} />,
+      minWidth: 88,
     },
     {
       id: 'summary',
       header: t('scripts.edit.canon.col_summary'),
-      cell: (e) => <CSBox color="text-body-secondary" fontSize="body-s">{snippet(e.summary, 50)}</CSBox>,
+      // 换行显示 + 2 行截断(-webkit-line-clamp):此前 snippet(50) 硬截单行。
+      // whiteSpace 必须显式 normal —— Cloudscape 单元格继承 nowrap 会让 clamp 失效成单行。
+      cell: (e) => (
+        <div style={{
+          maxWidth: 420, fontSize: 12.5, color: 'var(--muted, #968f85)', lineHeight: 1.5,
+          display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden',
+          whiteSpace: 'normal', wordBreak: 'break-word', overflowWrap: 'anywhere',
+        }}>
+          {e.summary || '—'}
+        </div>
+      ),
     },
     {
       id: 'actions',
@@ -586,17 +720,24 @@ export function CanonEntityEditorView({ scriptId, ownerId, currentUserId }) {
         if (e) { setSelected(e); setDetailEdit({}); setSplitOpen(true); }
       }}
       columnDefinitions={columns}
+      pagination={total > PAGE_SIZE ? (
+        <CSPagination
+          currentPageIndex={page}
+          pagesCount={Math.max(1, Math.ceil(total / PAGE_SIZE))}
+          onChange={({ detail }) => setPage(detail.currentPageIndex)}
+        />
+      ) : undefined}
       header={
         <CSHeader
           variant="h2"
-          counter={`(${filtered.length})`}
+          counter={`(${total})`}
           actions={
             <CSSpaceBetween direction="horizontal" size="xs">
               <CSButton
                 iconName={sortDesc ? 'sort-descending' : 'sort-ascending'}
                 variant="icon"
                 ariaLabel={t('scripts.edit.canon.sort_importance')}
-                onClick={() => setSortDesc((v) => !v)}
+                onClick={() => { setSortDesc((v) => !v); setPage(1); }}
               />
               <CSButton iconName="refresh" variant="icon" ariaLabel={t('common.refresh')} onClick={() => setReloadTick((x) => x + 1)} />
               {!readonly && (

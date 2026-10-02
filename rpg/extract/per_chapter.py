@@ -67,7 +67,7 @@ _SCHEMA_HINT = """{
     "aliases_in_chapter": ["本章该实体的其他【专有】称呼:昵称/半名/外号/译名/带姓名的敬称(如 ['Mulelia','小蕾','苏玖姑娘']);**严禁**放光杆泛指(那人/老头/小姑娘/那家伙)或关系泛称(姐姐/女朋友/老公/对方)——那些不是名字,会污染别名"],
     "identity": "≤40字身份定位/职位/阵营(如:北境蜂巢主管/异端审判庭检察官/林家二少爷;非 character 类留空)",
     "background": "≤120字本章可见前史摘要(此实体出场前的关键经历或当下处境/出身/动机;只抽本章直接揭露或暗示的,不要编造;非 character 类留空)",
-    "type": "character|faction|organization|location|item|concept",
+    "type": "character|faction|location|item|concept",
     "subtype": "<按 type 选,见下方 SUBTYPE_HINT;character 留空>",
     "parent": "<本实体归属的上级实体名;本章没揭示父级则空;见 PARENT_HINT>",
     "status": "linked|proposed",

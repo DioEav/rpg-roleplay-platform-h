@@ -34,6 +34,23 @@ def _require_owner(db, script_id: int, user_id: int):
     raise ValueError("必须 fork 后才能编辑（当前用户不是该剧本 owner）")
 
 
+def _jsonable(obj):
+    """递归把 dict/list 里的 datetime/date 转成 isoformat,供 Jsonb 序列化。
+
+    背景:canon 编辑把 before/after 整行塞进 commit payload,行里的 created_at 是
+    psycopg dict_row 返回的 datetime → Jsonb() 直接
+    "Object of type datetime is not JSON serializable",编辑保存 500。
+    """
+    import datetime as _dt
+    if isinstance(obj, dict):
+        return {k: _jsonable(v) for k, v in obj.items()}
+    if isinstance(obj, (list, tuple)):
+        return [_jsonable(v) for v in obj]
+    if isinstance(obj, (_dt.datetime, _dt.date)):
+        return obj.isoformat()
+    return obj
+
+
 def _write_commit(
     db,
     *,
@@ -59,7 +76,7 @@ def _write_commit(
         VALUES (%s, %s, %s, %s, %s, %s, %s)
         RETURNING id
         """,
-        (script_id, parent_id, user_id, message, kind, Jsonb(payload), is_checkpoint),
+        (script_id, parent_id, user_id, message, kind, Jsonb(_jsonable(payload)), is_checkpoint),
     ).fetchone()
     commit_id = int(row["id"])
 
