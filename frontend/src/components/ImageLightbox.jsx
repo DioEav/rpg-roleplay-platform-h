@@ -154,6 +154,10 @@ export default function ImageLightbox({ open, src, alt = '', onClose, onCrop, cr
         // portal 到 body,DOM 上不在 .ilb 里,点击仍会冒到这里——不拦掉就把大图预览
         // 一起关了(点弹窗外部本意只是取消确认)。
         if (e.target instanceof Element && e.target.closest('.pl-modal-backdrop')) return;
+        // stopPropagation:全屏浮层吞掉事件,不泄漏给宿主页面的可点击祖先。
+        // 实证:概览封面 CoverFrame 的 .mh-hero 有 onClick=setLight(true),灯箱关闭按钮
+        // 的点击冒泡上去 → 关闭后瞬间被重新打开,表现为「大叉点了没反应」。
+        e.stopPropagation();
         onClose && onClose();
       }}>
       <div className="ilb__stage" onClick={(e) => e.stopPropagation()}>
@@ -189,8 +193,11 @@ export default function ImageLightbox({ open, src, alt = '', onClose, onCrop, cr
       </div>
       {/* 关闭按钮:用 SVG 图标而不是文本 ×。文本 × 的落位取决于字体度量 + 行盒(叠加 button 的
           UA 默认 padding),在 40px 圆里会明显偏高 —— 用户上报「大叉不在圆心」。SVG 在 24×24
-          viewBox 内几何居中,与 Modal 的关闭按钮同一做法。 */}
-      <button className="ilb__close" aria-label={t('common.close')} onClick={() => onClose && onClose()}>
+          viewBox 内几何居中,与 Modal 的关闭按钮同一做法。
+          stopPropagation:同 .ilb 根节点——按钮点击不许冒泡到宿主页面的 onClick 祖先
+          (概览封面 mh-hero onClick 会把刚关掉的灯箱瞬间重开)。 */}
+      <button className="ilb__close" aria-label={t('common.close')}
+        onClick={(e) => { e.stopPropagation(); onClose && onClose(); }}>
         <Icon name="close" size={17} />
       </button>
       {/* 删除确认:danger + portal 到 body——lightbox 自身已 portal,弹窗再 portal 保证

@@ -141,6 +141,10 @@ def scripts_page(user_id: int, limit: int | str | None = None, cursor: str | Non
                    s.forked_from_script_id, s.forked_at_commit_id, s.sharing_mode,
                    s.current_pin_script_id, s.current_pin_commit_id, s.head_commit_id,
                    s.cover_image_url,
+                   -- import_report jsonb 整体太重(实测单行 65MB)不进列表,但概览要展示
+                   -- 切分模式/置信度 → 只摘两个轻量标量,前端 normalizeScript 有回退分支接收
+                   s.import_report->>'mode_label' as mode_label,
+                   (s.import_report->>'confidence')::float as confidence,
                    (s.owner_id != %s) as is_subscribed
             from scripts s
             where (
