@@ -38,7 +38,7 @@ const IMPORTANCE_OPTIONS = [1, 2, 3, 4, 5].map((n) => ({ value: String(n), label
    裁掉(表现为下拉被遮挡/看不到内容)。portal 到 document.body 彻底逃离任何祖先的
    overflow/层叠上下文(ImageLightbox 同款解法)。输入即筛,点击选项/回车选中,
    点击外部/Escape 取消。 */
-function ParentCombobox({ anchorEl, options, onPick, onCancel, filterPlaceholder, emptyText }) {
+function ParentCombobox({ anchorEl, options, onPick, onCancel, filterPlaceholder, emptyText, selectedValue }) {
   const [text, setText] = React.useState('');
   const [rect, setRect] = React.useState(null);
 
@@ -63,13 +63,14 @@ function ParentCombobox({ anchorEl, options, onPick, onCancel, filterPlaceholder
     : options
   ).slice(0, 30);
 
+  // 样式对齐 tokens.css 暖暗主题(panel 面 + line 线 + accent 点缀),与项目其他浮层一致
   return createPortal(
     <div data-parent-combobox style={{
-      position: 'fixed', left: rect.left, top: rect.bottom + 2,
+      position: 'fixed', left: rect.left, top: rect.bottom + 4,
       minWidth: Math.max(rect.width, 240), maxHeight: 260, overflowY: 'auto', zIndex: 10000,
-      background: 'var(--color-background-container-content, #ffffff)',
-      border: '1px solid var(--color-border-control-default, #8c8c8c)', borderRadius: 8,
-      boxShadow: '0 6px 18px rgba(0,0,0,.28)', padding: 4,
+      background: 'var(--panel-2, #282623)',
+      border: '1px solid var(--line-strong, #4a4540)', borderRadius: 'var(--r-2, 6px)',
+      boxShadow: 'var(--shadow-1, 0 6px 18px rgba(0, 0, 0, .4))', padding: 4,
     }}>
       <input
         autoFocus
@@ -79,24 +80,32 @@ function ParentCombobox({ anchorEl, options, onPick, onCancel, filterPlaceholder
         onKeyDown={(e) => { if (e.key === 'Enter' && filtered[0]) onPick(filtered[0].value); }}
         style={{
           width: '100%', boxSizing: 'border-box', padding: '6px 9px', fontSize: 13, marginBottom: 4,
-          border: '1px solid var(--color-border-control-default, #8c8c8c)', borderRadius: 6,
-          background: 'transparent', color: 'var(--color-text-body-default, #16191f)',
+          border: '1px solid var(--line, #36322d)', borderRadius: 'var(--r-1, 4px)',
+          background: 'var(--bg-deep, #131211)', color: 'var(--text, #ebe7df)',
+          outline: 'none',
         }}
       />
       {filtered.length === 0 && (
-        <div style={{ padding: '7px 9px', fontSize: 12.5, color: 'var(--color-text-body-default, #5f6b7a)' }}>{emptyText}</div>
+        <div style={{ padding: '7px 9px', fontSize: 12.5, color: 'var(--muted-2, #6b655e)' }}>{emptyText}</div>
       )}
-      {filtered.map((o) => (
-        <div
-          key={o.value || '(none)'}
-          onMouseDown={(e) => { e.preventDefault(); onPick(o.value); }}
-          onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(128,128,128,.16)'; }}
-          onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; }}
-          style={{ padding: '7px 9px', fontSize: 13, cursor: 'pointer', borderRadius: 6, color: 'var(--color-text-body-default, #16191f)' }}
-        >
-          {o.label}
-        </div>
-      ))}
+      {filtered.map((o) => {
+        const isSelected = (o.value || '') === (selectedValue || '');
+        return (
+          <div
+            key={o.value || '(none)'}
+            onMouseDown={(e) => { e.preventDefault(); onPick(o.value); }}
+            onMouseEnter={(e) => { e.currentTarget.style.background = 'var(--panel-3, #2f2c28)'; }}
+            onMouseLeave={(e) => { e.currentTarget.style.background = isSelected ? 'var(--accent-soft, rgba(201,100,66,.14))' : 'transparent'; }}
+            style={{
+              padding: '7px 9px', fontSize: 13, cursor: 'pointer', borderRadius: 'var(--r-1, 4px)',
+              color: isSelected ? 'var(--text, #ebe7df)' : 'var(--text-quiet, #c8c2b7)',
+              background: isSelected ? 'var(--accent-soft, rgba(201,100,66,.14))' : 'transparent',
+            }}
+          >
+            {o.label}
+          </div>
+        );
+      })}
     </div>,
     document.body,
   );
@@ -411,6 +420,7 @@ export function CanonEntityEditorView({ scriptId, ownerId, currentUserId }) {
             <ParentCombobox
               anchorEl={anchorEl}
               options={opts}
+              selectedValue={editCell.value || ''}
               onPick={(v) => saveCell(entity, 'parent_logical_key', v || null)}
               onCancel={() => setEditCell(null)}
               filterPlaceholder={t('scripts.edit.canon.parent_filter_ph')}
