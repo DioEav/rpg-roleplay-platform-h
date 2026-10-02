@@ -65,6 +65,48 @@ def _require_user_llm_credential(user_id: int, api_id: str, model: str) -> None:
     if not _has_user_llm_credential(user_id, api_id):
         raise MissingUserCredentialError(api_id, model, _credential_api_id_for(api_id))
 
+# ── 阶段划分的自适应采样密度(2026-10)─────────────────────────────────────────
+# 目标 = 每 10 章 1 个观测点,点数 clamp(50, 300):
+#   短书(≤50 章)全量覆盖(1 章/点,最佳质量);中书每 10 章 1 点;巨书封顶 300 点。
+# 字符预算护栏(6 万字,≈6 万 tokens,给 128k 上下文模型留足余量):
+#   超预算按 [::2] 均匀抽稀保分布(抽稀下限 50 点)——防超长摘要撑爆上下文。
+# 单条摘要在 prompt 里截 500 字(节奏判断只需梗概;旧值 1000 字无必要)。
+_PHASE_POINTS_MIN = 50
+_PHASE_POINTS_MAX = 300
+_PHASE_STEP_DIVISOR = 10
+_PHASE_SAMPLE_CHAR_BUDGET = 60000
+_PHASE_POINT_OVERHEAD = 20      # 每行"第X章《标题》:"的固定开销
+_PHASE_SUMMARY_CHARS = 500      # 单条摘要进 prompt 的截断长度
+
+
+def _sample_phase_rows(rows: list) -> list:
+    """从章节事实里自适应均匀采样观测点(纯函数,离线可测)。
+
+    点数 = clamp(总章//10, 50, 300);点数 ≥ 总章数 → 全量覆盖(短书最优路径);
+    否则按 ceil(总章/点数) 步长均匀张满全书(不用 [:points] 截前段漏尾);
+    字符预算超限按 [::2] 抽稀(均匀保分布),下限 50 点。
+    """
+    total = len(rows)
+    if total == 0:
+        return []
+    points = min(_PHASE_POINTS_MAX, max(_PHASE_POINTS_MIN, total // _PHASE_STEP_DIVISOR))
+    if points >= total:
+        return list(rows)
+    step = max(1, -(-total // points))  # ceil
+    sample = rows[::step]
+
+    def _chars(seq):
+        return sum(len((r.get("summary") or "")) + _PHASE_POINT_OVERHEAD for r in seq)
+
+    # 字符预算超限 → [::2] 均匀抽稀保分布(下限 50 点)
+    while len(sample) > _PHASE_POINTS_MIN and _chars(sample) > _PHASE_SAMPLE_CHAR_BUDGET:
+        sample = sample[::2]
+    # 尾部保证:均匀步进采不到最后一章,而「结局」阶段的判断必须看到全书结尾 —— 补上
+    if sample and sample[-1] is not rows[-1]:
+        sample.append(rows[-1])
+    return sample
+
+
 def _stage_story_phase_llm(ctl: JobController, user_id: int, script_id: int) -> None:
     """facts 完成后，一次 LLM call 把章节范围分到 开端/发展/高潮/结局/番外。
     成功 → 按范围批量 update chapter_facts.story_phase；
@@ -84,14 +126,10 @@ def _stage_story_phase_llm(ctl: JobController, user_id: int, script_id: int) -> 
         return
 
     total = len(rows)
-    # 均匀采样 ≤30 章喂给 LLM (成本控)；保留每章的 chapter 号让模型按号给区间
-    if total <= 30:
-        sample = rows
-    else:
-        step = max(1, total // 30)
-        sample = rows[::step][:30]
+    # 自适应采样(每 10 章 1 点,clamp(50,300),短书全量;见 _sample_phase_rows)
+    sample = _sample_phase_rows(rows)
     lines = "\n".join(
-        f"第{r['chapter']}章《{r['title']}》: {(r['summary'] or '')[:1000]}"
+        f"第{r['chapter']}章《{r['title']}》: {(r['summary'] or '')[:_PHASE_SUMMARY_CHARS]}"
         for r in sample
     )
     prompt = (

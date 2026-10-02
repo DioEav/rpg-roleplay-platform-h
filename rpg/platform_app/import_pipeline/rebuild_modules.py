@@ -96,9 +96,24 @@ def rebuild_facts_from_db(user_id: int, script_id: int) -> dict[str, Any]:
                     "chapter": chapter.get("chapter_index"),
                     "error": str(exc),
                 })
+        # 清孤儿:章节合并/删除后,chapter_index 已不存在的旧 facts 行会永久残留
+        # (本函数只按现有章 upsert,不删旧行 → 状态卡 done>total、阶段窗口/锚点回填
+        # 引用幽灵章;实测:合并后 1487 facts / 1486 章)。
+        db.execute(
+            """delete from chapter_facts cf
+               where cf.script_id = %s
+                 and not exists (select 1 from script_chapters sc
+                                 where sc.script_id = cf.script_id
+                                   and sc.chapter_index = cf.chapter)""",
+            (script_id,),
+        )
+        after_row = db.execute(
+            "select count(*) as c from chapter_facts where script_id = %s", (script_id,),
+        ).fetchone()
+        after_count = int(after_row["c"]) if after_row else 0
     return {
         "ok": True, "source": "script_chapters",
-        "before_count": before_count, "after_count": total,
+        "before_count": before_count, "after_count": after_count,
         "partial_failures": partial_failures,
     }
 
