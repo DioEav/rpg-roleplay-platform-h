@@ -5,10 +5,15 @@ MemoryProvider — 通用记忆层。所有 manifest 都应该启用。
 A6 新增：消费 MemorySettings 配置
   - token_budget          : 截断注入总 token（字符 // 2 估算）
   - bucket_pinned_enabled : 跳过 pinned 桶
-  - bucket_world_enabled  : 跳过 world 类（main_quest / objective / facts / notes）
+  - bucket_world_enabled  : 跳过 world 类（main_quest / objective / summaries / facts / notes）
   - bucket_character_enabled: 跳过 character 类（abilities / resources）
   - recall_depth          : 每桶最多召回条目数
   - auto_archive_after_turns / summary_window: 由 _maybe_auto_archive() 触发归档
+
+注入顺序（预算装填即优先级，靠前者先占预算）：
+  优先级提示 → 固定记忆(pinned) → 主线/目标 → 历史概要(summaries) → 事实 → 笔记
+  → 能力 → 资源 → 未确认推测。pinned 置顶：玩家显式固定的权威记忆不允许被
+  高频累积的叙事事实挤出预算（此前 pinned 排在事实之后，事实一多就被截没）。
 """
 from __future__ import annotations
 
@@ -20,6 +25,32 @@ from context_engine._utils import _estimate_tokens
 from .base import ContextContribution, ContextProvider
 from .registry import register_provider
 
+# 单条归档摘要条目的长度上限（字符）。超出的后续事实用省略号收尾。
+_SUMMARY_ENTRY_MAX_CHARS = 600
+# 单条事实压缩进摘要时的截断长度（取首句/首逗号，再硬截到这个长度）。
+_SUMMARY_FACT_MAX_CHARS = 50
+# summaries 列表上限（每次归档扫描至多产生 1 条，防无限增长）。
+_SUMMARIES_MAX_ENTRIES = 50
+
+
+def _condense_fact(text: str) -> str:
+    """把一条完整事实压缩成摘要片段：折叠空白 → 截到最早的句读 → 硬截断。
+
+    句读集合含中文逗号(子句级压缩更狠),不含 ASCII 逗号(避开 "1,000" 这类数字)。
+    """
+    t = " ".join(str(text or "").split())
+    if not t:
+        return ""
+    cut = len(t)
+    for ch in ("。", "；", ";", "!", "?", "！", "？", "，"):
+        idx = t.find(ch)
+        if 0 < idx < cut:
+            cut = idx
+    t = t[:cut]
+    if len(t) > _SUMMARY_FACT_MAX_CHARS:
+        t = t[:_SUMMARY_FACT_MAX_CHARS]
+    return t
+
 
 def _maybe_auto_archive(state, ms) -> None:
     """检查是否需要触发自动归档。
@@ -27,6 +58,11 @@ def _maybe_auto_archive(state, ms) -> None:
     规则：当前 turn 数能被 summary_window 整除，且 turn >= auto_archive_after_turns，
     则把 memory.items 中 turn < (current_turn - auto_archive_after_turns) 的条目
     标记为 archived=True（不删除，只排除出上下文注入）。
+
+    真摘要压缩：本扫描归档掉的 facts 不是一扔了之 —— 压缩成一条「第X-Y轮：…」
+    摘要条目追加进 memory.summaries（每条 ≤600 字符），由 MemoryProvider 随
+    「长期记忆」注入。旧事实从「完整原文在场」降级为「压缩摘要在场」，远期
+    剧情不再因归档而对 GM 彻底失忆。幂等：无新归档就不产生新摘要。
 
     无 DB 依赖，纯内存操作，state.save() 由调用方负责。
     """
@@ -42,6 +78,7 @@ def _maybe_auto_archive(state, ms) -> None:
         cutoff_turn = current_turn - ms.auto_archive_after_turns
         items = (data.get("memory") or {}).get("items") or []
         changed = False
+        newly_archived: list[dict] = []
         for item in items:
             if not isinstance(item, dict):
                 continue
@@ -59,6 +96,7 @@ def _maybe_auto_archive(state, ms) -> None:
             if item_turn < cutoff_turn and item.get("status") != "archived":
                 item["archived"] = True
                 changed = True
+                newly_archived.append(item)
         # 同步到 legacy buckets：仅从 facts 移除已归档条目。**绝不碰 notes/pinned/abilities/resources**
         # (持久状态 + 玩家权威);且这里按文本 set 比对,若把它们纳入,一条与某归档事实文本恰好
         # 相同的能力/资源/手记会被误删(文本碰撞)。上面的豁免已保证这些桶的 item 不会被标 archived,
@@ -74,8 +112,40 @@ def _maybe_auto_archive(state, ms) -> None:
                 bucket_list = mem.get(bucket)
                 if isinstance(bucket_list, list):
                     mem[bucket] = [t for t in bucket_list if t not in archived_texts]
+            # 真摘要压缩：本扫描归档的 facts → 一条带轮次范围的压缩摘要。
+            _append_scan_summary(mem, newly_archived, current_turn)
     except Exception:
         pass  # 归档失败不影响正常出牌
+
+
+def _append_scan_summary(mem: dict, newly_archived: list[dict], current_turn: int) -> None:
+    """把本扫描归档的 facts 压缩成一条摘要追加进 mem["summaries"]。"""
+    fragments: list[str] = []
+    turns: list[int] = []
+    for item in newly_archived:
+        text = str(item.get("text") or "")
+        condensed = _condense_fact(text)
+        if condensed:
+            fragments.append(condensed)
+        try:
+            turns.append(int(item.get("turn", 0)))
+        except (TypeError, ValueError):
+            pass
+    if not fragments:
+        return
+    prefix = ""
+    if turns:
+        prefix = f"第{min(turns)}-{max(turns)}轮："
+    entry = prefix + "；".join(fragments)
+    if len(entry) > _SUMMARY_ENTRY_MAX_CHARS:
+        entry = entry[:_SUMMARY_ENTRY_MAX_CHARS].rstrip("；;，, ") + "……"
+    summaries = mem.get("summaries")
+    if not isinstance(summaries, list):
+        summaries = []
+        mem["summaries"] = summaries
+    summaries.append(entry)
+    if len(summaries) > _SUMMARIES_MAX_ENTRIES:
+        del summaries[:-_SUMMARIES_MAX_ENTRIES]
 
 
 def _restore_persistent_buckets(state) -> None:
@@ -154,16 +224,27 @@ class MemoryProvider(ContextProvider):
                 "与「事实：」冲突时一律以笔记/固定记忆为准,数值/状态以玩家手记为最新。】"
             )
 
-        # 窗口方向:各桶写入端是尾部 append(state.add_memory / apply_ops list 分支),
-        # 「最近 depth 条」必须取尾([-depth:])。旧实现取头 → 桶超过 depth 后,新增的
-        # 能力/资源/固定记忆/笔记/事实对 GM 永久不可见(notes/pinned/abilities/resources
-        # 四桶归档豁免、无任何轮转,一错就是永久)。
-        # ── bucket_world_enabled: main_quest / current_objective / facts / notes ─
+        # ── bucket_pinned_enabled: pinned ─────────────────────────────────────
+        # 固定记忆置顶注入:预算装填即优先级,玩家显式固定的权威记忆必须先于高频累积的
+        # 叙事事实占预算 —— 旧顺序 pinned 排在事实之后,事实一多就被截断挤没。
+        # 各桶取尾 [-depth:]:写入端是尾部 append(state.add_memory / apply_ops list 分支),
+        # 「最近 depth 条」必须取尾 —— 旧实现取头导致桶超深后新增条目永久不可见(已修)。
+        if ms.bucket_pinned_enabled:
+            for item in (m.get("pinned") or [])[-depth:]:
+                if not _add_line(f"固定记忆：{item}"):
+                    break
+
+        # ── bucket_world_enabled: main_quest / current_objective / summaries / facts / notes ─
         if ms.bucket_world_enabled:
             if m.get("main_quest"):
                 _add_line(f"主线：{m['main_quest']}")
             if m.get("current_objective"):
                 _add_line(f"当前目标：{m['current_objective']}")
+            # 历史概要:归档事实的压缩版(_maybe_auto_archive 生成)。排在原始事实之前 ——
+            # 它代表「更早但已压缩」的历史,比最近的原始事实更稀缺,丢了无法从别处找回。
+            for item in (m.get("summaries") or [])[-depth:]:
+                if not _add_line(f"概要：{item}"):
+                    break
             for item in (m.get("facts") or [])[-depth:]:
                 if not _add_line(f"事实：{item}"):
                     break
@@ -178,12 +259,6 @@ class MemoryProvider(ContextProvider):
                     break
             for item in (m.get("resources") or [])[-depth:]:
                 if not _add_line(f"资源：{item}"):
-                    break
-
-        # ── bucket_pinned_enabled: pinned ─────────────────────────────────────
-        if ms.bucket_pinned_enabled:
-            for item in (m.get("pinned") or [])[-depth:]:
-                if not _add_line(f"固定记忆：{item}"):
                     break
 
         # ── hypotheses（归属 world 类，随 bucket_world_enabled 开关）────────────
@@ -213,6 +288,7 @@ class MemoryProvider(ContextProvider):
             tokens_estimate=token_used,
             debug={
                 "items_count": len(m.get("items") or []),
+                "summaries_count": len(m.get("summaries") or []),
                 "token_used": token_used,
                 "token_budget": budget,
                 "recall_depth": depth,

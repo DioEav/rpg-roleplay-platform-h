@@ -2935,6 +2935,11 @@
       "add_failed": "Add failed",
       "facts": "Fact Store",
       "facts_subtitle": "Extracted by GM",
+      "summaries": "History Summary",
+      "summaries_subtitle": "Condensed archived facts · still injected",
+      "archived_note": "{{count}} older facts auto-archived (kept in save, no longer injected)",
+      "injected_badge": "Injected",
+      "injected_tip": "Actually injected into the GM context this turn",
       "notes": "Player Notes",
       "add_note_tip": "Add note",
       "add_note_prompt": "Add player note",
@@ -2945,9 +2950,9 @@
       "delete_note_confirm": "Delete this note?",
       "deleted_ok": "Deleted",
       "retrieval": "Retrieval",
-      "retrieval_subtitle": "References recalled from source / RAG / history this round",
-      "retrieval_chunks": "{{count}} chunk(s)",
-      "retrieval_empty": "(No retrieval yet)"
+      "retrieval_subtitle": "The memory text actually injected into the GM last turn",
+      "retrieval_chunks": "{{count}} injected",
+      "retrieval_empty": "(No retrieval yet. Send a message and this will show what was actually injected into the GM.)"
     },
     "worldbook": {
       "location_time": "Location · Time",

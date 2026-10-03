@@ -74,8 +74,8 @@ def test_memory_provider_still_renders_notes_after_long_session_with_precedence(
     # 根因①修复:长会话归档后,玩家笔记/固定记忆仍被渲染给 GM
     assert "笔记：金币现在是500" in text, "长会话后玩家笔记从 GM 上下文消失(根因①)"
     assert "固定记忆：主角真实身份是穿越者" in text
-    # 过时事实已归档移除,不再喂给 GM
-    assert "金币是100" not in text
+    # 过时事实不再作为「事实：」原始条目注入(真摘要压缩后,其压缩形态保留在「概要：」行)
+    assert "事实：金币是100" not in text
     # 根因②:优先级提示,GM 应以玩家手记为准
     assert "以笔记/固定记忆为准" in text
 

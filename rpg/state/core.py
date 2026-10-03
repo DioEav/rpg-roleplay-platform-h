@@ -307,6 +307,9 @@ DEFAULT_STATE = {
         "facts": [],
         "pinned": [],
         "notes": [],
+        # 真摘要压缩:归档扫描把超龄 facts 压缩成的「第X-Y轮：…」条目(系统生成,只读,
+        # 不接受 /api/memory/add|remove|update;随 MemoryProvider 注入「概要：」行)。
+        "summaries": [],
         # task 74：结构化记忆 dual-write 槽位。MemoryItem schema:
         # {id, kind, text, source, turn, time_label?, characters?, status, ts}
         # 其中 kind ∈ {canon_fact, runtime_fact, hypothesis, user_constraint}。

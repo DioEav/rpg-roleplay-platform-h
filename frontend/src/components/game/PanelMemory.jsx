@@ -1,4 +1,8 @@
-/* 记忆面板(记忆 tab)—— 纯机械从 game-panels.jsx 搬出,零行为变化。
+/* 记忆面板(记忆 tab)。原为 game-panels.jsx 机械搬出;
+   现新增:「本轮实际注入」标注 / 历史概要区 / 已归档事实计数。
+   注入标注依据 memory.last_retrieval(后端 chat 管线每轮写入的「长期记忆」层原文):
+   条目文本出现在其中 = 该条本轮真实进了 GM 上下文;面板展示的桶是全量,与实际
+   注入(受召回深度/token 预算裁剪)不必一致 —— 徽章就是为了把这个差补上。
    注意:pinned/notes/facts 各自独立渲染路径(历史病灶),逐字复制,勿统一。 */
 import React from 'react';
 import { useTranslation } from 'react-i18next';
@@ -8,6 +12,25 @@ import { ForcedSetSection } from './ForcedSetSection.jsx';
 function PanelMemory({ state, density }) {
   const { t } = useTranslation();
   const m = state.memory;
+  const lastRetrieval = m.last_retrieval || "";
+  const isInjected = (txt) => !!txt && lastRetrieval.includes(txt);
+  // 「已注入」徽章:绿色对勾,悬停看说明。行内字符不改动条目布局(三条渲染路径共用)。
+  const InjectedBadge = () => (
+    <span data-tip={t('game.memory.injected_tip', { defaultValue: '本轮实际注入给 GM 的上下文中' })}
+      data-tip-pos="left" aria-label={t('game.memory.injected_badge', { defaultValue: '已注入' })}
+      style={{ color: "var(--ok, #7eb88e)", fontSize: 11, marginLeft: 4, whiteSpace: "nowrap", flexShrink: 0 }}>
+      ✓
+    </span>
+  );
+  // 检索区计数 = 上一轮注入的记忆行数(last_retrieval 非空行)。此前读
+  // last_context.retrieval_chunks 是后端从不写入的死字段,恒显示 0。
+  const injectedCount = lastRetrieval ? lastRetrieval.split("\n").filter((l) => l.trim()).length : 0;
+  // 已归档事实计数(items 里 archived 且源自 facts 桶)——归档此前是静默的,条目从
+  // 事实列表消失无任何说明;补一行计数让「变少」可解释。
+  const archivedFactsCount = (m.items || []).filter(
+    (it) => it && typeof it === "object" && it.legacy_bucket === "facts" && it.archived
+  ).length;
+  const summaries = m.summaries || [];
   return (
     <div className="gp-stack">
       <div className="gp-section">
@@ -37,7 +60,7 @@ function PanelMemory({ state, density }) {
           {(m.pinned || []).map((item, i) => (
             <li key={i}>
               <span className="gp-pin-mark"><Icon name="pin" size={12} /></span>
-              <span className="serif">{item}</span>
+              <span className="serif">{item}{isInjected(item) && <InjectedBadge />}</span>
               <button className="iconbtn" data-tip={t('game.memory.unpin_tip')} aria-label={t('game.memory.unpin_tip')}
                 onClick={async () => {
                   if (!await window.__confirm({ message: t('game.memory.unpin_confirm'), danger: true })) return;
@@ -51,11 +74,23 @@ function PanelMemory({ state, density }) {
         </ul>
       </div>
 
+      {summaries.length > 0 && (
+        <div className="gp-section">
+          <div className="section-head"><h3>{t('game.memory.summaries', { defaultValue: '历史概要' })}<span className="muted-2" style={{marginLeft: 8, fontSize: 11, textTransform: "none"}}>{t('game.memory.summaries_subtitle', { defaultValue: '已归档事实的压缩版 · 仍会注入' })}</span></h3></div>
+          <ul className="gp-flat-list">
+            {summaries.map((s, i) => (<li key={i}><span className="muted-2">{s}</span></li>))}
+          </ul>
+        </div>
+      )}
+
       <div className="gp-section">
         <div className="section-head"><h3>{t('game.memory.facts')}<span className="muted-2" style={{marginLeft: 8, fontSize: 11, textTransform: "none"}}>{t('game.memory.facts_subtitle')}</span></h3></div>
         <ul className="gp-flat-list">
-          {(m.facts || []).map((item, i) => (<li key={i}><span>{item}</span></li>))}
+          {(m.facts || []).map((item, i) => (<li key={i}><span>{item}</span>{isInjected(item) && <InjectedBadge />}</li>))}
         </ul>
+        {archivedFactsCount > 0 && (
+          <p className="muted-2" style={{fontSize: 12, margin: "6px 0 0"}}>{t('game.memory.archived_note', { count: archivedFactsCount, defaultValue: '另有 {{count}} 条早期事实已自动归档（保存在存档中，不再注入）' })}</p>
+        )}
       </div>
 
       <div className="gp-section">
@@ -73,7 +108,7 @@ function PanelMemory({ state, density }) {
         <ul className="gp-flat-list">
           {(m.notes || []).map((item, i) => (
             <li key={i} style={{display: "flex", alignItems: "center", gap: 6}}>
-              <span style={{flex: 1}}>{item}</span>
+              <span style={{flex: 1}}>{item}{isInjected(item) && <InjectedBadge />}</span>
               <button className="iconbtn" data-tip={t('game.memory.edit_note_tip', { defaultValue: '编辑这条' })}
                 onClick={async () => {
                   // 就地编辑(原来只能删了重加 — 群反馈 行者无疆):预填当前文本,改完直接覆盖该条。
@@ -100,7 +135,7 @@ function PanelMemory({ state, density }) {
       <div className="gp-section">
         <div className="section-head">
           <h3>{t('game.memory.retrieval')}<span className="muted-2" style={{marginLeft: 8, fontSize: 11, textTransform: "none"}}>{t('game.memory.retrieval_subtitle')}</span></h3>
-          <span className="pill mono">{t('game.memory.retrieval_chunks', { count: (state.memory && state.memory.last_context && state.memory.last_context.retrieval_chunks) || 0 })}</span>
+          <span className="pill mono">{t('game.memory.retrieval_chunks', { count: injectedCount })}</span>
         </div>
         <pre className="gp-quote">{m.last_retrieval || t('game.memory.retrieval_empty')}</pre>
       </div>

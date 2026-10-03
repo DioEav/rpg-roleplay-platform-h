@@ -231,8 +231,10 @@ function PanelContext({ state }) {
   // 全部兜底到安全默认值。
   const memory = (state && state.memory) || {};
   const lastCtx = memory.last_context || {};
-  const tokensUsed = lastCtx.tokens_used || 0;
-  const retrievalChunks = lastCtx.retrieval_chunks || 0;
+  // tokens_used / retrieval_chunks 是后端从不写入的死字段(恒 0)。改读真实值:
+  // estimated_tokens 由 context_engine 每轮写入;层数取 layers 数组长度。
+  const tokensUsed = lastCtx.estimated_tokens || 0;
+  const retrievalChunks = Array.isArray(lastCtx.layers) ? lastCtx.layers.length : 0;
   const chapterRefs = Array.isArray(lastCtx.chapter_refs) ? lastCtx.chapter_refs : [];
   // task 86：curator_plan 真实写入路径是 state.memory.last_context_agent.curator_plan；
   // spec prop 顺序是 state.last_context_agent → state.last_context.debug → memory.last_context_agent → {}

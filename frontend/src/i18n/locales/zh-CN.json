@@ -3039,6 +3039,11 @@
       "add_failed": "添加失败",
       "facts": "事实库",
       "facts_subtitle": "由 GM 提取",
+      "summaries": "历史概要",
+      "summaries_subtitle": "已归档事实的压缩版 · 仍会注入",
+      "archived_note": "另有 {{count}} 条早期事实已自动归档（保存在存档中，不再注入）",
+      "injected_badge": "已注入",
+      "injected_tip": "本轮实际注入给 GM 的上下文中",
       "notes": "玩家笔记",
       "add_note_tip": "新增笔记",
       "add_note_prompt": "新增玩家笔记",
@@ -3049,9 +3054,9 @@
       "delete_note_confirm": "删除这条笔记？",
       "deleted_ok": "已删除",
       "retrieval": "召回",
-      "retrieval_subtitle": "本轮从原文 / RAG / 历史找回的参考资料",
-      "retrieval_chunks": "{{count}} 段",
-      "retrieval_empty": "（暂无召回）"
+      "retrieval_subtitle": "上一轮实际注入给 GM 的记忆原文",
+      "retrieval_chunks": "注入 {{count}} 条",
+      "retrieval_empty": "（暂无召回。发送一轮消息后，这里会显示本轮实际注入给 GM 的记忆。）"
     },
     "worldbook": {
       "location_time": "地点 · 时刻",
