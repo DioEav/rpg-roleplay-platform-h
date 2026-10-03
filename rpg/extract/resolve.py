@@ -235,6 +235,31 @@ def normalize_canon_type(t: str | None) -> str | None:
     return v if v in CANON_TYPES else None
 
 
+# 概念碎片门槛:非人物实体至少被 N 个不同弧段独立观测到才入库(2026-10)。
+CANON_MIN_ARC_OBSERVATIONS = 2
+
+
+def _drop_low_value_fragments(canon: list) -> tuple[list, list]:
+    """过滤非人物的单弧碎片(纯函数,离线可测)。人物不受限。
+
+    实测(吞噬星空 106 弧):3088 个 concept 里 3203+175 个 importance≤2 ——
+    1 次弧提及即入库 + LLM 措辞变体换 key → 只增不减滚雪球,81% 是碎片。
+    门槛 2 = 至少被 2 个不同弧段独立观测;「首次登场章」取两弧中更早者(防剧透下界只会更准)。
+    """
+    kept: list = []
+    dropped: list = []
+    for c in canon:
+        if (c.type or "") == "character":
+            kept.append(c)
+            continue
+        imp = int(getattr(c, "importance", 0) or 0)
+        if imp >= CANON_MIN_ARC_OBSERVATIONS:
+            kept.append(c)
+        else:
+            dropped.append(f"{c.name}({c.type},imp={imp})")
+    return kept, dropped
+
+
 # ── 音译变体归一(治『埃尔温·隆美尔』vs『艾尔温·隆美尔』被拆成两卡) ──────────────
 # 病灶:cluster_entities 的次信号(嵌入高相似)要求 ni[0]==nr[0](首字相同)才放行比较,
 # 但音译人名常见"首字用哪个同音字"因译者/LLM 批次而异(埃/艾、诺/娜…),首字不同就直接被
@@ -604,6 +629,18 @@ def resolve_and_write(db, script_id: int, chapter_extracts: list, *, embedder=No
         import logging as _lg
         _lg.getLogger(__name__).info("[resolve] 丢弃枚举外类型实体: %s", _type_dropped[:20])
     canon = _type_clamped
+
+    # 概念碎片门槛(2026-10):非人物实体至少被 **2 个不同弧段** 独立观测到才入库。
+    # importance = 出现过的弧段数(不是章数/频次) —— 一次弧提及 = 1。措辞变体(如
+    # 「精神念力」vs「念师体系」)换 key 滚雪球的主因就是 1 次弧提及即入库;
+    # 人物不限:单弧出现的小角色也是真角色,NPC 卡需要他们。
+    # first=弧首章,保的是防剧透下界,≥2 观测的首章只会更准。
+    canon, _frag_dropped = _drop_low_value_fragments(canon)
+    if _frag_dropped:
+        import logging as _lg
+        _lg.getLogger(__name__).info(
+            "[resolve] 概念碎片门槛(<2 弧观测, 非人物): 丢弃 %d 个,样例 %s",
+            len(_frag_dropped), _frag_dropped[:15])
 
     # anti-bleed:把"其他卡的主名"从每张卡的 aliases 剔除(治别名串卡 / 主角别名磁铁残留——
     # 例:妮娅.aliases 误含 茜茜/伊瑟拉/艾森豪威尔 等本属其他角色的真名)。纯 Python,零 LLM。

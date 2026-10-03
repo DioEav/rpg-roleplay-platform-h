@@ -98,3 +98,27 @@ def test_normalize_canon_type():
     assert normalize_canon_type("event") is None                # 枚举外 → 丢弃
     assert normalize_canon_type("") is None
     assert normalize_canon_type(None) is None
+
+
+# ── 概念碎片门槛:非人物实体至少 2 个弧段观测才入库(人物不限) ──
+def test_drop_low_value_fragments_threshold():
+    from extract.resolve import _drop_low_value_fragments
+    from extract.per_chapter import ChapterExtract  # 仅用于构造占位
+
+    class _C:
+        def __init__(self, name, type, importance):
+            self.name, self.type, self.importance = name, type, importance
+            self.aliases, self.logical_key, self.first_revealed_chapter = [], f"{name}_k", 1
+
+    canon = [
+        _C("罗峰", "character", 1),          # 人物:imp=1 也保留(单弧小角色也是真角色)
+        _C("精神念力", "concept", 2),         # ≥2 弧观测:保留
+        _C("作战服与兵器档位", "concept", 1),  # 单弧碎片:丢
+        _C("虚拟宇宙公司", "faction", 5),      # 保留
+        _C("某酒馆", "location", 1),           # 单弧碎片:丢
+    ]
+    kept, dropped = _drop_low_value_fragments(canon)
+    names = [c.name for c in kept]
+    assert "罗峰" in names and "精神念力" in names and "虚拟宇宙公司" in names
+    assert "作战服与兵器档位" not in names and "某酒馆" not in names
+    assert len(dropped) == 2

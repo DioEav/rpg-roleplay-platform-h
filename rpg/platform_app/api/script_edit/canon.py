@@ -53,6 +53,13 @@ async def api_canon_update(
             if col in body:
                 sets.append(f"{col}=%s")
                 args.append(str(body[col]))
+        if "name" in body:
+            # 名称可改(知识库人物表格的内联编辑)。注意:logical_key 不跟随改名 ——
+            # 它是实体的稳定标识(防剧透门控/锚点引用/commit 历史都按它),改名只影响展示名。
+            _new_name = str(body.get("name") or "").strip()
+            if _new_name:
+                sets.append("name=%s")
+                args.append(_new_name)
         if "importance" in body:
             sets.append("importance=%s")
             args.append(int(body["importance"]))
