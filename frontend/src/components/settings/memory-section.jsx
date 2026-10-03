@@ -14,8 +14,10 @@ function MemorySection() {
   const save = useAutoSave(t('settings.nav.memory'), "memory");
 
   // ── 召回行为字段 ──
-  const [recallDepth, setRecallDepth] = useStatePL(6);
-  const [summaryWindow, setSummaryWindow] = useStatePL(8);
+  // 初始值 = MemorySettings schema 默认(rpg/schemas/memory.py),未保存过偏好时
+  // 界面显示与后端实际生效值一致(修复前 UI 显示 6/8、后端实际用 5/10)。
+  const [recallDepth, setRecallDepth] = useStatePL(5);
+  const [summaryWindow, setSummaryWindow] = useStatePL(10);
   const [tokenBudget, setTokenBudget] = useStatePL(800);
   const [autoArchiveAfter, setAutoArchiveAfter] = useStatePL(50);
 

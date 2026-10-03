@@ -29,10 +29,12 @@ class MemoryUpdateRequest(_BaseRequest):
 
 
 class MemorySettings(BaseModel):
-    """用户级记忆系统配置（存于 settings 表，key 前缀 memory.*）。
+    """用户级记忆系统配置。
 
-    前端 MemorySection 通过 /api/settings POST 写入各 key，
-    后端消费方通过 get_memory_settings(user_id) 读取。
+    实际存储于 user_preferences.preferences（扁平 key 前缀 memory.*），
+    前端 MemorySection（桌面/移动）经 /api/me/preference 写入各 key；
+    后端消费方经 platform_app.settings.get_memory_settings(user_id) 读取
+    （该函数对旧 settings 表仅作历史数据兜底）。
     """
 
     token_budget: int = Field(

@@ -10,24 +10,49 @@ from .db import connect, init_db
 def get_memory_settings(user_id: int):
     """读取用户的记忆系统配置，缺失 key 时返回默认值。
 
+    值来源（后者逐键覆盖前者）：
+    1. settings 表 —— 旧 /api/settings 路径，前端从无调用方，仅作历史数据兜底；
+    2. user_preferences.preferences —— 前端 MemorySection（桌面/移动）经
+       /api/me/preference 写入的扁平 dotted key（"memory.recall_depth" 等）。
+       修复前本函数只查 settings 表，与前端写入的表不同 → 界面调参从不生效。
+
+    逐字段校验：单个非法值只回落该字段默认，不整表清零。
     返回 MemorySettings 实例（Pydantic model），调用方可直接属性访问。
     Import 放在函数内部，避免循环依赖。
     """
     from schemas.memory import MemorySettings
 
-    raw = list_settings(user_id)
-    # settings 表以 "memory.token_budget" 等 dotted key 存储
-    data = {}
-    prefix = "memory."
-    for k, v in raw.items():
-        if k.startswith(prefix):
-            field_name = k[len(prefix):]
-            data[field_name] = v
-    # Pydantic 会用 Field default 兜底缺失字段，validate=True 会跳过非法值用默认
+    raw: dict[str, Any] = {}
     try:
-        return MemorySettings.model_validate(data)
+        raw.update(list_settings(user_id))
     except Exception:
-        return MemorySettings()
+        pass
+    try:
+        init_db()
+        with connect() as db:
+            row = db.execute(
+                "select preferences from user_preferences where user_id = %s", (user_id,)
+            ).fetchone()
+        prefs = dict(row["preferences"]) if row and row["preferences"] else {}
+        raw.update(prefs)
+    except Exception:
+        pass
+
+    prefix = "memory."
+    model_fields = MemorySettings.model_fields
+    clean: dict[str, Any] = {}
+    for k, v in raw.items():
+        if not isinstance(k, str) or not k.startswith(prefix):
+            continue
+        field_name = k[len(prefix):]
+        if field_name not in model_fields:
+            continue
+        try:
+            ok = MemorySettings.model_validate({field_name: v})
+            clean[field_name] = getattr(ok, field_name)
+        except Exception:
+            continue
+    return MemorySettings(**clean)
 
 
 def list_settings(user_id: int) -> dict[str, Any]:
