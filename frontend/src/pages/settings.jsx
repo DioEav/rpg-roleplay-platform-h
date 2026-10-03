@@ -44,9 +44,11 @@ function SettingsPage({ section: sectionProp } = {}) {
     { id: "modelparams", label: t('settings.nav.modelparams'), icon: "spark" },
     { id: "modules",     label: t('settings.nav.modules'),     icon: "spark" },
     { id: "memory",      label: t('settings.nav.memory'),      icon: "memory" },
-    { id: "permissions", label: t('settings.nav.permissions'), icon: "lock" },
     { id: "deploy",      label: t('settings.nav.deploy'),      icon: "world" },
-    { id: "account",     label: t('settings.nav.account'),     icon: "user" },
+    // 「权限设置」区块已隐藏(2026-10):PermSection 组件与 i18n 原样保留,
+    // 恢复 = 把 permissions 加回 SECTIONS、渲染 <PermSection /> 并恢复 platform-app.jsx / entries/platform.jsx 路由。
+    // 「账号与数据迁移」区块已隐藏(2026-10):AccountSection 组件与 i18n 原样保留,
+    // 恢复 = 把 account 加回 SECTIONS、渲染 <AccountSection /> 并恢复 entries/platform.jsx 路由。
     // 「高危」区块已隐藏(2026-09,应运营要求):DangerSection 组件与 i18n 原样保留,
     // 恢复 = 把 danger 加回 SECTIONS 并渲染 <DangerSection />。清空存档仍可走后端 CLI。
   ];
@@ -87,9 +89,9 @@ function SettingsPage({ section: sectionProp } = {}) {
       {section === "modelparams" && <ModelParamsSection />}
       {section === "modules" && <ModuleModelsSection />}
       {section === "memory" && <MemorySection />}
-      {section === "permissions" && <PermSection />}
       {section === "deploy" && <DeploySection />}
-      {section === "account" && <AccountSection />}
+      {/* 「权限设置」区块已隐藏:见上方 SECTIONS 处注释 */}
+      {/* 「账号与数据迁移」区块已隐藏:见上方 SECTIONS 处注释 */}
       {/* 「高危」区块已隐藏:见上方 SECTIONS 处注释 */}
     </CSSpaceBetween>
   );

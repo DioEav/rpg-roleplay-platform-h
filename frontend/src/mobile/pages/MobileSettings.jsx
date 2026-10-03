@@ -1,6 +1,8 @@
 /* MobileSettings.jsx — 移动端设置页(单文件,内部 section 状态切换)
    覆盖路由: settings / settings-models / settings-modelparams / settings-modules
-            / settings-memory / settings-permissions / settings-account
+            / settings-memory
+   (settings-permissions 权限设置已隐藏(2026-10);组件 ../settings/perm-section.jsx 保留可恢复)
+   (settings-account 账号与数据迁移已隐藏(2026-10);组件 ../settings/account-section.jsx 保留可恢复)
    (settings-danger 高危区块已隐藏(2026-09);组件 ../settings/danger-section.jsx 保留可恢复)
    铁律:零 Cloudscape / 零电脑端 UI 复用;数据层全接 window.api.* 真实接口。
    ──────────────────────────────────────────────────────────────────────── */
@@ -11,8 +13,8 @@ import { PrefSection } from '../settings/pref-section.jsx';
 import { ModelParamsSection } from '../settings/modelparams-section.jsx';
 import { ModuleModelsSection } from '../settings/module-models-section.jsx';
 import { MemorySection } from '../settings/memory-section.jsx';
-import { PermissionsSection } from '../settings/perm-section.jsx';
-import { AccountSection } from '../settings/account-section.jsx';
+// PermissionsSection('../settings/perm-section.jsx')已随权限设置区块隐藏,import 摘除可恢复
+// AccountSection('../settings/account-section.jsx')已随账号与数据迁移区块隐藏,import 摘除可恢复
 import { DangerSection } from '../settings/danger-section.jsx';
 import { ModelsSection } from '../settings/models-section.jsx';
 
@@ -25,8 +27,8 @@ const SECTIONS = [
   { id:'modelparams',   icon:'gauge',     tone:'' },
   { id:'modules',       icon:'layers',    tone:'info' },
   { id:'memory',        icon:'memory',    tone:'' },
-  { id:'permissions',   icon:'shield',    tone:'ok' },
-  { id:'account',       icon:'user',      tone:'' },
+  // 'permissions'(权限设置)入口已隐藏(2026-10),PermissionsSection 组件保留可恢复
+  // 'account'(账号与数据迁移)入口已隐藏(2026-10),AccountSection 组件保留可恢复
   // 'danger' 入口已隐藏(2026-09),DangerSection 组件保留可恢复
 ];
 
@@ -37,8 +39,8 @@ const ROUTE_MAP = {
   'settings-modelparams':   'modelparams',
   'settings-modules':       'modules',
   'settings-memory':        'memory',
-  'settings-permissions':   'permissions',
-  'settings-account':       'account',
+  // 'settings-permissions' 路由已隐藏:落到未匹配 → 回 hub
+  // 'settings-account' 路由已隐藏:落到未匹配 → 回 hub
   // 'settings-danger' 路由已隐藏:落到未匹配 → 回 hub
 };
 
@@ -120,8 +122,8 @@ export function MobileSettings({ nav }) {
               {section === 'modelparams'  && <ModelParamsSection />}
               {section === 'modules'      && <ModuleModelsSection nav={nav} />}
               {section === 'memory'       && <MemorySection />}
-              {section === 'permissions'  && <PermissionsSection nav={nav} />}
-              {section === 'account'      && <AccountSection nav={nav} />}
+              {/* 'permissions'(权限设置)区块已隐藏:PermissionsSection 组件保留 */}
+              {/* 'account'(账号与数据迁移)区块已隐藏:AccountSection 组件保留 */}
               {/* 'danger' 区块已隐藏:DangerSection 组件保留(import 已摘除) */}
             </div>
           </div>

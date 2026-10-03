@@ -544,6 +544,19 @@ def _rebuild_world_key(ctl, user_id, script_id, body) -> dict:
             "stage": "world_key",
             "error": "overcut:分段过密已整体退回单世界(null)",
         })
+    # 单世界守卫:书无可识别的多世界结构 → 该模块无事可做。
+    # 语义:**成功完成检查**并如实报告"不适用",不是失败 —— ok=True 落 done,
+    # 状态接口(listing._build)按 error 文案判定 not_applicable → 卡片显示
+    # 「— 不适用」而非红色「重做失败」;error 字段仍携带原因供前端提示。
+    if r.get("worldless"):
+        return {
+            "ok": True,
+            "source": "structural_prior" if not body.get("use_llm") else "structural_prior+llm",
+            "before_count": before, "after_count": before,
+            "partial_failures": [],
+            "error": r.get("message") or "未发现多世界结构,无需世界观切分(此模块仅对无限流/穿越类多世界小说有意义)",
+            "extra": {"written": 0, "worldless": True},
+        }
     result = {
         "ok": True,
         "source": "structural_prior" if not body.get("use_llm") else "structural_prior+llm",

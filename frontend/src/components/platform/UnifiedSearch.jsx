@@ -89,7 +89,7 @@ function UnifiedSearch({ open, onClose, setPage }) {
     { id: "preferences", label: tSearch('platform.nav.settings_preferences'), parent: settingsLabel, hash: "settings", keywords: "language font density theme" },
     { id: "models",      label: tSearch('platform.nav.settings_models'),       parent: settingsLabel, hash: "settings", keywords: "openai anthropic models api" },
     { id: "memory",      label: tSearch('platform.nav.settings_memory'),       parent: settingsLabel, hash: "settings", keywords: "memory recall context" },
-    { id: "permissions", label: tSearch('platform.nav.settings_permissions'),  parent: settingsLabel, hash: "settings", keywords: "permission write structured" },
+    // 「权限设置」入口已隐藏(2026-10),不再作为可搜索目的地
     // 「高危」入口已隐藏,不再作为可搜索目的地
     // 部署配置已拆到「系统管理」,仅 admin 可见
     ...(isAdmin ? [

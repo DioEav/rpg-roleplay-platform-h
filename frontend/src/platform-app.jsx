@@ -217,8 +217,8 @@ const getCSModules = (t) => [
   //   ] },
   { id: 'account', label: t('platform.nav.account'), group: t('platform.nav.group_system'),
     pages: ['me', 'me-edit', 'me-settings', 'settings', 'settings-models',
-      'settings-modelparams', 'settings-modules', 'settings-memory', 'settings-permissions',
-      'settings-account'],
+      'settings-modelparams', 'settings-modules', 'settings-memory'],
+      // 'settings-account' 与 'settings-permissions' 已隐藏(2026-10):从 pages 移除后直链回落主页。
     sub: [
       { text: t('platform.nav.me'),                  href: '#me' },
       { text: t('platform.nav.me_edit'),              href: '#me-edit' },
@@ -228,8 +228,12 @@ const getCSModules = (t) => [
       { text: t('platform.nav.settings_modelparams'), href: '#settings-modelparams' },
       { text: t('platform.nav.settings_modules'),     href: '#settings-modules' },
       { text: t('platform.nav.settings_memory'),      href: '#settings-memory' },
-      { text: t('platform.nav.settings_permissions'), href: '#settings-permissions' },
-      { text: t('platform.nav.settings_account', { defaultValue: '账号与数据迁移' }), href: '#settings-account' },
+      // 「权限设置」(settings-permissions) 入口已隐藏(2026-10);组件保留,
+      // 恢复 = 解注释本行 + 上方 pages 数组 + entries/platform.jsx 的 PL_IDS 与路由 + settings.jsx SECTIONS。
+      // { text: t('platform.nav.settings_permissions'), href: '#settings-permissions' },
+      // 「账号与数据迁移」(settings-account) 入口已隐藏(2026-10);组件保留,
+      // 恢复 = 解注释本行 + 上方 pages 数组 + entries/platform.jsx 的 PL_IDS 与路由。
+      // { text: t('platform.nav.settings_account', { defaultValue: '账号与数据迁移' }), href: '#settings-account' },
       // 「高危」(settings-danger) 入口已隐藏(2026-09);组件保留,恢复 = 加回本行 + pages 数组。
     ] },
   // 系统管理:仅 admin 角色可见/可访问(adminOnly)。部署配置等站点级设置从用户

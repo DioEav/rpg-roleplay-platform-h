@@ -542,6 +542,21 @@ def backfill_worldlines(
 
     overcut = bool(segments and segments[0].get("overcut"))
 
+    # 单世界守卫:分段结果里没有任何非空 world 标签 = 这本书没有可识别的多世界结构
+    # (如单世界连续叙事的网文)。此时写入全是 NULL 空转 —— 单世界书本就该保持
+    # worldline_key=NULL(NULL = 未切分 → RAG 不钳制,是正确的安全默认)。
+    # 如实返回 worldless=True 让调用方/前端知道「没有可切分的多世界」,而非假 done。
+    has_world = any((s.get("world_key") or s.get("world_label") or "").strip() for s in segments)
+    if not has_world:
+        return {
+            "segments": [],
+            "overcut": False,
+            "would_write": 0,
+            "written": 0,
+            "worldless": True,
+            "message": "未发现多世界结构(无副本/世界/位面等切换信号),本书无需世界观切分",
+        }
+
     chapter_map = _segments_to_chapter_map(segments)
     would_write = len(chapter_map)
 

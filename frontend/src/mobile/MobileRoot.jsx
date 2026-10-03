@@ -54,7 +54,8 @@ const PAGE_TAB = {
   cards: 'cards', 'cards-npc': 'cards', 'cards-online': 'cards',
   me: 'me', 'me-edit': 'me', 'me-settings': 'me',
   settings: 'me', 'settings-models': 'me', 'settings-modelparams': 'me', 'settings-modules': 'me',
-  'settings-memory': 'me', 'settings-permissions': 'me', 'settings-account': 'me',
+  'settings-memory': 'me',
+  // 'settings-permissions' 与 'settings-account' 已隐藏(2026-10):未列出 → 走占位页
   usage: 'me', plugins: 'me', mcp: 'me', skills: 'me', apis: 'me', feedback: 'me', device: 'me', wall: 'me',
 };
 function tabOf(page) {
@@ -71,8 +72,8 @@ const MOBILE_PAGES = {
   'scripts-editor': MobileScripts, 'scripts-settings': MobileScripts,
   cards: MobileCards, 'cards-npc': MobileCards, 'cards-online': MobileCards,
   settings: MobileSettings, 'settings-models': MobileSettings, 'settings-modelparams': MobileSettings,
-  'settings-modules': MobileSettings, 'settings-memory': MobileSettings, 'settings-permissions': MobileSettings,
-  'settings-account': MobileSettings,
+  'settings-modules': MobileSettings, 'settings-memory': MobileSettings,
+  // 'settings-permissions' 与 'settings-account' 已隐藏(2026-10):未列出 → 走占位页
   // 'settings-danger' 已隐藏(2026-09):未列出 → 走占位页
   plugins: MobileCaps, mcp: MobileCaps, skills: MobileCaps, apis: MobileCaps, feedback: MobileCaps,
   me: MobileMe, 'me-edit': MobileMe, 'me-settings': MobileMe, usage: MobileMe, wall: MobileMe,
@@ -99,7 +100,7 @@ const PAGE_TITLE_KEYS = {
   feedback: 'mobile.root.page_title.feedback',
   'settings-models': 'mobile.root.page_title.settings_models',
   'settings-memory': 'mobile.root.page_title.settings_memory',
-  'settings-permissions': 'mobile.root.page_title.settings_permissions',
+  // 'settings-permissions' 已隐藏(2026-10):不再给占位页配标题
   plugins: 'mobile.root.page_title.plugins',
   mcp: 'mobile.root.page_title.mcp',
   skills: 'mobile.root.page_title.skills',

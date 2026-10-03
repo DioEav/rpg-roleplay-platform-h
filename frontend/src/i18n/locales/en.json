@@ -3935,9 +3935,10 @@
       "desc": "Current state of all derived data for this script. Each module can be rebuilt independently."
     },
     "status": {
-      "ready": "Ready",
-      "partial": "Partial",
       "missing": "Not built",
+      "na": "N/A",
+      "partial": "Partial",
+      "ready": "Ready",
       "running": "Running…",
       "stale": "Needs rebuild",
       "unknown": "Unknown"
@@ -7649,6 +7650,7 @@
     "unit_chunks": "chunks",
     "unit_embeddings": "vectors",
     "unit_facts": "entries",
+    "unit_world_key": "chapters",
     "unit_worldbook": "entries"
   },
   "policy_banner": {

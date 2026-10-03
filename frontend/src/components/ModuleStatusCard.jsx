@@ -33,6 +33,8 @@ const MODULE_META = {
 const MODULE_UNITS = {
   chunks:        { unitKey: 'module_status.unit_chunks',     cover: true },
   chapter_facts: { unitKey: 'module_status.unit_facts',      cover: true },
+  facts_refine:  { unitKey: 'module_status.unit_facts',      cover: true },
+  world_key:     { unitKey: 'module_status.unit_world_key',  cover: true },
   canon:         { unitKey: 'module_status.unit_canon' },
   cards:         { unitKey: 'module_status.unit_cards' },
   worldbook:     { unitKey: 'module_status.unit_worldbook' },
@@ -49,6 +51,7 @@ function statusGlyph(status) {
     case 'missing': return '○';
     case 'running': return '◷';
     case 'stale':   return '△';
+    case 'n/a':     return '—';
     default:        return '·';
   }
 }
@@ -60,6 +63,7 @@ function statusCls(status) {
     case 'stale':   return s.warn;
     case 'missing': return s.danger;
     case 'running': return s.run;
+    case 'n/a':     return s.dim;
     default:        return s.dim;
   }
 }
@@ -71,6 +75,7 @@ function statusText(t, status) {
     case 'missing': return t('modules.status.missing', { defaultValue: '缺失' });
     case 'running': return t('modules.status.running', { defaultValue: '运行中' });
     case 'stale':   return t('modules.status.stale',   { defaultValue: '已过期' });
+    case 'n/a':     return t('modules.status.na',      { defaultValue: '不适用' });
     default:        return t('modules.status.unknown', { defaultValue: '未知' });
   }
 }

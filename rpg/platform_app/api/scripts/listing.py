@@ -66,10 +66,38 @@ async def api_script_modules_status(script_id: int, user=Depends(require_user)):
 
         chunks_done = _scalar("select count(*) as c from document_chunks where script_id = %s")
         facts_done = _scalar("select count(*) as c from chapter_facts where script_id = %s")
-        # 阶段划分(第 4 张额外卡):done = 已有阶段标签的章数,total = 总章数
+        # 阶段划分(额外卡):done = 已有阶段标签的章数,total = 总章数
         story_phase_done = _scalar(
             "select count(*) as c from chapter_facts where script_id = %s and coalesce(story_phase,'') <> ''"
         )
+        # 章节摘要精炼(额外卡):done = LLM 真摘要的章数(source=llm_refined),total = 总章数
+        refine_done = _scalar(
+            "select count(*) as c from chapter_facts where script_id = %s "
+            "and metadata->>'source' = 'llm_refined'"
+        )
+        # 世界书条目充实(额外卡):done/total = 可充实的核心条目数
+        # (标题命中 力量|概念|势力|体系 模式,与 enrich 执行侧同一口径)
+        enrich_total = _scalar(
+            "select count(*) as c from worldbook_entries where script_id = %s and title ~ '力量|概念|势力|体系'"
+        )
+        # 世界观切分回填(额外卡):done = 已回填 worldline_key 的章数,total = 总章数。
+        # 单世界书(worldless)特殊处理:回填器会如实返回「未发现多世界结构」,该模块对
+        # 这本书是**不适用**而非缺失 —— done=total(=总章数) 让状态派生为 ready,
+        # 前端展示为「N 章 · 覆盖 N 章(单世界)」的中性信息,而非永远「缺失」的伪失败。
+        world_key_done = _scalar(
+            "select count(*) as c from chapter_facts where script_id = %s and coalesce(worldline_key,'') <> ''"
+        )
+        world_key_not_applicable = False
+        row_na = db.execute(
+            """select error from import_jobs
+               where script_id = %s and kind = 'rebuild_world_key'
+                 and error like '%%未发现多世界结构%%'
+               order by id desc limit 1""",
+            (script_id,),
+        ).fetchone()
+        if row_na:
+            world_key_not_applicable = True
+            world_key_done = max(world_key_done, 1)  # 占位使 done>=total 成立(具体数值前端不渲染)
         canon_done = _scalar("select count(*) as c from kb_canon_entities where script_id = %s")
         cards_done = _scalar("select count(*) as c from character_cards where script_id = %s and card_type='npc'")
         wb_done = _scalar("select count(*) as c from worldbook_entries where script_id = %s")
@@ -122,7 +150,7 @@ async def api_script_modules_status(script_id: int, user=Depends(require_user)):
     # E2E 暴露:rebuild-panel agent 的前端读 m.done_count/m.total_count/m.status,
     # 但 _build 返的是 done/total + 没 status → 卡片"条数:—" + "modules.status.unknown"
     # 同时双写新字段(done_count/total_count/status)+ 老字段(done/total)兼容
-    def _build(name: str, done: int, total: int) -> dict[str, Any]:
+    def _build(name: str, done: int, total: int, not_applicable: bool = False) -> dict[str, Any]:
         lj = last_job_by_module.get(name)
         stale = False
         if lj and lj.get("finished_at") and script_updated and done > 0:
@@ -133,7 +161,10 @@ async def api_script_modules_status(script_id: int, user=Depends(require_user)):
         #   ready:   done>=total>0 或 done>0 且 total=0(canon/cards 等无 total 概念)
         #   partial: 0<done<total
         #   missing: done==0
-        if lj and lj.get("status") in ("pending", "running"):
+        #   n/a:     模块对该剧本不适用(如单世界书的世界观切分)——非缺失也非失败
+        if not_applicable:
+            status = "n/a"
+        elif lj and lj.get("status") in ("pending", "running"):
             status = "running"
         elif stale:
             status = "stale"
@@ -147,7 +178,8 @@ async def api_script_modules_status(script_id: int, user=Depends(require_user)):
             "total": total,
             "done_count": done,       # 新字段名,前端 ModuleStatusCard 期望的
             "total_count": total,     # 同上
-            "status": status,         # 派生 'ready'|'partial'|'missing'|'stale'|'running'
+            "status": status,         # 派生 'ready'|'partial'|'missing'|'stale'|'running'|'n/a'
+            "not_applicable": not_applicable,
             "stale": stale,
             "last_job_id": (lj or {}).get("job_id"),
             "last_status": (lj or {}).get("status"),
@@ -160,6 +192,11 @@ async def api_script_modules_status(script_id: int, user=Depends(require_user)):
             _build("chunks", chunks_done, max(chapter_count, 1)),
             _build("chapter-facts", facts_done, max(chapter_count, 1)),
             _build("story_phase", story_phase_done, max(chapter_count, 1)),
+            # 三张操作型额外卡:done/total 反映各自的操作覆盖面
+            # (摘要精炼/世界观切分按章计;条目充实按可充实条目计,0=无可充实条目→ready)
+            _build("facts_refine", refine_done, max(chapter_count, 1)),
+            _build("worldbook_enrich", enrich_total, 0),
+            _build("world_key", world_key_done, max(chapter_count, 1), not_applicable=world_key_not_applicable),
             _build("canon", canon_done, 0),
             _build("cards", cards_done, 0),
             _build("worldbook", wb_done, 0),

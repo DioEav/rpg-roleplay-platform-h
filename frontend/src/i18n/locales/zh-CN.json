@@ -5,9 +5,10 @@
       "desc": "剧本所有派生数据的当前状态。每个模块可独立重做。"
     },
     "status": {
-      "ready": "就绪",
-      "partial": "部分完成",
       "missing": "未生成",
+      "na": "不适用",
+      "partial": "部分完成",
+      "ready": "就绪",
       "running": "运行中…",
       "stale": "需要重建",
       "unknown": "未知"
@@ -7646,6 +7647,7 @@
     "unit_chunks": "块",
     "unit_embeddings": "个",
     "unit_facts": "条",
+    "unit_world_key": "章",
     "unit_worldbook": "条"
   },
   "policy_banner": {
