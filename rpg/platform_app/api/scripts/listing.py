@@ -80,24 +80,25 @@ async def api_script_modules_status(script_id: int, user=Depends(require_user)):
         )
 
         # 每模块最近一次 job(by kind)
-        kind_to_module = {
-            "rebuild_chunks": "chunks",
-            "rebuild_facts": "chapter-facts",
-            "rebuild_canon": "canon",
-            "rebuild_cards": "cards",
-            "rebuild_worldbook": "worldbook",
-            "rebuild_anchors": "anchors",
-            "rebuild_embeddings": "embeddings",
-            "full_pipeline": "full_pipeline",
-            "llm_extract": "llm_extract",
-            # 三个新模块(facts_refine/worldbook_enrich/world_key)。这三个不在下方
-            # modules-status 的 7 张固定卡片里(它们是按需精炼/充实操作，非"是否已建立"
-            # 状态型模块)，但登记进这份 kind→module 映射保持与 REBUILD_MODULES 的
-            # job kind 命名一致，避免这三类 job 的 kind 在此表里"找不到"而被静默丢弃。
-            "rebuild_facts_refine": "facts_refine",
-            "rebuild_worldbook_enrich": "worldbook_enrich",
-            "rebuild_world_key": "world_key",
-            "rebuild_story_phase": "story_phase",
+        # kind → 该任务刷新的**模块列表**(多数任务只影响一个模块;全量类任务覆盖多个)。
+        # 全量类(llm_extract/full_pipeline)必须计入其覆盖的各模块最近任务 —— 否则全量
+        # 提取完成后,知识库人物/世界书/锚点/角色卡的数据明明已刷新,卡片却因为
+        # last_job 还停在旧的单模块重做而显示「需要重建」(误报)。
+        kind_to_modules = {
+            "rebuild_chunks": ["chunks"],
+            "rebuild_facts": ["chapter-facts"],
+            "rebuild_canon": ["canon"],
+            "rebuild_cards": ["cards"],
+            "rebuild_worldbook": ["worldbook"],
+            "rebuild_anchors": ["anchors"],
+            "rebuild_embeddings": ["embeddings"],
+            "rebuild_facts_refine": ["facts_refine"],
+            "rebuild_worldbook_enrich": ["worldbook_enrich"],
+            "rebuild_world_key": ["world_key"],
+            "rebuild_story_phase": ["story_phase"],
+            "llm_extract": ["canon", "cards", "anchors", "worldbook"],
+            "full_pipeline": ["chunks", "chapter-facts", "canon", "cards",
+                              "worldbook", "anchors", "embeddings", "story_phase"],
         }
         job_rows = db.execute(
             "select kind, job_id, status, finished_at, created_at "
@@ -108,15 +109,15 @@ async def api_script_modules_status(script_id: int, user=Depends(require_user)):
         last_job_by_module: dict[str, dict[str, Any]] = {}
         for r in job_rows:
             kind = r.get("kind") or ""
-            mod = kind_to_module.get(kind)
-            if not mod or mod in last_job_by_module:
-                continue
-            last_job_by_module[mod] = {
-                "job_id": r.get("job_id"),
-                "status": r.get("status"),
-                "finished_at": str(r.get("finished_at")) if r.get("finished_at") else None,
-                "kind": kind,
-            }
+            for mod in kind_to_modules.get(kind) or []:
+                if mod in last_job_by_module:
+                    continue  # job_rows 按时间倒序,首个即该模块最近一次
+                last_job_by_module[mod] = {
+                    "job_id": r.get("job_id"),
+                    "status": r.get("status"),
+                    "finished_at": str(r.get("finished_at")) if r.get("finished_at") else None,
+                    "kind": kind,
+                }
 
     # E2E 暴露:rebuild-panel agent 的前端读 m.done_count/m.total_count/m.status,
     # 但 _build 返的是 done/total + 没 status → 卡片"条数:—" + "modules.status.unknown"

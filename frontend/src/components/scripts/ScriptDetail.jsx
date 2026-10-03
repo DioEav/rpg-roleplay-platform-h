@@ -671,7 +671,7 @@ function ScriptDetailPanel({ script: s, savesCount, scriptSaves = [], embedStatu
               </CSContainer>
             )}
             <CSContainer header={
-              <CSHeader variant="h3" description={t('scripts.editor.extract_full_desc', { defaultValue: '重新跑一遍全量 LLM 抽取(章节摘要/知识库人物/世界书/锚点全刷新)。单模块重做请用上面的矩阵卡片。' })}>
+              <CSHeader variant="h3" description={t('scripts.editor.extract_full_desc', { defaultValue: '重跑规范提取管线(知识库人物/角色卡同步/时间线锚点/世界书条目/实体嵌入全刷新)。章节切片与摘要请用上方矩阵卡片。' })}>
                 {t('scripts.editor.extract_full_title', { defaultValue: '全量重新提取' })}
               </CSHeader>
             }>
