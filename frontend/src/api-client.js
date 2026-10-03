@@ -1141,12 +1141,22 @@
   function openEventSource(url, handlers) {
     handlers = handlers || {};
     const ev = new EventSource(url, { withCredentials: true });
+    const parse = (e) => { let d = e.data; try { d = JSON.parse(d); } catch (_) {} return d; };
+    const dispatch = (d) => {
+      handlers.onEvent && handlers.onEvent({ event: "update", data: d });
+      handlers.on_message && handlers.on_message(d);
+    };
     ev.onmessage = (e) => {
-      let d = e.data; try { d = JSON.parse(d); } catch (_) {}
+      const d = parse(e);
       handlers.onEvent && handlers.onEvent({ event: "message", data: d });
       handlers.on_message && handlers.on_message(d);
     };
-    ev.addEventListener("done", (e) => { handlers.on_done && handlers.on_done(e.data); ev.close(); });
+    // 后端进度用**命名事件**(update/queued)推送 —— 只挂 onmessage(默认事件)永远
+    // 收不到进度,消费方(KbExtractPanel 等)会卡在「调度中/进度 0」直到 done 才醒。
+    ev.addEventListener("update", (e) => dispatch(parse(e)));
+    ev.addEventListener("queued", (e) => dispatch(parse(e)));
+    // done 传解析后的对象(此前传原始字符串,消费方读 finalJob.status 恒 undefined)
+    ev.addEventListener("done", (e) => { handlers.on_done && handlers.on_done(parse(e)); ev.close(); });
     ev.addEventListener("error", (e) => { handlers.on_error && handlers.on_error(e); });
     return ev;
   }

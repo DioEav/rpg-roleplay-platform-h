@@ -50,7 +50,8 @@ function KbExtractPanel({ script, onDone }) {
   const [targetArcs, setTargetArcs] = useStatePL('100');
   const [concurrency, setConcurrency] = useStatePL('15');
   const [authorEra, setAuthorEra] = useStatePL('');
-  const [maxUsd, setMaxUsd] = useStatePL('10');
+  // 成本硬上限按需求停用(输入框隐藏 + 恒发极大值让后端成本闸永不触发);恢复=取消注释
+  // const [maxUsd, setMaxUsd] = useStatePL('10');
   // 章节范围(可空 → 全书);用户想"只重做第 1-50 章"时用
   const [chapterMin, setChapterMin] = useStatePL('');
   const [chapterMax, setChapterMax] = useStatePL('');
@@ -97,7 +98,8 @@ function KbExtractPanel({ script, onDone }) {
       target_arcs: Number(targetArcs) || 40,
       concurrency: Number(concurrency) || 15,
       author_era: (authorEra || '').trim(),
-      max_book_usd: Number(maxUsd) || 10,
+      // 成本硬上限停用:1e6 = 永不触发后端的 needs_confirm 拦截
+      max_book_usd: 1000000,
     };
     const cMin = Number(chapterMin);
     const cMax = Number(chapterMax);
@@ -233,19 +235,21 @@ function KbExtractPanel({ script, onDone }) {
                   )}
                   <CSFormField label={t('scripts.review.concurrency')}><CSInput type="number" value={concurrency} onChange={({ detail }) => setConcurrency(detail.value)} /></CSFormField>
                   <CSFormField label={t('scripts.review.author_era')} description={t('scripts.review.author_era_desc')}><CSInput value={authorEra} onChange={({ detail }) => setAuthorEra(detail.value)} /></CSFormField>
-                  <CSFormField label={t('scripts.review.max_usd')}><CSInput type="number" value={maxUsd} onChange={({ detail }) => setMaxUsd(detail.value)} /></CSFormField>
+                  {/* 成本硬上限输入框按需求隐藏,恢复=取消注释(需同时恢复上方 maxUsd state 并把 body 的 1000000 改回 Number(maxUsd) || 10) */}
+                  {/* <CSFormField label={t('scripts.review.max_usd')}><CSInput type="number" value={maxUsd} onChange={({ detail }) => setMaxUsd(detail.value)} /></CSFormField> */}
                 </CSColumnLayout>
               </CSSpaceBetween>
 
             {estimate && estimate.ok !== false && (
               <CSAlert type="info" header={t('scripts.review.cost_estimate')}>
                 <CSKeyValuePairs columns={4} items={[
-                  { label: t('scripts.import.est_cost'), value: estimate.est_usd != null ? `$${Number(estimate.est_usd).toFixed(3)}` : '—' },
+                  // 预估成本按需求隐藏:价目表不含第三方中转模型,金额恒 $0.000 或失真
                   { label: t('scripts.review.arcs'), value: estimate.arcs != null ? String(estimate.arcs) : '—' },
                   { label: t('scripts.review.input_tokens'), value: estimate.est_input_tokens != null ? Number(estimate.est_input_tokens).toLocaleString() : '—' },
                   { label: t('scripts.review.output_tokens'), value: estimate.est_output_tokens != null ? Number(estimate.est_output_tokens).toLocaleString() : '—' },
                 ]} />
-                {estimate.note && <CSBox fontSize="body-s" color="text-body-secondary" padding={{ top: 'xs' }}>{estimate.note}</CSBox>}
+                {/* note(约 $x(106 弧 × 模型)…校准说明)按需求隐藏,恢复=取消注释 */}
+                {/* <CSBox fontSize="body-s" color="text-body-secondary" padding={{ top: 'xs' }}>{estimate.note}</CSBox> */}
               </CSAlert>
             )}
             {estimate && estimate.ok === false && <CSAlert type="warning">{estimate.error || estimate.note || t('scripts.review.cannot_estimate')}</CSAlert>}
@@ -271,7 +275,9 @@ function KbExtractPanel({ script, onDone }) {
             {job && job.budget_estimate && job.budget_estimate.arcs ? (
               <CSBox fontSize="body-s" color="text-body-secondary">{t('scripts.review.split_arcs', { n: job.budget_estimate.arcs })}</CSBox>
             ) : null}
-            {usage && (
+            {/* 用量/花费(花费/tokens/调用次数)按需求隐藏,恢复=取消注释。
+                数据仍在后端记账(token_usage),只是不再展示。 */}
+            {/* {usage && (
               <CSAlert type={phase === 'done' ? 'success' : 'info'} header={t('scripts.review.usage')}>
                 <CSKeyValuePairs columns={4} items={[
                   { label: t('scripts.review.spent'), value: usage.usd != null ? `$${Number(usage.usd).toFixed(3)}` : '—' },
@@ -280,7 +286,7 @@ function KbExtractPanel({ script, onDone }) {
                   { label: t('scripts.review.llm_calls'), value: usage.llm_calls != null ? String(usage.llm_calls) : '—' },
                 ]} />
               </CSAlert>
-            )}
+            )} */}
             {phase === 'done' && <CSAlert type="success">{t('scripts.review.extract_complete')}</CSAlert>}
           </CSSpaceBetween>
         )}

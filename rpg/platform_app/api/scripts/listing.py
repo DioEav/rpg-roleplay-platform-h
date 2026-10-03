@@ -40,7 +40,10 @@ async def api_script_modules_status(script_id: int, user=Depends(require_user)):
     """
     with connect() as db:
         owned = db.execute(
-            """select s.chapter_count, s.updated_at from scripts s
+            """select s.chapter_count, s.updated_at,
+                      (select max(updated_at) from script_chapters sc
+                        where sc.script_id = s.id) as chapters_updated_at
+            from scripts s
             where s.id = %s and (
               s.owner_id = %s
               or s.id in (select script_id from user_script_subscriptions where user_id = %s)
@@ -49,7 +52,11 @@ async def api_script_modules_status(script_id: int, user=Depends(require_user)):
         ).fetchone()
         if not owned:
             return json_response({"ok": False, "error": "无权访问该剧本"}, status_code=403)
-        script_updated = owned.get("updated_at")
+        # stale 判定的时间源 = **章节表**的最后变更时间,而非 scripts.updated_at:
+        # 后者被提取流水线收尾(review_status 重置 + updated_at=now())、编辑 commit 等
+        # 大量非章节操作顶新 → 全矩阵模块被误标「需要重建」(实测:全量提取完成后
+        # 7 卡全亮)。章节被合并/拆分/编辑才会 bump 章节行 updated_at,语义精确。
+        script_updated = owned.get("chapters_updated_at") or owned.get("updated_at")
         chapter_count = int(owned.get("chapter_count") or 0)
 
         # 各模块当前 done / total
