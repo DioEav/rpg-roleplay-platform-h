@@ -506,7 +506,9 @@
       "bucket_world": "启用世界记忆桶",
       "bucket_world_desc": "关闭后主线/当前目标/事实/笔记不再注入(数据仍保留)。",
       "bucket_character": "启用角色记忆桶",
-      "bucket_character_desc": "关闭后能力/资源不再注入 GM 上下文(数据仍保留)。"
+      "bucket_character_desc": "关闭后能力/资源不再注入 GM 上下文(数据仍保留)。",
+      "summary_llm": "LLM 精修归档摘要",
+      "summary_llm_desc": "归档旧事实时，在回合结束后由模型生成连贯精细摘要覆盖机械压缩版(偶尔一次，成本很低)。关闭或失败时保留机械压缩版。"
     },
     "permissions": {
       "title": "写入权限",
@@ -4970,7 +4972,9 @@
         "bucket_world": "世界记忆桶",
         "bucket_world_desc": "主线 / 当前目标 / 事实 / 笔记",
         "bucket_char": "角色状态桶",
-        "bucket_char_desc": "能力 / 资源清单"
+        "bucket_char_desc": "能力 / 资源清单",
+        "summary_llm": "LLM 精修归档摘要",
+        "summary_llm_desc": "归档后由模型生成连贯精细摘要(成本很低)；关闭用机械压缩"
       },
       "perm": {
         "gm_write_perm": "GM 写入权限",

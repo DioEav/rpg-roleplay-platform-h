@@ -31,6 +31,9 @@ _SUMMARY_ENTRY_MAX_CHARS = 600
 _SUMMARY_FACT_MAX_CHARS = 50
 # summaries 列表上限（每次归档扫描至多产生 1 条，防无限增长）。
 _SUMMARIES_MAX_ENTRIES = 50
+# summary_pending 任务携带的原始全文上限（LLM 精修材料）：条数 × 单条截断。
+_PENDING_MAX_FACTS = 40
+_PENDING_FACT_MAX_CHARS = 250
 
 
 def _condense_fact(text: str) -> str:
@@ -59,10 +62,12 @@ def _maybe_auto_archive(state, ms) -> None:
     则把 memory.items 中 turn < (current_turn - auto_archive_after_turns) 的条目
     标记为 archived=True（不删除，只排除出上下文注入）。
 
-    真摘要压缩：本扫描归档掉的 facts 不是一扔了之 —— 压缩成一条「第X-Y轮：…」
-    摘要条目追加进 memory.summaries（每条 ≤600 字符），由 MemoryProvider 随
-    「长期记忆」注入。旧事实从「完整原文在场」降级为「压缩摘要在场」，远期
-    剧情不再因归档而对 GM 彻底失忆。幂等：无新归档就不产生新摘要。
+    真摘要压缩（两步式）：本扫描归档掉的 facts 不是一扔了之 —— 同步路径先压缩成
+    一条「第X-Y轮：…」机械保底摘要追加进 memory.summaries（每条 ≤600 字符），
+    并把原始全文记入 memory.summary_pending 任务；GM 回复返回后的收尾阶段
+    （chat_pipeline.memory_summary）再调 LLM 生成连贯精细摘要**覆盖**保底。
+    旧事实从「完整原文在场」降级为「摘要在场」，远期剧情不再因归档而对 GM
+    彻底失忆。幂等：无新归档就不产生新摘要/新任务。
 
     无 DB 依赖，纯内存操作，state.save() 由调用方负责。
     """
@@ -113,17 +118,27 @@ def _maybe_auto_archive(state, ms) -> None:
                 if isinstance(bucket_list, list):
                     mem[bucket] = [t for t in bucket_list if t not in archived_texts]
             # 真摘要压缩：本扫描归档的 facts → 一条带轮次范围的压缩摘要。
-            _append_scan_summary(mem, newly_archived, current_turn)
+            _append_scan_summary(mem, newly_archived)
     except Exception:
         pass  # 归档失败不影响正常出牌
 
 
-def _append_scan_summary(mem: dict, newly_archived: list[dict], current_turn: int) -> None:
-    """把本扫描归档的 facts 压缩成一条摘要追加进 mem["summaries"]。"""
+def _append_scan_summary(mem: dict, newly_archived: list[dict]) -> int:
+    """把本扫描归档的 facts 压缩成一条机械保底摘要追加进 mem["summaries"]。
+
+    同时写 mem["summary_pending"] 任务（原始全文 + 轮次范围 + 摘要下标），供
+    收尾阶段（chat_pipeline.memory_summary.refine_pending_summary）调 LLM 生成
+    精细摘要**覆盖**这条保底 —— 两步式"真摘要压缩"：同步路径永不调 LLM。
+    追加条目的下标；没有可写内容返回 -1。
+    """
     fragments: list[str] = []
+    raw_texts: list[str] = []
     turns: list[int] = []
     for item in newly_archived:
         text = str(item.get("text") or "")
+        if not text:
+            continue
+        raw_texts.append(text)
         condensed = _condense_fact(text)
         if condensed:
             fragments.append(condensed)
@@ -132,7 +147,7 @@ def _append_scan_summary(mem: dict, newly_archived: list[dict], current_turn: in
         except (TypeError, ValueError):
             pass
     if not fragments:
-        return
+        return -1
     prefix = ""
     if turns:
         prefix = f"第{min(turns)}-{max(turns)}轮："
@@ -144,8 +159,19 @@ def _append_scan_summary(mem: dict, newly_archived: list[dict], current_turn: in
         summaries = []
         mem["summaries"] = summaries
     summaries.append(entry)
+    idx = len(summaries) - 1
     if len(summaries) > _SUMMARIES_MAX_ENTRIES:
         del summaries[:-_SUMMARIES_MAX_ENTRIES]
+        idx = len(summaries) - 1
+    # pending 任务:原始全文(截断,给 LLM 足够细节) + 轮次范围 + 待覆盖的保底下标。
+    # 旧任务直接被新扫描覆盖(只保留最新一批,机械摘要永远在场,精修是锦上添花)。
+    mem["summary_pending"] = {
+        "index": idx,
+        "turn_range": [min(turns), max(turns)] if turns else None,
+        "texts": [t[:_PENDING_FACT_MAX_CHARS] for t in raw_texts][:_PENDING_MAX_FACTS],
+        "attempts": 0,
+    }
+    return idx
 
 
 def _restore_persistent_buckets(state) -> None:
@@ -275,6 +301,13 @@ class MemoryProvider(ContextProvider):
                     break
 
         text = "\n".join(lines) or "（暂无长期记忆）"
+        # 面板观测专用:把本轮记忆层实际注入的原文单独落字段(memory.last_memory_injection,
+        # 随 status_payload 整体下发)。注意 last_retrieval 是小说检索层(novel_retrieval)
+        # 的文本,与记忆层无关 —— 前端 ✓徽章/「注入 N 条」计数必须读本字段才有意义。
+        try:
+            m["last_memory_injection"] = text
+        except Exception:
+            pass  # m 为临时 dict(无 memory 键的极端构造)时写入丢失,无害
         layer = self.make_layer(
             "memory", "长期记忆", text,
             sticky=False, priority=60,

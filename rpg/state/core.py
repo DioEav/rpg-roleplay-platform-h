@@ -310,6 +310,9 @@ DEFAULT_STATE = {
         # 真摘要压缩:归档扫描把超龄 facts 压缩成的「第X-Y轮：…」条目(系统生成,只读,
         # 不接受 /api/memory/add|remove|update;随 MemoryProvider 注入「概要：」行)。
         "summaries": [],
+        # 真摘要压缩第二步的待精修任务:归档扫描写入(原始全文+轮次范围+保底下标),
+        # GM 回复后的收尾 worker(chat_pipeline.memory_summary)调 LLM 精修后清空。
+        "summary_pending": {},
         # task 74：结构化记忆 dual-write 槽位。MemoryItem schema:
         # {id, kind, text, source, turn, time_label?, characters?, status, ts}
         # 其中 kind ∈ {canon_fact, runtime_fact, hypothesis, user_constraint}。
@@ -317,6 +320,9 @@ DEFAULT_STATE = {
         # 新 items 数组是 task 75/76/77/78 的结构化基础。
         "items": [],
         "last_retrieval": "",
+        # 面板观测:本轮「长期记忆」层实际注入原文(含截断后真实进 prompt 的行),
+        # MemoryProvider.collect 每轮覆写。与 last_retrieval(小说检索层文本)无关。
+        "last_memory_injection": "",
         "last_context": {},
         "last_context_agent": {},
         "last_structured_updates": []

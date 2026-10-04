@@ -18,6 +18,7 @@ function MemorySection() {
   const [bucketPinned, setBucketPinned] = useState(true);
   const [bucketWorld, setBucketWorld] = useState(true);
   const [bucketChar, setBucketChar] = useState(true);
+  const [summaryLlm, setSummaryLlm] = useState(true);
 
   const loadOr = (p, nk, ok) => {
     if (p[nk]!==undefined && p[nk]!==null) return p[nk];
@@ -43,6 +44,7 @@ function MemorySection() {
         if (typeof p['memory.bucket_pinned_enabled'] === 'boolean') setBucketPinned(p['memory.bucket_pinned_enabled']);
         if (typeof p['memory.bucket_world_enabled'] === 'boolean') setBucketWorld(p['memory.bucket_world_enabled']);
         if (typeof p['memory.bucket_character_enabled'] === 'boolean') setBucketChar(p['memory.bucket_character_enabled']);
+        if (typeof p['memory.summary_llm_enabled'] === 'boolean') setSummaryLlm(p['memory.summary_llm_enabled']);
       } catch (_) {}
     })();
     return () => { cancelled = true; };
@@ -110,6 +112,10 @@ function MemorySection() {
         <div className="pl-setrow">
           <div className="pl-setrow-tx"><strong>{t('mobile.settings.memory.bucket_char')}</strong><span>{t('mobile.settings.memory.bucket_char_desc')}</span></div>
           <Toggle on={bucketChar} onChange={(v) => { setBucketChar(v); save('bucket_character_enabled',v); }} />
+        </div>
+        <div className="pl-setrow">
+          <div className="pl-setrow-tx"><strong>{t('mobile.settings.memory.summary_llm')}</strong><span>{t('mobile.settings.memory.summary_llm_desc')}</span></div>
+          <Toggle on={summaryLlm} onChange={(v) => { setSummaryLlm(v); save('summary_llm_enabled',v); }} />
         </div>
       </SetGroup>
     </>

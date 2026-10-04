@@ -142,7 +142,7 @@ async def _run_post_gm_parallel(
     is_extractor_enabled: Callable[[dict[str, Any] | None], bool],
     is_black_swan_enabled: Callable[[dict[str, Any] | None], bool] | None = None,
 ) -> dict[str, Any]:
-    """并行跑 GM 后处理(黑天鹅 + extractor + 世界心跳),返回 {response_with_ops, extractor_active}。
+    """并行跑 GM 后处理(黑天鹅 + extractor + 世界心跳 + 归档摘要精修),返回 {response_with_ops, extractor_active}。
     时间跳跃/套路/星期等确定性叙事纠错已统一到 timeline_narrative_guard.run_narrative_guards
     (async/sync 两路共用,见 run_gm_phase),不再在此并行跑。
 
@@ -151,7 +151,8 @@ async def _run_post_gm_parallel(
     run_postproc_worker.py:101 的 black_swan handler enable_llm=False 同款理由)。
 
     extractor/black_swan 只读 response + state;heartbeat 会写 state.data 的
-    background_events / heartbeat_meta 两个专属键(其它 worker 不碰这两键,键级不相交
+    background_events / heartbeat_meta 两个专属键;memory_summary 会写
+    memory.summaries / memory.summary_pending(其它 worker 不碰这些键,键级不相交
     → gather 内并发安全),由本回合 Phase 5 统一持久化。
     任何 worker 抛异常 → log + 返回该 worker 的中性值,不影响其它 worker。
     """
@@ -255,11 +256,28 @@ async def _run_post_gm_parallel(
         except Exception as exc:
             log.debug(f"[world_heartbeat] worker failed silently: {exc}")
 
+    async def _worker_memory_summary() -> None:
+        """归档摘要 LLM 精修(sync parity):生产默认走 async 路径的接线(gm.py,
+        ⚠️ 见该处注释与 test_memory_summary_wiring.py 的老坑说明);本 worker 只在
+        sync 模式/enqueue 失败降级时跑。注入同步路径的归档扫描只写机械保底摘要 +
+        memory.summary_pending 任务;此处调 LLM 生成连贯精细摘要覆盖保底,Phase 5
+        统一持久化。失败/关闭保底仍在,绝不破回合。"""
+        try:
+            from chat_pipeline.memory_summary import refine_pending_summary
+            await asyncio.to_thread(
+                refine_pending_summary,
+                state,
+                user_id_int,
+            )
+        except Exception as exc:
+            log.debug(f"[memory_summary] worker failed silently: {exc}")
+
     # 并行执行,gather return_exceptions=False 但每个 worker 内部已 try/except,不会抛
-    _swan_unused, ex_result, _heartbeat_unused = await asyncio.gather(
+    _swan_unused, ex_result, _heartbeat_unused, _summary_unused = await asyncio.gather(
         _worker_black_swan(),
         _worker_extractor(),
         _worker_heartbeat(),
+        _worker_memory_summary(),
     )
     extractor_active, response_with_ops = ex_result
     return {

@@ -79,3 +79,7 @@ class MemorySettings(BaseModel):
         le=50,
         description="归档检查窗口大小（每隔 summary_window 轮触发一次归档扫描）",
     )
+    summary_llm_enabled: bool = Field(
+        default=True,
+        description="归档时用 LLM 把旧事实精修成连贯摘要（收尾异步，失败/关闭回落机械压缩）",
+    )

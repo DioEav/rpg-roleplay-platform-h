@@ -1,8 +1,10 @@
 /* 记忆面板(记忆 tab)。原为 game-panels.jsx 机械搬出;
    现新增:「本轮实际注入」标注 / 历史概要区 / 已归档事实计数。
-   注入标注依据 memory.last_retrieval(后端 chat 管线每轮写入的「长期记忆」层原文):
-   条目文本出现在其中 = 该条本轮真实进了 GM 上下文;面板展示的桶是全量,与实际
-   注入(受召回深度/token 预算裁剪)不必一致 —— 徽章就是为了把这个差补上。
+   注入标注依据 memory.last_memory_injection —— 后端 MemoryProvider.collect 每轮
+   把「长期记忆」层实际注入原文(含预算/深度裁剪后真正进 prompt 的行)写入该字段。
+   面板展示的桶是全量,与实际注入不必一致 —— 徽章就是为了把这个差补上。
+   ⚠️不能读 memory.last_retrieval:那是小说检索层(novel_retrieval/RAG)的文本,
+   从不含记忆层行(模组场景甚至是空串),拿它当数据源徽章/计数恒为 0。
    注意:pinned/notes/facts 各自独立渲染路径(历史病灶),逐字复制,勿统一。 */
 import React from 'react';
 import { useTranslation } from 'react-i18next';
@@ -12,8 +14,8 @@ import { ForcedSetSection } from './ForcedSetSection.jsx';
 function PanelMemory({ state, density }) {
   const { t } = useTranslation();
   const m = state.memory;
-  const lastRetrieval = m.last_retrieval || "";
-  const isInjected = (txt) => !!txt && lastRetrieval.includes(txt);
+  const lastInjection = m.last_memory_injection || "";
+  const isInjected = (txt) => !!txt && lastInjection.includes(txt);
   // 「已注入」徽章:绿色对勾,悬停看说明。行内字符不改动条目布局(三条渲染路径共用)。
   const InjectedBadge = () => (
     <span data-tip={t('game.memory.injected_tip', { defaultValue: '本轮实际注入给 GM 的上下文中' })}
@@ -22,9 +24,15 @@ function PanelMemory({ state, density }) {
       ✓
     </span>
   );
-  // 检索区计数 = 上一轮注入的记忆行数(last_retrieval 非空行)。此前读
-  // last_context.retrieval_chunks 是后端从不写入的死字段,恒显示 0。
-  const injectedCount = lastRetrieval ? lastRetrieval.split("\n").filter((l) => l.trim()).length : 0;
+  // 检索区计数 = 本轮注入的「长期记忆」行数,按记忆行前缀过滤
+  // (last_memory_injection 就是记忆层自己的文本,过滤只为排除占位行)。
+  const _MEM_LINE_PREFIXES = [
+    "固定记忆：", "概要：", "事实：", "笔记：", "能力：", "资源：",
+    "主线：", "当前目标：", "未确认推测：", "【记忆优先级",
+  ];
+  const injectedCount = lastInjection
+    ? lastInjection.split("\n").filter((l) => _MEM_LINE_PREFIXES.some((p) => l.startsWith(p))).length
+    : 0;
   // 已归档事实计数(items 里 archived 且源自 facts 桶)——归档此前是静默的,条目从
   // 事实列表消失无任何说明;补一行计数让「变少」可解释。
   const archivedFactsCount = (m.items || []).filter(
@@ -137,7 +145,7 @@ function PanelMemory({ state, density }) {
           <h3>{t('game.memory.retrieval')}<span className="muted-2" style={{marginLeft: 8, fontSize: 11, textTransform: "none"}}>{t('game.memory.retrieval_subtitle')}</span></h3>
           <span className="pill mono">{t('game.memory.retrieval_chunks', { count: injectedCount })}</span>
         </div>
-        <pre className="gp-quote">{m.last_retrieval || t('game.memory.retrieval_empty')}</pre>
+        <pre className="gp-quote">{lastInjection || t('game.memory.retrieval_empty')}</pre>
       </div>
     </div>
   );

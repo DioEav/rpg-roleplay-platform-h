@@ -26,6 +26,7 @@ function MemorySection() {
   const [bucketPinnedEnabled, setBucketPinnedEnabled] = useStatePL(true);
   const [bucketWorldEnabled, setBucketWorldEnabled] = useStatePL(true);
   const [bucketCharacterEnabled, setBucketCharacterEnabled] = useStatePL(true);
+  const [summaryLlmEnabled, setSummaryLlmEnabled] = useStatePL(true);
 
   // A6.2: loadOrFallback — 读新 key 优先,不存在再读旧 key
   const loadOrFallback = (p, newKey, oldKey) => {
@@ -55,6 +56,7 @@ function MemorySection() {
         if (typeof p["memory.bucket_pinned_enabled"] === "boolean") setBucketPinnedEnabled(p["memory.bucket_pinned_enabled"]);
         if (typeof p["memory.bucket_world_enabled"] === "boolean") setBucketWorldEnabled(p["memory.bucket_world_enabled"]);
         if (typeof p["memory.bucket_character_enabled"] === "boolean") setBucketCharacterEnabled(p["memory.bucket_character_enabled"]);
+        if (typeof p["memory.summary_llm_enabled"] === "boolean") setSummaryLlmEnabled(p["memory.summary_llm_enabled"]);
       } catch (_) {}
     })();
     return () => { cancelled = true; };
@@ -144,6 +146,12 @@ function MemorySection() {
           <CSToggle checked={bucketCharacterEnabled}
             onChange={({ detail }) => { setBucketCharacterEnabled(detail.checked); save("bucket_character_enabled", detail.checked); }}>
             {bucketCharacterEnabled ? t('common.enabled') : t('common.disabled')}
+          </CSToggle>
+        </SetRow>
+        <SetRow label={t('settings.memory.summary_llm')} description={t('settings.memory.summary_llm_desc')}>
+          <CSToggle checked={summaryLlmEnabled}
+            onChange={({ detail }) => { setSummaryLlmEnabled(detail.checked); save("summary_llm_enabled", detail.checked); }}>
+            {summaryLlmEnabled ? t('common.enabled') : t('common.disabled')}
           </CSToggle>
         </SetRow>
       </SetGroup>

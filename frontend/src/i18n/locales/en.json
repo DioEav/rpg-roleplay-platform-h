@@ -402,7 +402,9 @@
       "bucket_world": "Enable World Bucket",
       "bucket_world_desc": "When disabled, main quest / objective / facts / notes are no longer injected (data is kept).",
       "bucket_character": "Enable Character Bucket",
-      "bucket_character_desc": "When disabled, abilities / resources are no longer injected into GM context (data is kept)."
+      "bucket_character_desc": "When disabled, abilities / resources are no longer injected into GM context (data is kept).",
+      "summary_llm": "LLM-Refined Archive Summaries",
+      "summary_llm_desc": "When facts are archived, a model generates a coherent refined summary after the turn ends (rare, very cheap). Falls back to mechanical compression when off or on failure."
     },
     "permissions": {
       "title": "Write Permissions",
@@ -4973,7 +4975,9 @@
         "bucket_world": "World Memory Bucket",
         "bucket_world_desc": "Main quest / objective / facts / notes",
         "bucket_char": "Character State Bucket",
-        "bucket_char_desc": "Abilities / resources"
+        "bucket_char_desc": "Abilities / resources",
+        "summary_llm": "LLM-Refined Archive Summaries",
+        "summary_llm_desc": "Model refines archived facts into coherent summaries (very cheap); off = mechanical"
       },
       "perm": {
         "gm_write_perm": "GM Write Permissions",

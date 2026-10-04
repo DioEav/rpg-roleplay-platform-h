@@ -745,6 +745,21 @@ async def run_gm_phase(
                 except Exception as _hb_err:
                     log.warning(f"[chat] world_heartbeat 启动失败,跳过: {_hb_err}")
 
+            # 归档摘要 LLM 精修(真摘要压缩第二步):与心跳同款纪律 —— 此处 create_task
+            # 起、两个 return 前 await,只写 memory.summaries/summary_pending 专属键,
+            # Phase 5 统一持久化。⚠️接线必须在这条【async 生产默认路径】(心跳 v1.41.0
+            # 同款老坑:错接 sync-only 的 _run_post_gm_parallel 会生产永不触发);
+            # sync 路径的 _worker_memory_summary 保留作 parity。有 pending 任务才起
+            # task,无任务零开销(酒馆不豁免:酒馆上下文同样跑归档扫描产 pending)。
+            _ms_task = None
+            try:
+                if (state.data.get("memory") or {}).get("summary_pending"):
+                    from chat_pipeline.memory_summary import refine_pending_summary as _ms_refine
+                    _ms_uid = _uid_of(api_user)
+                    _ms_task = asyncio.create_task(asyncio.to_thread(_ms_refine, state, _ms_uid))
+            except Exception as _ms_err:
+                log.warning(f"[chat] memory_summary 启动失败,跳过: {_ms_err}")
+
             # Q Phase 2 史官三合一(flag on):一次 recorder LLM 调用同时产 ops + 锚点判定,
             # 替代「独立 extractor + 独立 anchor_reconcile LLM」两次调用。off 时走原路径。
             # 酒馆豁免:tavern_gm 的 GM 已用自己的工具写状态(slim 已豁免、工具齐全),史官三合一对酒馆
@@ -800,6 +815,11 @@ async def run_gm_phase(
                             await _hb_task  # 心跳写完 state 再进 Phase 5 持久化
                         except Exception as _hb_err:
                             log.warning(f"[chat] world_heartbeat 等待失败: {_hb_err}")
+                    if _ms_task is not None:
+                        try:
+                            await _ms_task  # 摘要精修写完 state 再进 Phase 5 持久化
+                        except Exception as _ms_err:
+                            log.warning(f"[chat] memory_summary 等待失败: {_ms_err}")
                     return
             # 关键修复:GM JSON op 确定性写回(async 早退路径也必须 apply,否则 GM 经
             # JSON op 写的 location/time/resources/quest/relationships/选项 全部丢失)。
@@ -833,6 +853,11 @@ async def run_gm_phase(
                     await _hb_task  # 心跳写完 state 再进 Phase 5 持久化
                 except Exception as _hb_err:
                     log.warning(f"[chat] world_heartbeat 等待失败: {_hb_err}")
+            if _ms_task is not None:
+                try:
+                    await _ms_task  # 摘要精修写完 state 再进 Phase 5 持久化
+                except Exception as _ms_err:
+                    log.warning(f"[chat] memory_summary 等待失败: {_ms_err}")
             return
     # ── 同步后处理路径 (sync 模式 or enqueue 失败降级) ─────────────────────
 
