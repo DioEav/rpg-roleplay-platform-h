@@ -73,10 +73,10 @@ function MemorySection() {
         </div>
         <div className="pl-setrow" style={{ flexDirection: 'column', alignItems: 'stretch', gap: 10 }}>
           <MSlider label={t('mobile.settings.memory.token_budget_label', { n: tokenBudget })} desc={t('mobile.settings.memory.token_budget_desc')}
-            value={tokenBudget} min={200} max={2000} step={50}
+            value={tokenBudget} min={200} max={5000} step={50}
             onChange={(v) => setTokenBudget(v)} />
           <button className="pl-btn-ghost" style={{ height:36, fontSize:13 }}
-            onClick={() => { const n=Math.max(200,Math.min(2000,tokenBudget)); save('token_budget',n); }}>
+            onClick={() => { const n=Math.max(200,Math.min(5000,tokenBudget)); save('token_budget',n); }}>
             <Icon name="save" size={14} /> {t('common.save')}
           </button>
         </div>

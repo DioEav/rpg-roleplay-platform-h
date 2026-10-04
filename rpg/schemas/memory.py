@@ -40,7 +40,7 @@ class MemorySettings(BaseModel):
     token_budget: int = Field(
         default=800,
         ge=200,
-        le=2000,
+        le=5000,
         description="每轮注入记忆 token 上限（字符数 // 2 估算）",
     )
     auto_archive_after_turns: int = Field(

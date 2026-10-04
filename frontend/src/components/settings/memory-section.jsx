@@ -94,14 +94,14 @@ function MemorySection() {
         </SetRow>
         <SetRow label={t('settings.memory.token_budget')} description={t('settings.memory.token_budget_desc')}>
           <div style={{display: "flex", alignItems: "center", gap: 8}}>
-            <input type="range" min={200} max={2000} step={50} value={tokenBudget}
+            <input type="range" min={200} max={5000} step={50} value={tokenBudget}
               onChange={(e) => setTokenBudget(Number(e.target.value))}
-              onMouseUp={(e) => { const n = Number(e.target.value); if (n >= 200 && n <= 2000) save("token_budget", n); }}
-              onTouchEnd={(e) => { const n = Number(e.target.value); if (n >= 200 && n <= 2000) save("token_budget", n); }}
+              onMouseUp={(e) => { const n = Number(e.target.value); if (n >= 200 && n <= 5000) save("token_budget", n); }}
+              onTouchEnd={(e) => { const n = Number(e.target.value); if (n >= 200 && n <= 5000) save("token_budget", n); }}
               style={{flex: 1, minWidth: 120}} />
-            <input type="number" min={200} max={2000} step={50} value={tokenBudget}
+            <input type="number" min={200} max={5000} step={50} value={tokenBudget}
               onChange={(e) => setTokenBudget(Number(e.target.value))}
-              onBlur={(e) => { const n = Number(e.target.value); if (n >= 200 && n <= 2000) save("token_budget", n); }}
+              onBlur={(e) => { const n = Number(e.target.value); if (n >= 200 && n <= 5000) save("token_budget", n); }}
               className="mono" style={{width: 70, textAlign: "right"}} />
           </div>
         </SetRow>

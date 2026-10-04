@@ -109,6 +109,14 @@ def test_out_of_range_value_falls_back_per_field(monkeypatch):
     assert ms.summary_window == MemorySettings().summary_window
 
 
+def test_token_budget_upper_bound_is_5000(monkeypatch):
+    """上限放开后 5000 必须被接受、5001 回落默认(防 UI/schema 单边改漏)。"""
+    _patch_prefs(monkeypatch, {"memory.token_budget": 5000})
+    assert settings_mod.get_memory_settings(1).token_budget == 5000
+    _patch_prefs(monkeypatch, {"memory.token_budget": 5001})
+    assert settings_mod.get_memory_settings(1).token_budget == MemorySettings().token_budget
+
+
 def test_non_memory_and_unknown_keys_ignored(monkeypatch):
     _patch_prefs(monkeypatch, {
         "perm.default_mode": "full_access",      # 其它命名空间不碰
