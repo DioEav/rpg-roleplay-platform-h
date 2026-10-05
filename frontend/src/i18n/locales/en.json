@@ -2605,6 +2605,7 @@
     },
     "toast": {
       "created": "Save created",
+      "deduplicated": "A save with the same name was just created — returned the existing one (no duplicate created)",
       "create_fail": "Create failed: {{err}}",
       "activated": "Set as current save",
       "activate_fail": "Switch failed: {{err}}",

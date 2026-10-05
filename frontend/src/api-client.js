@@ -661,7 +661,9 @@
     // ---------- Saves & branches ----------
     saves: {
       list: () => GET(`${API_PREFIX}/saves`),
-      create: (body) => POST(`${API_PREFIX}/saves`, body),
+      // 建档后端同步做快照构建 + seed_tree/anchor_seed/KB T0 seed(大剧本/远程DB可超 15s,
+      // 旧默认超时导致「网络异常：signal timed out」且重试会建重复档)—— 给足 3 分钟。
+      create: (body) => POST(`${API_PREFIX}/saves`, body, { signal: timeoutSignal(180000) }),
       detail: (sid) => GET(`${API_PREFIX}/saves/` + sid),
       contextRuns: (sid, q) => GET(`${API_PREFIX}/saves/` + sid + "/context-runs", q),
       // task 50：BE 早就有这些 endpoint 但 FE 一直没 wrapper

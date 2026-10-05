@@ -367,7 +367,13 @@ function SavesListView() {
       if (created && created.ok === false) {
         throw new Error(created.error || created.detail || t('saves.page.err_backend_rejected_create'));
       }
-      flash.ok(t('saves.toast.created'));
+      // 幂等命中:后端 90s 窗口内已有同用户+同剧本+同标题的档(多为超时后重试),
+      // 返回的是那个旧档 —— 提示用户,避免无感知地进入旧配置(不同角色卡/出生点)的存档。
+      if (created && created.deduplicated) {
+        flash.ok(t('saves.toast.deduplicated', { defaultValue: '检测到刚创建的同名存档，已返回原档（未重复创建）' }));
+      } else {
+        flash.ok(t('saves.toast.created'));
+      }
       setCreateOpen(false);
       reload();
       try { window.dispatchEvent(new CustomEvent('rpg-saves-updated')); } catch (_) {}

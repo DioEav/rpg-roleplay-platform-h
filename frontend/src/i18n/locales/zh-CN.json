@@ -2709,6 +2709,7 @@
     },
     "toast": {
       "created": "已创建存档",
+      "deduplicated": "检测到刚创建的同名存档，已返回原档（未重复创建）",
       "create_fail": "创建失败：{{err}}",
       "activated": "已设为当前存档",
       "activate_fail": "切换失败：{{err}}",

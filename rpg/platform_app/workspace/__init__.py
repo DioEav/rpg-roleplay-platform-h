@@ -42,6 +42,8 @@ from .creation import (
     _seed_kb_at_creation,
     create_save,
     create_tavern_save,
+    find_recent_duplicate,
+    IDEMPOTENT_CREATE_WINDOW_SEC,
 )
 
 # —— 子模块全部顶层名 re-export(生产引用面零改动)——

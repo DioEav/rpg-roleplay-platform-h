@@ -1,6 +1,7 @@
 """platform_app.api.saves — /api/saves*, /api/branches/* 路由。"""
 from __future__ import annotations
 
+import asyncio
 import json as _json
 import logging
 from typing import Any
@@ -174,10 +175,28 @@ async def api_create_save(request: Request, user=Depends(require_user)):
         script_id = int(raw_script_id)
     except (TypeError, ValueError):
         return json_response({"ok": False, "error": "script_id 必须为整数"}, status_code=400)
+    # title 归一为 str:create_save 内 title.strip() 不接受 None(客户端显式传
+    # {"title": null} 时 body.get 的默认值不生效)—— 归一后 null/缺省都落到
+    # create_save 的 "新存档" 兜底。
+    body["title"] = str(body.get("title") or "")
     # 校验 script 归属(task 74: 接受 owner OR subscriber)— 读级:owner ∪ subscription
     with connect() as db:
         if not script_readable(db, script_id, user["id"]):
             return json_response({"ok": False, "error": "无权访问该剧本"}, status_code=403)
+    # 幂等去重(治"前端超时→重试→重复建档"):窗口内同用户+同剧本+同标题已建成 →
+    # 直接返回那条存档,不再重复建档/重复跑 KB seed。放在 vertex 预检之前 —— 已存在
+    # 的档无需再校验模型。查重自身失败不挡创建(降级放行,宁可重复也不误伤)。
+    try:
+        _recent_dup = await asyncio.to_thread(
+            workspace.find_recent_duplicate, user["id"], script_id, body.get("title", "")
+        )
+    except Exception:
+        log.warning("[api_create_save] 幂等查重失败,放行正常创建", exc_info=True)
+        _recent_dup = None
+    if _recent_dup:
+        log.info("[api_create_save] 幂等命中:uid=%s script=%s 返回已有存档 id=%s(窗口内重复创建)",
+                 user["id"], script_id, _recent_dup.get("id"))
+        return json_response({"ok": True, "save": _recent_dup, "deduplicated": True})
     # 前置校验:新存档实际会用哪个 api_id(与 app.py._ensure_loaded 同一优先级链:
     # gm.* 用户偏好 → 该用户已配凭据的第一个模型 → 全局 catalog 默认),若解析到
     # vertex_ai 且该用户在生产鉴权模式下没上传 SA → 现在就拒,别等玩家写完人设、
@@ -236,7 +255,11 @@ async def api_create_save(request: Request, user=Depends(require_user)):
     if player_origin == "body" or not identity:
         identity_known = None
     try:
-        save = workspace.create_save(
+        # 重活卸载到线程池:create_save 全程同步 DB 操作(快照构建 + seed_tree/
+        # anchor_seed/KB T0 seed),在 async 端点里直跑会阻塞事件循环 —— 其它请求
+        # (含正在流式的 GM 回合)全被卡住,连锁引发更多超时。
+        save = await asyncio.to_thread(
+            workspace.create_save,
             user["id"], script_id, body.get("title", ""),
             new_card=new_card, character=character,
             birthpoint=birthpoint, identity=identity, story_intent=story_intent,

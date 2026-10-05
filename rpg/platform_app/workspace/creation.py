@@ -21,6 +21,35 @@ from .snapshot import _build_initial_snapshot
 
 log = get_logger(__name__)
 
+# 幂等重试保护窗口(秒):建档是重操作(快照构建 + seed_tree/anchor_seed/KB T0 seed),
+# 慢环境(大剧本/远程DB)下前端旧超时期间用户看到失败后重试 → 重复建档。窗口内同
+# 用户+同剧本+同归一化标题的重复创建直接返回已建成的档。这是"重试幂等"而非唯一性
+# 约束 —— 真想建两个同名档,改个名或等窗口过去即可。
+IDEMPOTENT_CREATE_WINDOW_SEC = 90
+
+
+def find_recent_duplicate(user_id: int, script_id: int, title: str) -> dict | None:
+    """查幂等窗口内同 (user_id, script_id, 归一化标题) 的最近存档;无则 None。
+
+    标题归一化与 create_save 的入库规则一致:strip,空 → "新存档"。
+    返回完整行(经 expose,与 create_save 的返回形状一致:含 uid 公共 id),
+    DB 异常向上抛 —— 调用方(路由层)负责降级:宁可重复建档也不挡正常创建。
+    """
+    init_db()
+    norm_title = (title or "").strip() or "新存档"
+    with connect() as db:
+        row = db.execute(
+            """
+            select * from game_saves
+            where user_id = %s and script_id = %s and title = %s
+              and created_at > now() - make_interval(secs => %s)
+            order by created_at desc
+            limit 1
+            """,
+            (user_id, script_id, norm_title, IDEMPOTENT_CREATE_WINDOW_SEC),
+        ).fetchone()
+    return expose(dict(row)) if row else None
+
 
 def _seed_kb_at_creation(save_id: int, script_id: int | None, snapshot: dict) -> None:
     """新存档创建即 seed 进 KB(kb-native from birth)+ 打 `kb_native` 标记 →「封死新存档入口」:
