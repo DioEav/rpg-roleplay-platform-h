@@ -1404,13 +1404,20 @@
 
 .gp-chips { display: flex; flex-wrap: wrap; gap: 5px; }
 .gp-chip {
-  display: inline-flex; align-items: center; height: 24px;
-  padding: 0 9px;
-  font-size: 12px;
+  /* min-height 而非定高:GM 写的 known_events 词条无单条长度上限,长词条换行时
+     定高会把第二行叠在第一行上(同 .gp-warns 注释记录过的老坑)。允许 chip 随
+     内容增高,长文本按列宽折行,超宽词强制断行。 */
+  display: inline-flex; align-items: center; min-height: 24px;
+  max-width: 100%;
+  padding: 2px 9px;
+  font-size: 12px; line-height: 1.4;
   color: var(--text-quiet);
   border: 1px solid var(--line-soft);
   border-radius: var(--r-2);
   background: var(--bg);
+  white-space: normal;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 /* 风险标记:整句提示用可换行的整行卡片堆叠(定高 chip 装不下长句会重叠) */
 .gp-warns { display: flex; flex-direction: column; gap: 5px; min-width: 0; }
