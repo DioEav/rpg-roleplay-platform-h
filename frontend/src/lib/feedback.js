@@ -9,8 +9,8 @@ import { sha256hex } from './crypto-safe.js';
 // ── 法务 / 渠道常量(各端逐字一致 → 共享) ──────────────────────────────
 export const AUP_LINK = 'https://play.stellatrix.icu/legal/aup#2J';
 export const MAX_FREE_TEXT = 10000;
-export const QQ_GROUP_NUMBER = '584876566';
-export const QQ_JOIN_URL = 'https://qm.qq.com/q/49Dqcr0aw0';
+export const QQ_GROUP_NUMBER = '';
+export const QQ_JOIN_URL = '';
 export const QQ_QR_SRC = '/qq-group.jpg';
 
 // 同意文案规范版(FeedbackQuickModal / pages/feedback / MobileCaps 用此 ASCII 标点版)。

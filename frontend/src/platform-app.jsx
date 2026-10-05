@@ -361,6 +361,9 @@ function PlatformShellCS({ page, setPage, children, assistant, assistantOpen, on
   const [feedbackOpen, setFeedbackOpen] = useStatePL(false);
   const [welcomeOpen, setWelcomeOpen] = useStatePL(false);
   const [welcomeFirstTime, setWelcomeFirstTime] = useStatePL(false);
+  // 「使用须知」欢迎弹窗总开关(2026-10 隐藏):顶栏按钮 + 进站自动弹出 + 渲染,
+  // 三处统一由它控制。恢复 = 改回 true。
+  const SHOW_WELCOME_GUIDE = false;
   const chromeApi = React.useMemo(() => ({ set: (c) => setChromeState(c || {}), clear: () => setChromeState({}) }), []);
   void chrome;
   useEffectPL(() => { setChromeState({}); }, [page]);
@@ -386,6 +389,8 @@ function PlatformShellCS({ page, setPage, children, assistant, assistantOpen, on
 
   // 新用户首次进入：user.welcome_dismissed_at 为 null 时弹使用须知弹窗（只弹一次）
   useEffectPL(() => {
+    // 「使用须知」已隐藏(2026-10):总开关 SHOW_WELCOME_GUIDE=false 时不再自动弹出。
+    if (!SHOW_WELCOME_GUIDE) return;
     // 等 user 数据就绪后再判断（rpg-data-ready 之后 reactiveUser 才有真值）
     const check = () => {
       const u = _userState || _initialUser();
@@ -576,8 +581,11 @@ function PlatformShellCS({ page, setPage, children, assistant, assistantOpen, on
     <>
       <PolicyNoticeBanner />
       <FeedbackDrawer open={feedbackOpen} onClose={() => setFeedbackOpen(false)} />
-      <WelcomeModal open={welcomeOpen} firstTime={welcomeFirstTime}
-        onClose={() => { markAnnouncementSeen(); setWelcomeOpen(false); setWelcomeFirstTime(false); }} />
+      {/* 「使用须知」欢迎弹窗已隐藏(2026-10):SHOW_WELCOME_GUIDE=false,恢复改回 true 即可 */}
+      {SHOW_WELCOME_GUIDE && (
+        <WelcomeModal open={welcomeOpen} firstTime={welcomeFirstTime}
+          onClose={() => { markAnnouncementSeen(); setWelcomeOpen(false); setWelcomeFirstTime(false); }} />
+      )}
       <HelpDrawerRoot />
       <div id="pl-cs-topnav" className="pl-cs-topbar"
         style={{ position: 'sticky', top: 0, zIndex: 1002, display: 'flex', alignItems: 'center', background: '#131211' }}>
@@ -620,7 +628,7 @@ function PlatformShellCS({ page, setPage, children, assistant, assistantOpen, on
         </div>
         {/* 中右:全局工具 + 账号(搜索统一走命令面板,不再放内联搜索框,避免重复) */}
         <div style={{ flex: 1, minWidth: 0, display: 'flex', alignItems: 'center' }}>
-          {/* 反馈 + 使用须知 快捷按钮(CS Icon 替代 emoji) */}
+          {/* 反馈快捷按钮(使用须知按钮已隐藏,2026-10:SHOW_WELCOME_GUIDE 开关控制) */}
           <div style={{ display: 'flex', alignItems: 'center', gap: 4, paddingRight: 4, flexShrink: 0 }}>
             <button
               onClick={() => setFeedbackOpen(true)}
@@ -632,16 +640,18 @@ function PlatformShellCS({ page, setPage, children, assistant, assistantOpen, on
               <CSIcon name="contact" size="small" />
               {t('platform.menu.feedback_btn')}
             </button>
-            <button
-              onClick={() => { setWelcomeFirstTime(false); setWelcomeOpen(true); }}
-              title={t('platform.menu.guide_btn')}
-              style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '3px 10px', borderRadius: 6, border: '1px solid rgba(140,140,180,0.30)', background: 'transparent', color: '#c8c2b7', cursor: 'pointer', fontSize: 12.5, fontWeight: 500, whiteSpace: 'nowrap' }}
-              onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(140,140,180,0.10)'; e.currentTarget.style.borderColor = 'rgba(140,140,180,0.55)'; }}
-              onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.borderColor = 'rgba(140,140,180,0.30)'; }}
-            >
-              <CSIcon name="status-info" size="small" />
-              {t('platform.menu.guide_btn')}
-            </button>
+            {SHOW_WELCOME_GUIDE && (
+              <button
+                onClick={() => { setWelcomeFirstTime(false); setWelcomeOpen(true); }}
+                title={t('platform.menu.guide_btn')}
+                style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '3px 10px', borderRadius: 6, border: '1px solid rgba(140,140,180,0.30)', background: 'transparent', color: '#c8c2b7', cursor: 'pointer', fontSize: 12.5, fontWeight: 500, whiteSpace: 'nowrap' }}
+                onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(140,140,180,0.10)'; e.currentTarget.style.borderColor = 'rgba(140,140,180,0.55)'; }}
+                onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.borderColor = 'rgba(140,140,180,0.30)'; }}
+              >
+                <CSIcon name="status-info" size="small" />
+                {t('platform.menu.guide_btn')}
+              </button>
+            )}
           </div>
           {/* (去掉了这里多余的一枚独立头像 —— 与右侧 CSTopNavigation 的用户菜单重复;
               用户身份/菜单统一走右上角下拉。) */}
