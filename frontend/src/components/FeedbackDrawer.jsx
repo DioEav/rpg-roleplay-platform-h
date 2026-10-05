@@ -58,8 +58,7 @@ export function FeedbackDrawer({ open, onClose }) {
   // 不写就只有 free_text → 一句话bug → 无法定位
   const [includeRuntime, setIncludeRuntime] = React.useState(true);
   const [runtimePreview, setRuntimePreview] = React.useState(null);
-  // 自部署(local/desktop)模式:反馈转发到中央服务器,显示「选填联系邮箱」用于收回执。
-  const [selfHost, setSelfHost] = React.useState(false);
+  // 2026-10: 自部署不再转发中央服务器,反馈一律写本地库 — 原 selfHost 探测/转发文案已移除。
   const [contactEmail, setContactEmail] = React.useState('');
   // 反馈处理回执:上次开抽屉以来管理员处理过的反馈
   const [newlyReviewed, setNewlyReviewed] = React.useState([]);
@@ -105,14 +104,6 @@ export function FeedbackDrawer({ open, onClose }) {
       const snap = window.__getRuntimeSnapshot && window.__getRuntimeSnapshot();
       setRuntimePreview(snap ? snap.__runtime__ : null);
     } catch (_) { setRuntimePreview(null); }
-    // 探测部署模式:自部署时反馈走中央服务器,需要选填邮箱来收回执。
-    (async () => {
-      try {
-        const st = await window.api?.game?.state?.();
-        const dep = (st?.app?.deployment || '').toLowerCase();
-        setSelfHost(['local', 'desktop', 'self_hosted', 'self-hosted'].includes(dep));
-      } catch (_) { /* 默认非自部署 */ }
-    })();
     loadFeedbackHistory();
   }, [open, loadFeedbackHistory]);
 

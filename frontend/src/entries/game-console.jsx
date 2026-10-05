@@ -1673,6 +1673,9 @@ function App() {
             togglePerm={() => { setShowPerm((s) => !s); setShowSlash(false); setShowPlus(false); setShowModel(false); }}
             saveId={(activeSave && activeSave.id) || (game && game._raw && game._raw.save_id) || null}
             imageGenKind="game"
+            /* 「附加 / 工具」按钮已隐藏(2026-10):图片附件在文本管线下不被识别(仅记占位),
+               按钮留着只会产生无效附件。恢复 = 删掉本行 hideAttach(Composer 组件开关保留)。 */
+            hideAttach={true}
           />
           {/* 真实文件上传(file/image/card 共用;onAttachPick 触发)→ GM 可读文本附件内容 */}
           <input ref={fileInputRef} type="file" style={{ display: 'none' }} onChange={onFilePicked} />

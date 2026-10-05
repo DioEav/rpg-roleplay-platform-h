@@ -8,6 +8,10 @@
   GET    /api/admin/feedback                  — admin 审查队列 (FB-03)
   POST   /api/admin/feedback/{id}/decision    — admin 标记 ok|nsfw_terminate|spam (FB-03)
 
+2026-10: 自部署(local/desktop)模式不再转发到中央服务器 —— 反馈一律写本地库,
+由自部署者自己的 admin 经 #admin-feedback 审阅(数据不出本机)。
+/api/feedback/anon 保留:兼容旧版本客户端的转发协议 + 桌面匿名提交路径。
+
 FB-04 NSFW 预审:
   POST /api/feedback 在写 DB 前调用 moderation.moderate_feedback()。
   - auto_reject (CSAM): 立刻终止账号 + 写 nsfw_terminate 行(不存原文)。
@@ -80,50 +84,6 @@ def _match_user_id_by_email(db, contact_email: str) -> int | None:
 # POST /api/feedback — 用户提交
 # ──────────────────────────────────────────────────────────────────────────────
 
-async def _forward_feedback_to_central(body: dict, ua: str):
-    """自部署(local/desktop)模式:本机没有「中央 admin」处理反馈 →
-    把反馈转发到我的中央服务器(/api/feedback/anon),让自部署用户的反馈 + 邮件回执闭环走通。
-    中央地址固定取自部署环境变量(非用户/请求可控),不构成 SSRF;默认指向正式站。"""
-    import os
-
-    import httpx
-
-    central = (os.environ.get("RPG_CENTRAL_URL") or "https://rpg-roleplay.stellatrix.icu").rstrip("/")
-    url = f"{central}/api/feedback/anon"
-    payload = {
-        "free_text": body.get("free_text", "") or "",
-        "excerpts": body.get("excerpts", []) or [],
-        "consent_token": body.get("consent_token", "") or "",
-        "contact_email": (body.get("contact_email", "") or "").strip()[:320],
-        "client_id": (body.get("client_id") or os.environ.get("RPG_CLIENT_ID", "") or "").strip()[:128],
-        "app_version": (body.get("app_version", "") or "")[:64],
-        "env_snapshot": body.get("env_snapshot") if isinstance(body.get("env_snapshot"), dict) else {},
-    }
-    try:
-        async with httpx.AsyncClient(timeout=20) as client:
-            resp = await client.post(url, json=payload, headers={"user-agent": ua or "rpg-desktop"})
-        data: dict = {}
-        try:
-            data = resp.json()
-        except Exception:
-            data = {}
-        if resp.status_code >= 400:
-            # 透传中央的 4xx 文案(NSFW 终止 / 限流 / 校验),前端已能识别这些 error_key。
-            detail = data.get("detail") if isinstance(data, dict) else None
-            raise HTTPException(status_code=resp.status_code, detail=detail or f"中央服务器返回 {resp.status_code}")
-        return json_response({
-            "ok": True,
-            "forwarded": True,
-            "feedback_id": data.get("feedback_id"),
-            "linked": data.get("linked", False),
-        })
-    except HTTPException:
-        raise
-    except Exception as exc:
-        log.warning("forward feedback to central failed: %s", exc)
-        raise HTTPException(status_code=502, detail=f"反馈转发到服务器失败:{exc}")
-
-
 def _capture_feedback_env(user: dict | None, client_env: dict | None = None) -> dict:
     """服务端采集反馈时的模型上下文,存进 feedback.env_snapshot。
 
@@ -190,21 +150,13 @@ def _capture_feedback_env(user: dict | None, client_env: dict | None = None) -> 
 
 @router.post("/api/feedback")
 async def submit_feedback(request: Request, user=Depends(require_user)):
-    """FB-01/02: 提交反馈 + 写 consent_log。自部署(local/desktop)模式转发到中央服务器。"""
+    """FB-01/02: 提交反馈 + 写 consent_log。
+
+    2026-10 起所有部署模式一律写本地库(不再转发中央服务器):
+    自部署者用本地 admin 经 #admin-feedback 审阅,反馈数据不出本机。"""
     body = await request.json()
     ip = _client_ip(request)
     ua = request.headers.get("user-agent", "")
-
-    # 自部署模式:转发到中央服务器(本机库不存),走 anon 收集 + 邮件回执闭环。
-    try:
-        from core.config import deployment_mode as _dmode
-
-        _mode = (_dmode() or "").strip().lower()
-    except Exception:
-        _mode = ""
-    from core.config import LOCAL_MODES
-    if _mode in LOCAL_MODES:
-        return await _forward_feedback_to_central(body, ua)
 
     free_text: str = body.get("free_text", "") or ""
     excerpts = body.get("excerpts", []) or []

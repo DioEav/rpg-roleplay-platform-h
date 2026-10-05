@@ -7156,7 +7156,7 @@
       },
       "contact_email": {
         "label": "Contact email (optional)",
-        "description": "Self-hosted feedback is forwarded to the official server for review. Providing your email lets us send you a reply; if it matches your login email, the feedback will automatically be linked to your account."
+        "description": "Feedback is stored in this server's own database and reviewed by its admins. Providing your email lets the admins send you a reply; if it matches your login email, the feedback will automatically be linked to your account."
       },
       "runtime": {
         "checkbox_label": "Include runtime environment info (recommended: page URL, active script/save, recent errors, last 3 turns — visible to admins only)",
