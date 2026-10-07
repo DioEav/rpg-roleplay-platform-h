@@ -63,7 +63,16 @@ function ViewUsage({ nav }) {
   const byModel = data?.by_model || [];
   const forecast = data?.forecast || null;
   const buckets = series?.series || [];
-  const byScenario = data?.by_scenario || null;
+  // 「消费预测」「按场景拆分」已隐藏(2026-10):恢复 = 改回 true。(与桌面 UsagePage 同款开关)
+  const SHOW_USAGE_FORECAST_SCENARIO = false;
+  // 成本相关金额显示(总成本卡/缓存节省/趋势成本曲线/模型行内金额)已隐藏(2026-10)。
+  const SHOW_USAGE_COST = false;
+  // 后端 by_scenario 是数组([{scenario,...}]),按 dict 消费会让卡片标签显示下标 "0/1/2"。
+  // 归一成 {scenario: row} 字典,兼容旧 dict 形态(与桌面 UsagePage 同款修复)。
+  const byScenarioRaw = data?.by_scenario || null;
+  const byScenario = Array.isArray(byScenarioRaw)
+    ? byScenarioRaw.reduce((acc, it) => { if (it && it.scenario) acc[it.scenario] = it; return acc; }, {})
+    : byScenarioRaw;
 
   const totalTurns = Number(totals.turns || 0);
   const totalTokIn = Number(totals.input_tokens || 0);
@@ -129,27 +138,30 @@ function ViewUsage({ nav }) {
               <span className="n">{fmtN(totalTokOut)}</span>
               <div className="l">{t('mobile.me.usage.output_tokens')}</div>
             </div>
-            <div className="pl-stat">
+            {/* 总成本卡已隐藏(2026-10):SHOW_USAGE_COST 开关控制 */}
+            {SHOW_USAGE_COST && <div className="pl-stat">
               <span className="n">${totalCost.toFixed(2)}</span>
               <div className="l">{t('mobile.me.usage.cost')}</div>
-            </div>
+            </div>}
           </div>
           <div className="pl-stats" style={{ marginBottom: 16 }}>
             <div className="pl-stat">
               <span className="n">{totalCachedIn ? fmtN(totalCachedIn) : '—'}</span>
               <div className="l">{t('mobile.me.usage.cached_input')}{totalTokIn > 0 && totalCachedIn ? <span style={{ display: 'block', fontSize: 9 }}>{Math.round(totalCachedIn/totalTokIn*100)}%</span> : ''}</div>
             </div>
-            <div className="pl-stat">
+            {/* 缓存节省(金额)已隐藏(2026-10):SHOW_USAGE_COST 开关控制 */}
+            {SHOW_USAGE_COST && <div className="pl-stat">
               <span className="n">
                 {totalCachedIn > 0 && totalTokIn > 0 ? '$' + ((totalCachedIn / totalTokIn) * totalCost * 0.75).toFixed(3) : '—'}
               </span>
               <div className="l">{t('mobile.me.usage.cache_savings')}</div>
-            </div>
-            {forecast && <div className="pl-stat">
+            </div>}
+            {/* 消费预测两格已隐藏(2026-10):SHOW_USAGE_FORECAST_SCENARIO 开关控制 */}
+            {SHOW_USAGE_FORECAST_SCENARIO && forecast && <div className="pl-stat">
               <span className="n">${Number(forecast.avg_daily_cost_usd || 0).toFixed(3)}</span>
               <div className="l">{t('mobile.me.usage.daily_cost')}</div>
             </div>}
-            {forecast && <div className="pl-stat">
+            {SHOW_USAGE_FORECAST_SCENARIO && forecast && <div className="pl-stat">
               <span className="n">${Number(forecast.projected_30d_cost || 0).toFixed(2)}</span>
               <div className="l">{t('mobile.me.usage.forecast_30d')}</div>
             </div>}
@@ -164,10 +176,11 @@ function ViewUsage({ nav }) {
                   <div style={{ fontSize: 11, color: 'var(--muted)', marginBottom: 5 }}>{t('mobile.me.usage.requests')} <span className="mono" style={{ float: 'right' }}>{fmtN(buckets.reduce((a, b) => a + Number(b.turns || 0), 0))}</span></div>
                   <BarChart buckets={buckets} valueKey="turns" color="var(--accent)" />
                 </div>
-                <div>
+                {/* 成本曲线已隐藏(2026-10):SHOW_USAGE_COST 开关控制 */}
+                {SHOW_USAGE_COST && <div>
                   <div style={{ fontSize: 11, color: 'var(--muted)', marginBottom: 5 }}>{t('mobile.me.usage.cost')} $<span className="mono" style={{ float: 'right' }}>{buckets.reduce((a, b) => a + Number(b.cost_usd || 0), 0).toFixed(2)}</span></div>
                   <BarChart buckets={buckets} valueKey="cost_usd" color="var(--ok)" />
-                </div>
+                </div>}
                 <div>
                   <div style={{ fontSize: 11, color: 'var(--muted)', marginBottom: 5 }}>{t('mobile.me.usage.input_tokens')} <span className="mono" style={{ float: 'right' }}>{fmtN(buckets.reduce((a, b) => a + Number(b.input_tokens || 0), 0))}</span></div>
                   <BarChart buckets={buckets} valueKey="input_tokens" color="var(--info)" />
@@ -180,8 +193,8 @@ function ViewUsage({ nav }) {
             </div>
           )}
 
-          {/* 按场景拆分 */}
-          {byScenario && Object.keys(byScenario).length > 0 && (
+          {/* 按场景拆分(已隐藏,2026-10):SHOW_USAGE_FORECAST_SCENARIO 开关控制 */}
+          {SHOW_USAGE_FORECAST_SCENARIO && byScenario && Object.keys(byScenario).length > 0 && (
             <div className="pl-sec">
               <div className="pl-sec-head"><h2>{t('mobile.me.usage.by_scenario')}</h2></div>
               {(() => {
@@ -223,7 +236,7 @@ function ViewUsage({ nav }) {
                   <span className="pl-row-tx">
                     <strong className="mono" style={{ fontSize: 12 }}>{m.model_id || m.api_id || '—'}</strong>
                     <span className="mono" style={{ fontSize: 11 }}>
-                      {fmtN(Number(m.turns || 0))} {t('m_me_extra.usage_times_unit')} · {fmtN(Number(m.input_tokens || 0))}↑ {fmtN(Number(m.output_tokens || 0))}↓ · ${Number(m.cost_usd || 0).toFixed(3)}
+                      {fmtN(Number(m.turns || 0))} {t('m_me_extra.usage_times_unit')} · {fmtN(Number(m.input_tokens || 0))}↑ {fmtN(Number(m.output_tokens || 0))}↓{SHOW_USAGE_COST ? ` · $${Number(m.cost_usd || 0).toFixed(3)}` : ''}
                     </span>
                   </span>
                 </div>

@@ -77,10 +77,11 @@ function UnifiedSearch({ open, onClose, setPage }) {
     { id: "library",  label: tSearch('platform.nav.library'),         kind: "page", icon: "folder",   keywords: "library files assets 文件库" },
     { id: "settings", label: tSearch('platform.nav.settings'),        kind: "page", icon: "settings", keywords: "settings preferences" },
     { id: "usage",    label: tSearch('platform.nav.usage'),           kind: "page", icon: "usage",    keywords: "usage tokens cost" },
-    { id: "plugins",  label: tSearch('platform.nav.plugins'),         kind: "page", icon: "plug",     keywords: "plugins extensions" },
-    { id: "mcp",      label: "MCP",                                    kind: "page", icon: "diamond",  keywords: "mcp server" },
-    { id: "skills",   label: "Skill",                                  kind: "page", icon: "spark",    keywords: "skills hooks" },
-    { id: "apis",     label: "API",                                    kind: "page", icon: "braces",   keywords: "api endpoints" },
+    // 「扩展」四页已隐藏(2026-10):模块整体下线,不再作为可搜索目的地
+    // { id: "plugins",  label: tSearch('platform.nav.plugins'),         kind: "page", icon: "plug",     keywords: "plugins extensions" },
+    // { id: "mcp",      label: "MCP",                                    kind: "page", icon: "diamond",  keywords: "mcp server" },
+    // { id: "skills",   label: "Skill",                                  kind: "page", icon: "spark",    keywords: "skills hooks" },
+    // { id: "apis",     label: "API",                                    kind: "page", icon: "braces",   keywords: "api endpoints" },
   ];
 
   const adminLabel = tSearch('platform.nav.admin');

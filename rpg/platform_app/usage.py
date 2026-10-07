@@ -223,7 +223,8 @@ def aggregate_usage(
         recent = db.execute(
             """
             select created_at, api_id, model_real_name, input_tokens, output_tokens,
-                   cost_usd, context_used, context_max, scenario
+                   cost_usd, context_used, context_max, scenario,
+                   cached_input_tokens, save_id, context_run_id
             from token_usage
             where user_id = %s and created_at >= now() - (interval '1 day' * %s)
             order by id desc
@@ -269,6 +270,10 @@ def aggregate_usage(
                 "context_used": int(r["context_used"]),
                 "context_max": int(r["context_max"]),
                 "scenario": r["scenario"] if "scenario" in r.keys() else "chat",
+                # 2026-10 修复:此前 SELECT 漏列 → 前端「缓存 in」恒 "—"、时间列跳转/CSV 存档ID 恒空
+                "cached_input_tokens": int(r["cached_input_tokens"] or 0),
+                "save_id": r["save_id"],
+                "context_run_id": r["context_run_id"],
             }
             for r in recent
         ],

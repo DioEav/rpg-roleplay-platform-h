@@ -217,7 +217,8 @@ const getCSModules = (t) => [
   //   ] },
   { id: 'account', label: t('platform.nav.account'), group: t('platform.nav.group_system'),
     pages: ['me', 'me-edit', 'me-settings', 'settings', 'settings-models',
-      'settings-modelparams', 'settings-modules', 'settings-memory'],
+      'settings-modelparams', 'settings-modules', 'settings-memory', 'usage'],
+      // 'usage'(用量)自「扩展」模块完整迁入(2026-10):账户级用量统计归设置&账户。
       // 'settings-account' 与 'settings-permissions' 已隐藏(2026-10):从 pages 移除后直链回落主页。
     sub: [
       { text: t('platform.nav.me'),                  href: '#me' },
@@ -228,6 +229,8 @@ const getCSModules = (t) => [
       { text: t('platform.nav.settings_modelparams'), href: '#settings-modelparams' },
       { text: t('platform.nav.settings_modules'),     href: '#settings-modules' },
       { text: t('platform.nav.settings_memory'),      href: '#settings-memory' },
+      { text: t('platform.nav.usage'),                href: '#usage' },
+      // 「用量」(usage)自「扩展」模块完整迁入(2026-10),路由 #usage 不变。
       // 「权限设置」(settings-permissions) 入口已隐藏(2026-10);组件保留,
       // 恢复 = 解注释本行 + 上方 pages 数组 + entries/platform.jsx 的 PL_IDS 与路由 + settings.jsx SECTIONS。
       // { text: t('platform.nav.settings_permissions'), href: '#settings-permissions' },
@@ -262,14 +265,17 @@ const getCSModules = (t) => [
     ] },
   { id: 'library', label: t('platform.nav.library'), group: t('platform.nav.group_system'), pages: ['library'],
     sub: [{ text: t('platform.nav.cs_asset_library'), href: '#library' }] },
-  { id: 'extensions', label: t('platform.nav.extensions'), group: t('platform.nav.group_system'), pages: ['plugins', 'mcp', 'skills', 'apis', 'usage'],
-    sub: [
-      { text: t('platform.nav.plugins'),  href: '#plugins' },
-      { text: 'MCP',                       href: '#mcp' },
-      { text: 'Skill',                     href: '#skills' },
-      { text: t('platform.nav.cs_dev_api'),href: '#apis' },
-      { text: t('platform.nav.usage'),     href: '#usage' },
-    ] },
+  // 「扩展」模块已整体隐藏(2026-10):插件/MCP/Skill/API 为开发向能力页,入口全部下线
+  // (同 RATH 灰度先例:不在导航注册表注册)。恢复 = 解注释本模块,并同步恢复:
+  //   entries/platform.jsx 的 PL_IDS 四个 id 与四条路由 + CapPage 导入、
+  //   shared.jsx getPLNav 四行、UnifiedSearch.jsx 四条搜索条目。
+  // { id: 'extensions', label: t('platform.nav.extensions'), group: t('platform.nav.group_system'), pages: ['plugins', 'mcp', 'skills', 'apis'],
+  //   sub: [
+  //     { text: t('platform.nav.plugins'),  href: '#plugins' },
+  //     { text: 'MCP',                       href: '#mcp' },
+  //     { text: 'Skill',                     href: '#skills' },
+  //     { text: t('platform.nav.cs_dev_api'),href: '#apis' },
+  //   ] },
 ];
 // Static CS_MODULES for consumers outside React (ADMIN_PAGES set)
 const CS_MODULES = getCSModules((k) => k);

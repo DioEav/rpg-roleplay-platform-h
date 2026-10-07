@@ -24,10 +24,12 @@ const getPLNav = (t) => [
   { section: t('platform.nav.section_config') },
   { id: "settings", label: t('platform.nav.settings'), icon: "settings" },
   { id: "usage",    label: t('platform.nav.usage'),    icon: "usage" },
-  { id: "plugins",  label: t('platform.nav.plugins'),  icon: "plug" },
-  { id: "mcp",      label: "MCP",                       icon: "diamond" },
-  { id: "skills",   label: "Skill",                     icon: "spark" },
-  { id: "apis",     label: "API",                        icon: "braces" },
+  // 「扩展」四页已隐藏(2026-10):模块自 platform-app.jsx getCSModules 整体下线,
+  // 此处注释 → PL_IDS 不含这些 id → 直链 #plugins/#mcp/#skills/#apis 回落主页。
+  // { id: "plugins",  label: t('platform.nav.plugins'),  icon: "plug" },
+  // { id: "mcp",      label: "MCP",                       icon: "diamond" },
+  // { id: "skills",   label: "Skill",                     icon: "spark" },
+  // { id: "apis",     label: "API",                        icon: "braces" },
 ];
 // Static fallback for consumers that call PL_NAV directly (exports)
 const PL_NAV = getPLNav((k) => k);

@@ -25,7 +25,8 @@ import { installWarmTheme } from '../cloudscape-theme.js';
 installWarmTheme();
 
 // 组件模块 — named import(ESM 自动拉入传递依赖)
-import { PlatformShellCS, ProfilePage, MePage, ModulesPage, LibraryPage, UsagePage, CapPage, PL_NAV, AdminGuard,
+import { PlatformShellCS, ProfilePage, MePage, ModulesPage, LibraryPage, UsagePage, PL_NAV, AdminGuard,
+  /* CapPage 已随「扩展」四页隐藏(2026-10),恢复时解注释, */
   AdminUsersPage, AdminGlobalUsagePage, AdminAuditPage, AdminHealthPage,
   AdminLogsPage, AdminRegistrationPage, AdminSecurityPage, AdminMaintenancePage,
   AdminDmcaTakedownsPage, AdminDmcaStrikesPage, AdminCsamReportsPage, AdminAupActionsPage,
@@ -98,7 +99,8 @@ const PL_IDS = [
   'admin-logs', 'admin-registration', 'admin-security', 'admin-maintenance',
   'admin-dmca-takedowns', 'admin-dmca-strikes', 'admin-csam-reports', 'admin-aup-actions',
   'admin-feedback', 'admin-achievements',
-  'usage', 'plugins', 'mcp', 'skills', 'apis', 'feedback', 'device', 'wall',
+  'usage', 'feedback', 'device', 'wall',
+  // 'plugins'/'mcp'/'skills'/'apis' 已隐藏(2026-10):「扩展」模块整体下线,直链回落主页。
   'tavern', 'rath', 'md-editor',
 ];
 function parsePage() {
@@ -211,10 +213,12 @@ function PlatformApp() {
   else if (page === 'admin-achievements')     body = <AdminGuard><AdminAchievementsPage /></AdminGuard>;
   else if (page === 'wall')                    body = <PublicAchievementsPage />;
   else if (page === 'usage') body = <UsagePage />;
-  else if (page === 'plugins') body = <CapPage kind="plugins" />;
-  else if (page === 'mcp') body = <CapPage kind="mcp" />;
-  else if (page === 'skills') body = <CapPage kind="skills" />;
-  else if (page === 'apis') body = <CapPage kind="apis" />;
+  // 「扩展」四页已隐藏(2026-10):PL_IDS 已不含这些 id → 直链在 parsePage 即回落主页,
+  // 路由不可达。恢复 = 解注释四行 + PL_IDS 四个 id + CapPage 导入 + platform-app.jsx 模块 + shared.jsx getPLNav + UnifiedSearch。
+  // else if (page === 'plugins') body = <CapPage kind="plugins" />;
+  // else if (page === 'mcp') body = <CapPage kind="mcp" />;
+  // else if (page === 'skills') body = <CapPage kind="skills" />;
+  // else if (page === 'apis') body = <CapPage kind="apis" />;
   else if (page === 'feedback') body = <FeedbackPage />;
   else if (page === 'device') body = <DeviceAuthorizePage />;
   else if (page === 'md-editor') body = (

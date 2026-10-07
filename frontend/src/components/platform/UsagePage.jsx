@@ -117,6 +117,15 @@ function UsagePage() {
   const byModel = (data && data.by_model) || [];
   const recent = (data && data.recent_turns) || [];
   const recentTotal = (data && data.recent_total) || 0;
+  // 「消费预测」「按场景拆分」两块已隐藏(2026-10):恢复 = 改回 true。
+  const SHOW_USAGE_FORECAST_SCENARIO = false;
+  // 成本相关显示(总量成本卡/缓存节省估算/趋势成本曲线/各表成本列)已隐藏(2026-10):
+  // 恢复 = 改回 true。导出 CSV 按钮亦已隐藏(见 SHOW_USAGE_CSV_EXPORT)。
+  const SHOW_USAGE_COST = false;
+  // 最近请求表的「上下文」列已隐藏(2026-10):恢复 = 改回 true。
+  const SHOW_USAGE_CONTEXT_COLUMN = false;
+  // 两处「导出 CSV」按钮已隐藏(2026-10):恢复 = 改回 true。
+  const SHOW_USAGE_CSV_EXPORT = false;
   const forecast = (data && data.forecast) || null;
   const bucketSeries = (series && series.series) || [];
   const totalTurns = Number(totals.turns || 0);
@@ -125,8 +134,14 @@ function UsagePage() {
   const totalCost = Number(totals.cost_usd || 0);
   const totalCachedIn = Number(totals.cached_input_tokens || 0);
 
-  // A3: by_scenario — 后端有该字段时渲染；没有时整个区块不渲染（向后兼容）
-  const byScenario = (data && data.by_scenario) || null; // null = 旧 API，不渲染
+  // A3: by_scenario — 后端有该字段时渲染；没有时整个区块不渲染（向后兼容旧 API）。
+  // 后端实际返回数组([{scenario,turns,cost_usd,...}, ...]按成本降序);旧实现按 dict 消费,
+  // Object.keys(数组) 得到下标 "0/1/2" 被直接当场景名显示(卡片标签全是 0/1/2 的 bug)。
+  // 此处统一归一成 {scenario: row} 字典,兼容旧 dict 形态。
+  const byScenarioRaw = (data && data.by_scenario) || null;
+  const byScenario = Array.isArray(byScenarioRaw)
+    ? byScenarioRaw.reduce((acc, it) => { if (it && it.scenario) acc[it.scenario] = it; return acc; }, {})
+    : byScenarioRaw; // null = 旧 API，不渲染
   const SCENARIO_META = {
     chat:      { label: "对话", icon: "💬" },
     opening:   { label: "开场", icon: "🎬" },
@@ -184,7 +199,7 @@ function UsagePage() {
           用量 <span style={{fontWeight: "normal", fontSize: "0.85em", color: "var(--color-text-body-secondary)"}}>最近 {USAGE_RANGES.find(r => r.id === range)?.label}</span>
         </CSHeader>
       }>
-        <CSColumnLayout columns={5} variant="text-grid">
+        <CSColumnLayout columns={SHOW_USAGE_COST ? 5 : 3} variant="text-grid">
           <div>
             <CSBox variant="awsui-key-label">请求数</CSBox>
             <CSBox fontSize="display-l" fontWeight="bold">{fmtN(totalTurns)}</CSBox>
@@ -195,11 +210,14 @@ function UsagePage() {
             <CSBox fontSize="display-l" fontWeight="bold">{fmtN(totalTokIn)}</CSBox>
             <CSBox color="text-body-secondary" fontSize="body-s">{totalTokOut ? `输出 ${fmtN(totalTokOut)} · 比 1 : ${(totalTokIn / Math.max(1, totalTokOut)).toFixed(1)}` : "输出 —"}</CSBox>
           </div>
+          {/* 成本卡已隐藏(2026-10):SHOW_USAGE_COST 开关控制 */}
+          {SHOW_USAGE_COST && (
           <div>
             <CSBox variant="awsui-key-label">成本</CSBox>
             <CSBox fontSize="display-l" fontWeight="bold">${totalCost.toFixed(2)}</CSBox>
             <CSBox color="text-body-secondary" fontSize="body-s">本窗口累计</CSBox>
           </div>
+          )}
           {/* U1: 缓存输入 token */}
           <div>
             <CSBox variant="awsui-key-label">缓存输入 Token</CSBox>
@@ -208,7 +226,8 @@ function UsagePage() {
               {totalTokIn > 0 ? `占输入 ${Math.round(totalCachedIn / totalTokIn * 100)}%` : "—"}
             </CSBox>
           </div>
-          {/* U1: 缓存节省估算 (cached_input_tokens × pricing.input × 75%) */}
+          {/* U1: 缓存节省估算 (cached_input_tokens × pricing.input × 75%) — 已隐藏(2026-10),金额类显示 */}
+          {SHOW_USAGE_COST && (
           <div>
             <CSBox variant="awsui-key-label">缓存节省估算</CSBox>
             <CSBox fontSize="display-l" fontWeight="bold">
@@ -221,11 +240,12 @@ function UsagePage() {
             </CSBox>
             <CSBox color="text-body-secondary" fontSize="body-s">75% 折扣估算</CSBox>
           </div>
+          )}
         </CSColumnLayout>
       </CSContainer>
 
-      {/* B2: 消费预测卡 — 固定读 forecast（后端固定查 7 天，不随时间范围切换器变化） */}
-      {forecast && (() => {
+      {/* B2: 消费预测卡(已隐藏,2026-10) — 固定读 forecast（后端固定查 7 天，不随时间范围切换器变化） */}
+      {SHOW_USAGE_FORECAST_SCENARIO && forecast && (() => {
         const avgCost = Number(forecast.avg_daily_cost_usd || 0);
         const proj30 = Number(forecast.projected_30d_cost || 0);
         const trendPct = Number(forecast.trend_7d_vs_prev_7d_pct || 0);
@@ -267,8 +287,8 @@ function UsagePage() {
         );
       })()}
 
-      {/* A3: 按场景拆分 — 仅后端返回 by_scenario 时渲染，向后兼容旧 API */}
-      {byScenario && Object.keys(byScenario).length > 0 && (() => {
+      {/* A3: 按场景拆分(已隐藏,2026-10) — 仅后端返回 by_scenario 时渲染，向后兼容旧 API */}
+      {SHOW_USAGE_FORECAST_SCENARIO && byScenario && Object.keys(byScenario).length > 0 && (() => {
         const scenarioKeys = Object.keys(byScenario);
         const scenarioTotalTurns = scenarioKeys.reduce((s, k) => s + Number(byScenario[k]?.turns || 0), 0) || 1;
         return (
@@ -310,7 +330,7 @@ function UsagePage() {
           </CSBox>
         ) : (
           <CSSpaceBetween size="m">
-            <CSColumnLayout columns={2} variant="text-grid">
+            <CSColumnLayout columns={SHOW_USAGE_COST ? 2 : 1} variant="text-grid">
               <div>
                 <div style={{display: "flex", justifyContent: "space-between", marginBottom: 4}}>
                   <CSBox variant="awsui-key-label">请求</CSBox>
@@ -318,6 +338,8 @@ function UsagePage() {
                 </div>
                 <Spark values={reqSeriesVals} color="var(--accent)" />
               </div>
+              {/* 成本 $ 曲线已隐藏(2026-10):SHOW_USAGE_COST 开关控制 */}
+              {SHOW_USAGE_COST && (
               <div>
                 <div style={{display: "flex", justifyContent: "space-between", marginBottom: 4}}>
                   <CSBox variant="awsui-key-label">成本 $</CSBox>
@@ -325,6 +347,7 @@ function UsagePage() {
                 </div>
                 <Spark values={costSeriesVals} color="var(--ok)" />
               </div>
+              )}
             </CSColumnLayout>
             {/* U2: token 趋势 */}
             <div>
@@ -369,11 +392,12 @@ function UsagePage() {
               header: "Token (入 / 出)",
               cell: r => <span className="mono"><span className="muted">{fmtN(r.tokens_in)}</span> <span className="muted-2">/</span> {fmtN(r.tokens_out)}</span>,
             },
-            {
+            /* 成本列已隐藏(2026-10):SHOW_USAGE_COST 开关控制 */
+            ...(SHOW_USAGE_COST ? [{
               id: "cost",
               header: "成本",
               cell: r => <span className="mono">${r.cost.toFixed(2)}</span>,
-            },
+            }] : []),
             {
               id: "pct",
               header: "占比",
@@ -402,7 +426,8 @@ function UsagePage() {
         <CSHeader
           variant="h2"
           description="按请求数"
-          actions={
+          /* 导出 CSV 按钮已隐藏(2026-10):SHOW_USAGE_CSV_EXPORT 开关控制 */
+          actions={SHOW_USAGE_CSV_EXPORT && (
             /* U7: 导出 CSV */
             <CSButton
               iconName="download"
@@ -428,7 +453,7 @@ function UsagePage() {
             >
               导出 CSV
             </CSButton>
-          }
+          )}
         >
           Top 模型
         </CSHeader>
@@ -461,11 +486,12 @@ function UsagePage() {
               header: "Token (入 / 出)",
               cell: m => <span className="mono"><span className="muted">{fmtN(Number(m.input_tokens || 0))}</span> <span className="muted-2">/</span> {fmtN(Number(m.output_tokens || 0))}</span>,
             },
-            {
+            /* 成本列已隐藏(2026-10):SHOW_USAGE_COST 开关控制 */
+            ...(SHOW_USAGE_COST ? [{
               id: "cost",
               header: "成本",
               cell: m => <span className="mono">${Number(m.cost_usd || 0).toFixed(2)}</span>,
-            },
+            }] : []),
             {
               id: "pct",
               header: "占比",
@@ -494,7 +520,8 @@ function UsagePage() {
         <CSHeader
           variant="h2"
           description={`显示第 ${recentPage * RECENT_LIMIT + 1}–${recentPage * RECENT_LIMIT + Math.min(RECENT_LIMIT, recent.length)} 条（共 ${recentTotal} 条）· GET /api/me/usage`}
-          actions={
+          /* 导出 CSV 按钮已隐藏(2026-10):SHOW_USAGE_CSV_EXPORT 开关控制 */
+          actions={SHOW_USAGE_CSV_EXPORT && (
             /* U7: 导出 CSV */
             <CSButton
               iconName="download"
@@ -522,7 +549,7 @@ function UsagePage() {
             >
               导出 CSV
             </CSButton>
-          }
+          )}
         >
           最近请求
         </CSHeader>
@@ -567,19 +594,27 @@ function UsagePage() {
               header: "缓存 in",
               cell: r => <span className="mono muted">{r.cached_input_tokens ? fmtN(Number(r.cached_input_tokens)) : "—"}</span>,
             },
-            {
+            /* 成本列已隐藏(2026-10):SHOW_USAGE_COST 开关控制 */
+            ...(SHOW_USAGE_COST ? [{
               id: "cost",
               header: "成本",
               cell: r => <span className="mono">${Number(r.cost_usd || 0).toFixed(3)}</span>,
-            },
-            {
+            }] : []),
+            /* 上下文进度条列已隐藏(2026-10):SHOW_USAGE_CONTEXT_COLUMN 开关控制 */
+            ...(SHOW_USAGE_CONTEXT_COLUMN ? [{
               /* U4: context 进度条 */
               id: "ctx",
               header: "上下文",
               cell: r => {
                 const used = Number(r.context_used || 0);
                 const max = Number(r.context_max || 0);
-                if (!max) return <span className="mono muted">—</span>;
+                if (!max) {
+                  // 空值可解释:子代理/内部任务没有"上下文窗口"概念;主聊天行为 0 则是未记录
+                  const tip = r.scenario === "chat"
+                    ? "本轮未记录上下文窗口"
+                    : "子代理调用（提取/工具类内部任务，无上下文窗口）";
+                  return <span className="mono muted" title={tip}>—</span>;
+                }
                 const pct = Math.min(100, Math.round(used / max * 100));
                 const danger = pct >= 90;
                 return (
@@ -591,7 +626,7 @@ function UsagePage() {
                   </div>
                 );
               },
-            },
+            }] : []),
           ]}
           items={recent}
           trackBy={r => `${r.at || ""}/${r.api_id || ""}/${r.model || ""}/${r.input_tokens || ""}`}
