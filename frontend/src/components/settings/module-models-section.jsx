@@ -4,7 +4,7 @@ import { useState as useStatePL, useEffect as useEffectPL } from 'react';
 import { useTranslation } from 'react-i18next';
 import AgentModelPicker, { getSharedPickerPrefs } from '../AgentModelPicker.jsx';
 import { useAutoSave } from '../../platform-app.jsx';
-import { MODULES as AGENT_MODULES, MODULE_GROUPS, FEATURES as AGENT_FEATURES } from '../../agent-modules.js';
+import { MODULES as AGENT_MODULES, MODULE_GROUPS, FEATURES as AGENT_FEATURES, featureInitialEnabled } from '../../agent-modules.js';
 import { SetGroup, SetRow } from './shared.jsx';
 import CSSelect from '@cloudscape-design/components/select';
 import CSBox from '@cloudscape-design/components/box';
@@ -24,14 +24,16 @@ import CSToggle from '@cloudscape-design/components/toggle';
         console)
    主 GM 不可继承(它是被继承者);embedder / image_gen allowInherit=false(必须自己选)。
    embedder 还传 platformVertexAllowed(admin/vip 才显示平台 vertex embedding 兜底)。 */
-/* FeatureToggle — 引擎特性开关(每用户、默认开)。写 user_preferences["<key>.enabled"];
-   后端 core.feature_flags.feature_enabled 读同一键(未设=跟随环境默认开)。键名前后端单一来源。
+/* FeatureToggle — 引擎特性开关。写 user_preferences["<key>.enabled"];
+   后端 core.feature_flags.feature_enabled 读同一键。键名前后端单一来源。
+   initial 必须是父组件经 featureInitialEnabled() 解析后的布尔(偏好未设时按
+   defaultOff 回落,否则 4 个 env 默认关的开关会显示"已启用"而引擎实际没跑)。
    initial 由父组件一次性 profile 读出下发,避免每个开关各拉一次 profile。 */
 function FeatureToggle({ featureKey, label, desc, initial }) {
   const { t } = useTranslation();
-  const [on, setOn] = useStatePL(initial !== false);
+  const [on, setOn] = useStatePL(!!initial);
   const save = useAutoSave(label, featureKey);
-  useEffectPL(() => { setOn(initial !== false); }, [initial]);
+  useEffectPL(() => { setOn(!!initial); }, [initial]);
   return (
     <SetRow label={label} description={desc}>
       <CSToggle checked={on} onChange={({ detail }) => { setOn(detail.checked); save("enabled", detail.checked); }}>
@@ -198,7 +200,7 @@ function ModuleModelsSection() {
                         featureKey={f.key}
                         label={t(`settings.features.${f.i18nKey}.label`, { defaultValue: FEAT_LABELS[f.key] || f.key })}
                         desc={t(`settings.features.${f.i18nKey}.desc`, { defaultValue: FEAT_DESCS[f.key] || "" })}
-                        initial={featPrefs[`${f.key}.enabled`]}
+                        initial={featureInitialEnabled(f, featPrefs[`${f.key}.enabled`])}
                       />
                     ))}
                   </div>

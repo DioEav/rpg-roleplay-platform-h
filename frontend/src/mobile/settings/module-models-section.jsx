@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
 import AgentModelPicker from '../../components/AgentModelPicker.jsx';
-import { MODULES as AGENT_MODULES, MODULE_GROUPS, FEATURES as AGENT_FEATURES } from '../../agent-modules.js';
+import { MODULES as AGENT_MODULES, MODULE_GROUPS, FEATURES as AGENT_FEATURES, featureInitialEnabled } from '../../agent-modules.js';
 import { Toggle, usePrefSave } from './shared.jsx';
 
 /* ────────────────────────────────────────────────────────────────── */
@@ -14,8 +14,9 @@ import { Toggle, usePrefSave } from './shared.jsx';
 // 结构字段走单一来源 AGENT_MODULES;移动端 label/tip 文案精简(与桌面端不同),保留本地按 id 取。
 const MODULES = AGENT_MODULES.map((m) => ({ ...m }));
 
-/* FeatureToggleM — 移动端引擎特性开关(每用户、默认开)。写 user_preferences["<key>.enabled"],
-   与桌面端、后端 core.feature_flags 同键。initial 由父组件一次性 profile 下发。 */
+/* FeatureToggleM — 移动端引擎特性开关。写 user_preferences["<key>.enabled"],
+   与桌面端、后端 core.feature_flags 同键。initial 必须是父组件经
+   featureInitialEnabled() 解析后的布尔(defaultOff 键未设偏好时显示关)。 */
 const _FEAT_LABEL_DEF = {
   ctx_tiered: '分层上下文缓存', recorder_unified: '史官三合一', narrator_slim: '文宗精简(去工具循环)',
   rag_gate: 'RAG 检索闸', anchor_pace: '世界线锚点节奏', kb_state: '存档知识库 DB 化',
@@ -36,9 +37,9 @@ const _FEAT_DESC_DEF = {
 };
 function FeatureToggleM({ featureKey, i18nKey, initial }) {
   const { t } = useTranslation();
-  const [on, setOn] = useState(initial !== false);
+  const [on, setOn] = useState(!!initial);
   const save = usePrefSave(featureKey);
-  useEffect(() => { setOn(initial !== false); }, [initial]);
+  useEffect(() => { setOn(!!initial); }, [initial]);
   return (
     <div className="pl-card" style={{ marginBottom: 10, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
       <div style={{ minWidth: 0 }}>
@@ -86,7 +87,7 @@ function ModuleModelsSection({ nav }) {
         <React.Fragment key={grp.id}>
           <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--accent, #0972d3)', margin: '14px 0 6px' }}>{groupLabel}</div>
           {feats.map(f => (
-            <FeatureToggleM key={f.key} featureKey={f.key} i18nKey={f.i18nKey} initial={featPrefs[`${f.key}.enabled`]} />
+            <FeatureToggleM key={f.key} featureKey={f.key} i18nKey={f.i18nKey} initial={featureInitialEnabled(f, featPrefs[`${f.key}.enabled`])} />
           ))}
           {items.map(mod => (
         <div key={mod.id} className="pl-card" style={{ marginBottom: 10 }}>

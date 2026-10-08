@@ -70,6 +70,13 @@ def call_agent_json(
         消除"返了 usage 没人 record"的赊账漏洞。
         agent_kind 用作 metadata.kind(如 "curator" / "black_swan" / "phase_digest")。
     """
+    # 提示词日志(RPG_LOG_PROMPTS 门控,默认关):覆盖所有子代理调用。
+    try:
+        from core.prompt_log import log_llm_prompt
+        log_llm_prompt(kind=f"harness:{agent_kind or 'sub_agent'}", api_id=api_id, model=model,
+                       system=system_prompt, user=user_prompt)
+    except Exception:
+        pass
     # 子代理超时跟随 config.llm_timeout_seconds:慢的本地大模型(桌面自托管跑 Qwen 等)用 30s 必超时
     # (生产日志实证 curator "read operation timed out")。取 max 不缩短调用方显式值;本地=1800s/服务器=300s。
     try:
@@ -782,6 +789,14 @@ def call_agent_tool_loop(
 
     非 anthropic provider:暂不支持,抛 NotImplementedError。
     """
+    # 提示词日志(RPG_LOG_PROMPTS 门控,默认关)—— 多轮工具循环只记首轮提示词。
+    try:
+        from core.prompt_log import log_llm_prompt
+        log_llm_prompt(kind=f"harness:tool_loop:{agent_kind or 'agent'}", api_id=api_id, model=model,
+                       system=system_prompt, user=user_prompt)
+    except Exception:
+        pass
+
     from collections.abc import Callable as _Callable  # noqa: F401 (used above for annotation)
 
     if api_id != "anthropic":

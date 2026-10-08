@@ -132,8 +132,10 @@ def parse_set_command(
         user_default = first_user_model(user_id)
     except Exception:
         user_default = None
-    api_id = api_id_override or _resolve_preferred_api(user_id) or (user_default[0] if user_default else None) or _detect_default_api()
-    model = model_override or _resolve_preferred_model(user_id) or (user_default[1] if user_default else None) or _default_model_for_api(api_id)
+    # agent.*(通用兜底)插在 set_parser.* 之后、first_user_model 之前 —— 与
+    # tools_dsl/set_parser 兜底路径对齐(2026-10):否则通用兜底对 /set 主路径不生效。
+    api_id = api_id_override or _resolve_preferred_api(user_id) or _resolve_preferred_agent_api(user_id) or (user_default[0] if user_default else None) or _detect_default_api()
+    model = model_override or _resolve_preferred_model(user_id) or _resolve_preferred_agent_model(user_id) or (user_default[1] if user_default else None) or _default_model_for_api(api_id)
 
     # BYOK 守卫:解析出的 provider 用户实际不可用(典型:落到默认 vertex_ai 但用户没传 SA,
     # 或 stale set_parser 偏好指向没配 key 的 provider)→ 回退到用户配过 key 的第一个模型。
@@ -364,6 +366,15 @@ def _resolve_preferred_model(user_id: int | None) -> str | None:
 def _resolve_preferred_api(user_id: int | None) -> str | None:
     """Alias → core.llm_backend.resolve_preferred_api (set_parser namespace)."""
     return _resolve_preferred_api_base(user_id, pref_key="set_parser.api_id")
+
+
+def _resolve_preferred_agent_api(user_id: int | None) -> str | None:
+    """通用兜底 agent.*(2026-10 补齐:与 set_parser 兜底路径对齐)。"""
+    return _resolve_preferred_api_base(user_id, pref_key="agent.api_id")
+
+
+def _resolve_preferred_agent_model(user_id: int | None) -> str | None:
+    return _resolve_preferred_model_base(user_id, pref_key="agent.model_real_name")
 
 
 __all__ = ["parse_set_command"]

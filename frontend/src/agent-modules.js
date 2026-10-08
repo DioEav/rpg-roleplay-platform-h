@@ -70,10 +70,14 @@ export const MODULES = [
  * @property {string} key      偏好键前缀(后端 core.feature_flags 同名);落库为 `<key>.enabled` 布尔
  * @property {string} group    所属功能分组(与 MODULE_GROUPS.id 对齐,同组同块显示)
  * @property {string} i18nKey  文案键(label/tip 走 settings/mobile 的 features.<i18nKey>)
+ * @property {boolean=} defaultOff  后端 env 默认关(core/feature_flags.py _FEATURES 该键 env_default="0",
+ *                          注释"验后开")。偏好未设时 UI 必须显示关,否则开关状态与引擎真实行为相反。
  */
 
-// 引擎特性开关(每用户、默认开)。与「模块模型」同组同块显示 —— 每个功能分组里:
+// 引擎特性开关(每用户)。与「模块模型」同组同块显示 —— 每个功能分组里:
 // 先列该组的特性开关(布尔 switch),再列该组可配的模型。前后端键名单一来源(core.feature_flags)。
+// ⚠️ defaultOff 与 core/feature_flags.py 的 env_default 必须保持同步:
+//    前 6 个键 env 默认 "1"(开);后 4 个标 defaultOff 的键 env 默认 "0"(关,验后开)。
 /** @type {EngineFeature[]} */
 export const FEATURES = [
   // 对话核心:三贤者流水线
@@ -85,10 +89,10 @@ export const FEATURES = [
   // 世界模拟与历史
   { key: "anchor_pace",      group: "world", i18nKey: "anchor_pace" },      // 世界线锚点节奏
   { key: "kb_state",         group: "world", i18nKey: "kb_state" },         // 存档知识库 DB 化
-  { key: "consequence_ledger", group: "world", i18nKey: "consequence_ledger" }, // 后果账本(承诺到期回响)
-  { key: "world_heartbeat",    group: "world", i18nKey: "world_heartbeat" },   // 世界心跳(玩家不在场时的世界侧小事)
-  { key: "channel_fallback",  group: "world", i18nKey: "channel_fallback" },  // 跨渠道自动备援(主渠道故障切备用凭据)
-  { key: "npc_agenda",        group: "world", i18nKey: "npc_agenda" },        // NPC 议程(当下活跃 NPC 的意图/态度)
+  { key: "consequence_ledger", group: "world", i18nKey: "consequence_ledger", defaultOff: true }, // 后果账本(承诺到期回响;env 默认关)
+  { key: "world_heartbeat",    group: "world", i18nKey: "world_heartbeat",    defaultOff: true }, // 世界心跳(玩家不在场时的世界侧小事;env 默认关)
+  { key: "channel_fallback",  group: "world", i18nKey: "channel_fallback",  defaultOff: true },  // 跨渠道自动备援(主渠道故障切备用凭据;env 默认关)
+  { key: "npc_agenda",        group: "world", i18nKey: "npc_agenda",        defaultOff: true },  // NPC 议程(当下活跃 NPC 的意图/态度;env 默认关)
 ];
 
 /** prefPrefix → 模块(供 CAP_CONFIG 等子集投影派生 capabilityFilter)。 */
@@ -96,6 +100,20 @@ export const moduleByPrefix = MODULES.reduce((acc, m) => {
   if (m.prefPrefix) acc[m.prefPrefix] = m;
   return acc;
 }, {});
+
+/**
+ * 引擎开关的 UI 初值解析(对齐后端 core.feature_flags.feature_enabled 的判定):
+ *   偏好已设(true/false) → 用偏好值;未设(undefined/null) → defaultOff 键显示关,其余显示开。
+ * 修复:consequence_ledger/world_heartbeat/channel_fallback/npc_agenda 四个键后端 env 默认关,
+ * 旧 UI `initial !== false` 在未设时恒显示"已启用",与引擎真实行为相反。
+ * @param {EngineFeature} feature  FEATURES 数组项
+ * @param {boolean|undefined|null} prefValue  user_preferences 里的 `<key>.enabled`
+ * @returns {boolean}
+ */
+export function featureInitialEnabled(feature, prefValue) {
+  if (prefValue === undefined || prefValue === null) return !feature.defaultOff;
+  return prefValue !== false;
+}
 
 if (typeof window !== "undefined") {
   window.AGENT_MODULES = MODULES;

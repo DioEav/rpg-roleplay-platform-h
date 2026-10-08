@@ -159,7 +159,9 @@ def verify_acceptance_llm(
        ["acceptance_verifier.api_id"]
     3. 复用 extractor 的偏好（acceptance 验证和 extractor 都是"读叙事 → JSON"
        的便宜判定，模型可以共用）
-    4. 默认：vertex_ai / gemini-3.5-flash
+    4. 通用兜底 user_preferences["agent.*"]（2026-10 补齐——设置页「通用兜底」
+       的承诺对齐;此前跳过该级,通用兜底对验收官不生效）
+    5. 默认：vertex_ai / gemini-3.5-flash
     """
     if not acceptance or not response_text or not response_text.strip():
         return []
@@ -171,18 +173,7 @@ def verify_acceptance_llm(
         log.warning(f"[acceptance_verifier] import extractor failed: {exc}")
         return None
 
-    api_id = (
-        api_id_override
-        or _resolve_preferred_verifier_api(user_id)
-        or _extractor._resolve_preferred_extractor_api(user_id)
-        or _DEFAULT_FALLBACK_API
-    )
-    model = (
-        model_override
-        or _resolve_preferred_verifier_model(user_id)
-        or _extractor._resolve_preferred_extractor_model(user_id)
-        or _DEFAULT_FALLBACK_MODEL
-    )
+    api_id, model = _resolve_verifier_backend(user_id, api_id_override, model_override, _extractor)
 
     user_prompt = _build_user_prompt(acceptance, response_text, updates or [])
 
@@ -383,3 +374,45 @@ def _resolve_preferred_verifier_api(user_id: int | None) -> str | None:
     except Exception:
         return None
     return None
+
+
+def _resolve_preferred_agent_api(user_id: int | None) -> str | None:
+    """通用兜底 agent.*(core.llm_backend 薄委托,带偏好模型 stale 失效校验 + 请求级缓存)。"""
+    if not user_id:
+        return None
+    try:
+        from core.llm_backend import resolve_preferred_api
+        return resolve_preferred_api(user_id, pref_key="agent.api_id")
+    except Exception:
+        return None
+
+
+def _resolve_preferred_agent_model(user_id: int | None) -> str | None:
+    if not user_id:
+        return None
+    try:
+        from core.llm_backend import resolve_preferred_model
+        return resolve_preferred_model(user_id, pref_key="agent.model_real_name")
+    except Exception:
+        return None
+
+
+def _resolve_verifier_backend(user_id: int | None, api_id_override: str | None,
+                              model_override: str | None, _extractor) -> tuple[str, str]:
+    """验收官后端解析链(独立成函数便于测试链序):
+    override → acceptance_verifier.* → extractor.* → agent.*(通用兜底) → 固定默认。"""
+    api_id = (
+        api_id_override
+        or _resolve_preferred_verifier_api(user_id)
+        or _extractor._resolve_preferred_extractor_api(user_id)
+        or _resolve_preferred_agent_api(user_id)
+        or _DEFAULT_FALLBACK_API
+    )
+    model = (
+        model_override
+        or _resolve_preferred_verifier_model(user_id)
+        or _extractor._resolve_preferred_extractor_model(user_id)
+        or _resolve_preferred_agent_model(user_id)
+        or _DEFAULT_FALLBACK_MODEL
+    )
+    return api_id, model

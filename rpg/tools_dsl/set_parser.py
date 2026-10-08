@@ -24,10 +24,12 @@ set_parser 用便宜 LLM 把自然语言 /set 拆成多条 JSON ops：
 - 本模块返回的 ops 由外层走 apply_state_write(source="user:/set:parser", force=True)
 - 完全 opt-in: 用户 preferences.set_parser.enabled = true 才启用
 
-模型选择（同 extractor）：
+模型选择（优先级,2026-10 补通用兜底级）：
 1. api_id_override / model_override
 2. user_preferences.set_parser.api_id / model_real_name
-3. 默认 vertex_ai / gemini-3.5-flash（最便宜的当代旗舰）
+3. user_preferences.agent.api_id / agent.model_real_name（通用兜底）
+4. first_user_model（用户第一个已配 key 的模型）
+5. 默认 vertex_ai / gemini-3.5-flash（最便宜的当代旗舰）
 """
 from __future__ import annotations
 
@@ -142,20 +144,7 @@ def parse_set_directive(
     if not set_text or not set_text.strip():
         return []
 
-    try:
-        from core.llm_backend import (
-            DEFAULT_FALLBACK_API,
-            DEFAULT_FALLBACK_MODEL,
-            first_user_model,
-        )
-        user_default = first_user_model(user_id)
-    except Exception:
-        user_default = None
-        # import 失败时的硬编码兜底必须与 core.llm_backend.DEFAULT_FALLBACK_MODEL 同值
-        # (现行『当前默认』gemini-3.5-flash),否则又制造 2.5/3.5 漂移。
-        DEFAULT_FALLBACK_API, DEFAULT_FALLBACK_MODEL = "vertex_ai", "gemini-3.5-flash"
-    api_id = api_id_override or _resolve_preferred_api(user_id) or (user_default[0] if user_default else None) or DEFAULT_FALLBACK_API
-    model = model_override or _resolve_preferred_model(user_id) or (user_default[1] if user_default else None) or DEFAULT_FALLBACK_MODEL
+    api_id, model = _resolve_set_parser_backend(user_id, api_id_override, model_override)
 
     try:
         # 复用 extractor 的 backend dispatcher（同 schema 同协议同 fallback）
@@ -189,3 +178,55 @@ def _resolve_preferred_api(user_id: int | None) -> str | None:
     """薄委托 → core.llm_backend.resolve_preferred_api(set_parser 命名空间)。失效校验同上。"""
     from core.llm_backend import resolve_preferred_api
     return resolve_preferred_api(user_id, pref_key="set_parser.api_id")
+
+
+def _resolve_preferred_agent_api(user_id: int | None) -> str | None:
+    """薄委托 → core.llm_backend.resolve_preferred_api(agent.* 通用兜底命名空间)。
+
+    2026-10 补齐:设置页「通用兜底」的承诺此前对 /set 解析不生效(跳过该级)。"""
+    try:
+        from core.llm_backend import resolve_preferred_api
+        return resolve_preferred_api(user_id, pref_key="agent.api_id")
+    except Exception:
+        return None
+
+
+def _resolve_preferred_agent_model(user_id: int | None) -> str | None:
+    try:
+        from core.llm_backend import resolve_preferred_model
+        return resolve_preferred_model(user_id, pref_key="agent.model_real_name")
+    except Exception:
+        return None
+
+
+def _resolve_set_parser_backend(user_id: int | None, api_id_override: str | None = None,
+                                model_override: str | None = None) -> tuple[str, str]:
+    """/set 解析的后端解析链(独立成函数便于测试链序):
+    override → set_parser.* → agent.*(通用兜底) → first_user_model → 固定默认。"""
+    try:
+        from core.llm_backend import (
+            DEFAULT_FALLBACK_API,
+            DEFAULT_FALLBACK_MODEL,
+            first_user_model,
+        )
+        user_default = first_user_model(user_id)
+    except Exception:
+        user_default = None
+        # import 失败时的硬编码兜底必须与 core.llm_backend.DEFAULT_FALLBACK_MODEL 同值
+        # (现行『当前默认』gemini-3.5-flash),否则又制造 2.5/3.5 漂移。
+        DEFAULT_FALLBACK_API, DEFAULT_FALLBACK_MODEL = "vertex_ai", "gemini-3.5-flash"
+    api_id = (
+        api_id_override
+        or _resolve_preferred_api(user_id)
+        or _resolve_preferred_agent_api(user_id)
+        or (user_default[0] if user_default else None)
+        or DEFAULT_FALLBACK_API
+    )
+    model = (
+        model_override
+        or _resolve_preferred_model(user_id)
+        or _resolve_preferred_agent_model(user_id)
+        or (user_default[1] if user_default else None)
+        or DEFAULT_FALLBACK_MODEL
+    )
+    return api_id, model

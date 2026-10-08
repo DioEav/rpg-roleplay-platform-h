@@ -299,6 +299,9 @@ class _OpenAICompatBackend:
         return out
 
     def call(self, system: str, messages: list[dict], max_tokens: int) -> str:
+        from core.prompt_log import log_llm_prompt
+        log_llm_prompt(kind="gm_chat", api_id=self.api_id, model=self.model_name,
+                       system=system, messages=messages)
         last_exc: Exception | None = None
         _tuning = self._tuning_kwargs(0.9)  # task 141: 采样 + 思考控制(extra_body 已深合并)
         for attempt in range(_MAX_RETRIES + 1):
@@ -376,6 +379,9 @@ class _OpenAICompatBackend:
             self.last_usage["max_tokens"] = int(max_tokens)
 
     def call_structured(self, system: str, messages: list[dict], max_tokens: int) -> str:
+        from core.prompt_log import log_llm_prompt
+        log_llm_prompt(kind="gm_structured", api_id=self.api_id, model=self.model_name,
+                       system=system, messages=messages)
         sys_text = (system or "") + "\n\n你必须只返回合法 JSON，不能包含 Markdown 代码围栏或解释文字。"
         resp = self._create(
             model=self.model_name,

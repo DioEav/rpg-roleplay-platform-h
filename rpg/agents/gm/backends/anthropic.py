@@ -146,6 +146,9 @@ class _AnthropicBackend:
         return out
 
     def call(self, system: str, messages: list[dict], max_tokens: int) -> str:
+        from core.prompt_log import log_llm_prompt
+        log_llm_prompt(kind="gm_chat", api_id="anthropic", model=self.model_name,
+                       system=system, messages=messages)
         last_exc: Exception | None = None
         # task 141: thinking 模型 max_tokens 要 ≥ budget_tokens + 输出预算,否则 SDK 报错
         _thinking = self._thinking_param()
@@ -187,6 +190,9 @@ class _AnthropicBackend:
         return resp.content[0].text.strip()
 
     def call_structured(self, system: str, messages: list[dict], max_tokens: int) -> str:
+        from core.prompt_log import log_llm_prompt
+        log_llm_prompt(kind="gm_structured", api_id="anthropic", model=self.model_name,
+                       system=system, messages=messages)
         resp = self.client.messages.create(
             model=self.model_name,
             max_tokens=max_tokens,

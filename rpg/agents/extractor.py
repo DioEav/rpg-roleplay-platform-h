@@ -157,13 +157,15 @@ def extract_state_ops(
     模型选择（按优先级）：
     1. 调用方传 model_override / api_id_override
     2. 用户偏好 user_preferences["extractor.model_real_name"] + ["extractor.api_id"]
-    3. 默认：vertex_ai / gemini-3.5-flash（最便宜的当代旗舰）
+    3. 通用兜底 user_preferences["agent.*"]（2026-10 补齐——与 _harness 解析序一致;
+       此前跳过该级,通用兜底对 extractor 不生效）
+    4. 默认：vertex_ai / gemini-3.5-flash（最便宜的当代旗舰）
     """
     if not narrative_text or not narrative_text.strip():
         return []
 
-    api_id = api_id_override or _resolve_preferred_extractor_api(user_id) or _DEFAULT_FALLBACK_API
-    model = model_override or _resolve_preferred_extractor_model(user_id) or _DEFAULT_FALLBACK_MODEL
+    api_id = api_id_override or _resolve_preferred_extractor_api(user_id) or _resolve_preferred_agent_api(user_id) or _DEFAULT_FALLBACK_API
+    model = model_override or _resolve_preferred_extractor_model(user_id) or _resolve_preferred_agent_model(user_id) or _DEFAULT_FALLBACK_MODEL
 
     try:
         text, backend_ref = _call_extractor_backend(
@@ -208,6 +210,15 @@ def _resolve_preferred_extractor_model(user_id: int | None) -> str | None:
 def _resolve_preferred_extractor_api(user_id: int | None) -> str | None:
     """Alias → core.llm_backend.resolve_preferred_api (extractor namespace)."""
     return _resolve_preferred_api_base(user_id, pref_key="extractor.api_id")
+
+
+def _resolve_preferred_agent_api(user_id: int | None) -> str | None:
+    """通用兜底 agent.*(2026-10 补齐:extractor 链此前跳过该级)。"""
+    return _resolve_preferred_api_base(user_id, pref_key="agent.api_id")
+
+
+def _resolve_preferred_agent_model(user_id: int | None) -> str | None:
+    return _resolve_preferred_model_base(user_id, pref_key="agent.model_real_name")
 
 
 def _call_extractor_backend(

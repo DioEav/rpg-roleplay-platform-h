@@ -326,6 +326,9 @@ class _VertexBackend:
         return chain([first], it)
 
     def call(self, system: str, messages: list[dict], max_tokens: int) -> str:
+        from core.prompt_log import log_llm_prompt
+        log_llm_prompt(kind="gm_chat", api_id="vertex_ai", model=self.model_name,
+                       system=system, messages=messages)
         self._ensure_available()
         from google.genai import types
 
@@ -429,6 +432,9 @@ class _VertexBackend:
 
     def call_structured(self, system: str, messages: list[dict], max_tokens: int,
                         thinking_budget: int | None = None) -> str:
+        from core.prompt_log import log_llm_prompt
+        log_llm_prompt(kind="gm_structured", api_id="vertex_ai", model=self.model_name,
+                       system=system, messages=messages)
         self._ensure_available()
         from google.genai import types
 

@@ -24,6 +24,12 @@ const MODULE_META = {
   anchors:       { source: 'zero_llm' },
   embeddings:    { source: 'zero_llm' },
   story_phase:   { source: 'llm' },
+  /* 三个新模块(rebuild_worker.py 分支)此前缺元数据 → 来源标签渲染成 unknown:
+     facts_refine / worldbook_enrich 走 recorder.* 恒 LLM;world_key 默认零 LLM,
+     仅勾选 use_llm 时追加 recorder.* 窄确认(mixed,同 cards/worldbook 模式)。 */
+  facts_refine:    { source: 'llm' },
+  worldbook_enrich:{ source: 'llm' },
+  world_key:       { source: 'mixed' },
 };
 
 /* 每模块的计数单位(替代通用「条」)。
@@ -35,6 +41,7 @@ const MODULE_UNITS = {
   chapter_facts: { unitKey: 'module_status.unit_facts',      cover: true },
   facts_refine:  { unitKey: 'module_status.unit_facts',      cover: true },
   world_key:     { unitKey: 'module_status.unit_world_key',  cover: true },
+  worldbook_enrich: { unitKey: 'module_status.unit_worldbook' },  // 充实条目计数,复用「条」
   canon:         { unitKey: 'module_status.unit_canon' },
   cards:         { unitKey: 'module_status.unit_cards' },
   worldbook:     { unitKey: 'module_status.unit_worldbook' },
