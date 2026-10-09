@@ -165,7 +165,7 @@
       "hide_all": "Hide All",
       "matched": "{{count}} matched · {{selected}} selected",
       "no_match": "No match · Try a different search",
-      "info": "Hiding does not delete models — they just won't appear in the main list. POST /api/v1/models/visibility",
+      "info": "Hiding does not delete models — they just won't appear in the main list.",
       "save": "Save"
     },
     "validate": {
@@ -173,7 +173,7 @@
       "sniffing": "Probing available models…",
       "done": "Probe complete",
       "step1": "1 / 2 · Preparing credentials",
-      "step2": "2 / 2 · GET /api/models/diff probing model list…",
+      "step2": "2 / 2 · probing model list…",
       "fail_title": "Probe failed: {{err}}",
       "fail_hint": "Check API key configuration or Base URL reachability.",
       "stat_existing": "Existing",
@@ -329,7 +329,7 @@
       "save_fail": "{{label}} save failed",
       "reset_ok": "All module overrides cleared",
       "reset_fail": "Reset failed",
-      "footer": "Changes are saved immediately via POST /api/me/preference. Each module picks up the new setting on next invocation.",
+      "footer": "Changes are saved immediately. Each module picks up the new setting on next invocation.",
       "features_title": "Features",
       "models_title": "Model assignment",
       "group_desc": {
@@ -1749,7 +1749,7 @@
       "problem": "Issues",
       "col_title": "Chapter Title",
       "col_volume": "Volume",
-      "preview_footer": "Showing first {{count}} chapters · See full split in the script directory after import · POST /api/v1/scripts/import",
+      "preview_footer": "Showing first {{count}} chapters · See full split in the script directory after import",
       "retry_tip": "Try a different split rule",
       "retry_rule": "Retry with Different Rule",
       "confirm_import": "Confirm Import",
@@ -3753,7 +3753,7 @@
       "ai_split_model_label": "Tidy-up model",
       "ai_split_model_note": "The LLM used to sort a free-text profile into structured fields. Changes save to your Settings → Models → AI tidy card fields preference (default gemini-3.5-flash); same picker as the script-import extraction model.",
       "first_mes_label": "Opening Message",
-      "footer_hint": "POST /api/v1/characters/import · Edit in your card library after import",
+      "footer_hint": "Edit in your card library after import",
       "btn_cancel": "Cancel",
       "btn_confirm": "Import",
       "btn_confirm_n": "Import {{count}}",
@@ -3775,7 +3775,7 @@
       "chat_preview_stats": "{{msgs}} messages · Player: {{user}}",
       "chat_new_save_hint": "A new save will be created with all messages imported as history. You can continue from where this chat left off.",
       "chat_btn_confirm": "Import as New Save",
-      "chat_footer_hint": "POST /api/v1/me/chats/import-tavern · Imported save appears in your Saves page"
+      "chat_footer_hint": "Imported save appears in your Saves page"
     },
     "editor": {
       "modal_title_new": "New",

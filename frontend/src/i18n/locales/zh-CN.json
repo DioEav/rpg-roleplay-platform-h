@@ -269,7 +269,7 @@
       "hide_all": "全部隐藏",
       "matched": "{{count}} 个匹配 · 已选中 {{selected}}",
       "no_match": "未匹配 · 修改搜索关键字",
-      "info": "隐藏不删除模型，只是不显示在主列表中。POST /api/v1/models/visibility",
+      "info": "隐藏不删除模型，只是不显示在主列表中。",
       "save": "保存"
     },
     "validate": {
@@ -277,7 +277,7 @@
       "sniffing": "正在嗅探可用模型…",
       "done": "嗅探完成",
       "step1": "1 / 2 · 准备凭证",
-      "step2": "2 / 2 · GET /api/models/diff 嗅探可用列表…",
+      "step2": "2 / 2 · 嗅探可用列表…",
       "fail_title": "嗅探失败：{{err}}",
       "fail_hint": "检查 API key 配置或 base URL 可达性。",
       "stat_existing": "已存在",
@@ -433,7 +433,7 @@
       "save_fail": "{{label}} 保存失败",
       "reset_ok": "已清空全部模块覆盖",
       "reset_fail": "重置失败",
-      "footer": "改动通过 POST /api/me/preference 即时保存。后端各模块在下次调用时按 user_preferences 重选 backend。",
+      "footer": "改动即时保存。后端各模块在下次调用时自动应用新模型。",
       "features_title": "功能开关",
       "models_title": "模型分配",
       "group_desc": {
@@ -1853,7 +1853,7 @@
       "problem": "异常",
       "col_title": "章节标题",
       "col_volume": "卷",
-      "preview_footer": "仅展示前 {{count}} 章 · 完整切分见导入后剧本目录 · POST /api/v1/scripts/import",
+      "preview_footer": "仅展示前 {{count}} 章 · 完整切分见导入后剧本目录",
       "retry_tip": "尝试不同的切分规则",
       "retry_rule": "换规则重试",
       "confirm_import": "确认导入",
@@ -3857,7 +3857,7 @@
       "ai_split_model_label": "整理用模型",
       "ai_split_model_note": "把自由文本档案整理成结构化字段所用的 LLM。改这里会存到你的「设置 → 模型 → AI 整理卡字段」偏好(默认 gemini-3.5-flash);与导入剧本的提取模型同一套选择器。",
       "first_mes_label": "开场白",
-      "footer_hint": "POST /api/v1/characters/import · 导入后可在用户角色卡库编辑",
+      "footer_hint": "导入后可在用户角色卡库编辑",
       "btn_cancel": "取消",
       "btn_confirm": "导入",
       "btn_confirm_n": "导入 {{count}} 张",
@@ -3879,7 +3879,7 @@
       "chat_preview_stats": "{{msgs}} 条消息 · 玩家：{{user}}",
       "chat_new_save_hint": "将创建新存档并把所有消息写入历史，可从聊天结束处继续游戏。",
       "chat_btn_confirm": "导入为新存档",
-      "chat_footer_hint": "POST /api/v1/me/chats/import-tavern · 导入的存档出现在存档页"
+      "chat_footer_hint": "导入的存档出现在存档页"
     },
     "editor": {
       "modal_title_new": "新增",
