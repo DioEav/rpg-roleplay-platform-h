@@ -361,7 +361,7 @@ function MeUserSettings() {
         open={pwOpen}
         eyebrow={t('platform.me.settings.pw_eyebrow', '修改密码')}
         title={hasPassword ? t('platform.me.settings.pw_title_change', '设置新密码') : t('platform.me.settings.pw_title_set', '设置登录密码')}
-        hint="POST /api/auth/password"
+        hint="修改密码后，其他设备的登录会话将被下线"
         fields={[
           ...(hasPassword ? [{ key: "current", label: t('platform.me.settings.pw_current', '当前密码'), required: true, type: "password" }] : []),
           { key: "next", label: t('platform.me.settings.pw_new', '新密码'), required: true, type: "password", hint: t('platform.me.settings.pw_hint', '至少 12 位 · 大小写 + 数字') },
@@ -375,7 +375,7 @@ function MeUserSettings() {
         open={visibilityOpen}
         eyebrow={t('platform.me.settings.visibility', '资料字段可见性')}
         title={t('platform.me.settings.visibility_title', '逐项控制谁能看到')}
-        hint="POST /api/profile/visibility · 仅影响他人查看"
+        hint="仅影响他人查看你资料的方式"
         fields={[
           { key: "real_name", label: t('platform.me.edit.field_real_name', '真实姓名'), type: "select", default: "self",
             options: [{value: "self", label: t('platform.me.settings.vis_self','仅自己')}, {value: "friends", label: t('platform.me.settings.vis_friends','好友')}, {value: "public", label: t('platform.me.settings.vis_public','所有人')}] },
@@ -398,7 +398,7 @@ function MeUserSettings() {
         open={exportOpen}
         eyebrow={t('platform.me.settings.export_eyebrow', '导出数据')}
         title={t('platform.me.settings.export_title', '选择要导出的内容')}
-        hint="POST /api/account/export · 生成后通过邮件发送下载链接（链接 7 天有效）"
+        hint="生成后通过邮件发送下载链接（链接 7 天有效）"
         fields={[
           { key: "scope", label: t('platform.me.settings.export_scope', '范围'), type: "select", default: "all",
             options: [
@@ -427,7 +427,7 @@ function MeUserSettings() {
           width={620}
           onClose={() => setSessionsOpen(false)}
           footer={<>
-            <span className="muted-2" style={{fontSize: 11.5}}>POST /api/auth/sessions/revoke</span>
+            <span className="muted-2" style={{fontSize: 11.5}}>全部下线后需在其他设备重新登录</span>
             <div style={{display: "flex", gap: 8}}>
               <button className="btn ghost" onClick={() => setSessionsOpen(false)}>{t('common.close', '关闭')}</button>
               <button className="btn danger" onClick={onRevokeAll} disabled={busyRevokeAll}><Icon name="close" size={12} /> {t('platform.me.settings.revoke_all', '全部下线（保留当前）')}</button>
@@ -463,7 +463,7 @@ function MeUserSettings() {
           width={640}
           onClose={() => setHistoryOpen(false)}
           footer={<>
-            <span className="muted-2" style={{fontSize: 11.5}}>GET /api/auth/login-history</span>
+            <span className="muted-2" style={{fontSize: 11.5}}>仅记录最近登录</span>
             <div style={{display: "flex", gap: 8}}>
               <button className="btn ghost" onClick={() => setHistoryOpen(false)}>{t('common.close', '关闭')}</button>
               <button className="btn ghost" onClick={() => {

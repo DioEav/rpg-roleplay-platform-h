@@ -23,6 +23,8 @@ import CSKeyValuePairs from '@cloudscape-design/components/key-value-pairs';
    Tabs:模型列表(ApiModelsList)/ API 用量(简略)。头部:编辑 / 管理显示 / 校验 / 删除 Key。 */
 function ApiDetailPanel({ api, onEdit, onVisibility, onValidate, onDeleteKey, onToggleModel, onRenameModel, onAddModel }) {
   const { t } = useTranslation();
+  // 用量里的成本项已隐藏(2026-10):恢复 = 改回 true。(与用量页 SHOW_USAGE_COST 同批)
+  const SHOW_API_USAGE_COST = false;
   const [tab, setTab] = useStatePL('models');
   const [usage, setUsage] = useStatePL(null);
   useEffectPL(() => { setTab('models'); setUsage(null); }, [api.id]);
@@ -87,11 +89,14 @@ function ApiDetailPanel({ api, onEdit, onVisibility, onValidate, onDeleteKey, on
           usage == null
             ? <CSBox color="text-body-secondary">{t('common.loading')}</CSBox>
             : <CSSpaceBetween size="m">
-                <CSKeyValuePairs columns={4} items={[
+                <CSKeyValuePairs columns={SHOW_API_USAGE_COST ? 4 : 3} items={[
                   { label: t('settings.models.usage_requests'), value: usage.requests != null ? Number(usage.requests).toLocaleString() : '—' },
                   { label: t('settings.models.usage_input_tokens'), value: usage.input_tokens != null ? Number(usage.input_tokens).toLocaleString() : '—' },
                   { label: t('settings.models.usage_output_tokens'), value: usage.output_tokens != null ? Number(usage.output_tokens).toLocaleString() : '—' },
-                  { label: t('settings.models.usage_cost'), value: usage.cost_usd != null ? `$${Number(usage.cost_usd).toFixed(2)}` : '—' },
+                  /* 成本项已隐藏(2026-10):SHOW_API_USAGE_COST 开关控制 */
+                  ...(SHOW_API_USAGE_COST ? [
+                    { label: t('settings.models.usage_cost'), value: usage.cost_usd != null ? `$${Number(usage.cost_usd).toFixed(2)}` : '—' },
+                  ] : []),
                 ]} />
                 <CSBox fontSize="body-s" color="text-body-secondary">{t('settings.models.usage_detail')} <a href="/usage" onClick={(e) => { e.preventDefault(); plNavigate('usage'); }}>{t('settings.models.usage_page')}</a>。</CSBox>
               </CSSpaceBetween>

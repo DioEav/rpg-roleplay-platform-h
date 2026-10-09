@@ -253,9 +253,6 @@ function DeleteConfirmModal({ open, text, msgIndex, role, busy, onClose, onConfi
         </div>
       }
       footer={<>
-        <span className="muted-2" style={{fontSize: 11.5}}>
-          <Icon name="info" size={11} /> POST /api/branches/rollback
-        </span>
         <div style={{display: "flex", gap: 8}}>
           <button className="btn ghost" onClick={onClose} disabled={busy}>{t('common.cancel')}</button>
           <button className="btn danger" onClick={onConfirm} disabled={busy}>
@@ -304,9 +301,6 @@ function ForkConfirmModal({ open, text, onClose, onConfirm }) {
       width={460}
       onClose={onClose}
       footer={<>
-        <span className="muted-2" style={{fontSize: 11.5}}>
-          <Icon name="info" size={11} /> POST /api/branches/continue
-        </span>
         <div style={{display: "flex", gap: 8}}>
           <button className="btn ghost" onClick={onClose}>{t('common.cancel')}</button>
           <button className="btn primary" onClick={onConfirm}>

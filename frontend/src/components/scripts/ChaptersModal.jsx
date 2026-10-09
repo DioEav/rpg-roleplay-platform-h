@@ -145,9 +145,6 @@ function ChaptersModal({ script, onClose, onChanged }) {
       )}
       footer={(
         <>
-          <span className="muted-2" style={{fontSize: 11.5}}>
-            <Icon name="info" size={11} /> GET /api/scripts/{script.id}/chapters · POST /chapters/{`{idx}`} / merge / split / resplit
-          </span>
           <button className="btn ghost" onClick={onClose}>{t('common.close')}</button>
         </>
       )}
@@ -210,7 +207,6 @@ function ChaptersModal({ script, onClose, onChanged }) {
         open={resplitOpen}
         eyebrow={t('scripts.editor.resplit_btn')}
         title={`${script.title} · ${t('scripts.editor.resplit_prompt_title')}`}
-        hint="POST /api/scripts/{id}/resplit"
         fields={[
           // 复用与「导入」完全一致的规则列表(= 后端 chapter_splitter.RULE_PATTERNS 的真实键)。
           // 旧版这里硬编码了 blank/marker/regex,后端没有这些规则 → 静默退化成 auto、且 regex

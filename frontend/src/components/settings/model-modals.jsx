@@ -43,9 +43,7 @@ function AddModelModal({ open, api, onClose, onConfirm }) {
       width={560}
       onClose={onClose}
       footer={<>
-        <span className="muted-2" style={{fontSize: 11.5}}>
-          <Icon name="info" size={11} /> POST <span className="mono">/api/v1/models/model</span>
-        </span>
+        {/* 接口路径显示已移除(2026-10):面向玩家的界面不应暴露 API 端点 */}
         <div style={{display: "flex", gap: 8}}>
           <button className="btn ghost" onClick={onClose}>{t('common.cancel')}</button>
           <button className="btn primary" disabled={!form.real_name || !form.display}
@@ -72,7 +70,11 @@ function AddModelModal({ open, api, onClose, onConfirm }) {
               ))}
             </div>
           </div>
-          <div className="pl-import-grid" style={{gridTemplateColumns: "1fr 1fr"}}>
+          {/* 价格与上下文窗口两个字段均已隐藏(2026-10):后端 upsert_model 只落
+              id/real_name/display_name/enabled/capabilities 五字段,price 与 context
+              从未入库(装饰性,填了也白填)。context 的真实来源是 model_probe 静态
+              价格表(按渠道+模型名命中)。恢复 = 解注释下方两段并恢复单列布局。 */}
+          {/* <div className="pl-import-grid" style={{gridTemplateColumns: "1fr 1fr"}}>
             <div className="pl-field">
               <label>{t('settings.add_model.price')}</label>
               <input className="mono" value={form.price} onChange={(e) => setForm(f => ({ ...f, price: e.target.value }))} placeholder="$0.15 / $0.60" />
@@ -81,7 +83,11 @@ function AddModelModal({ open, api, onClose, onConfirm }) {
               <label>{t('settings.add_model.context')}</label>
               <input className="mono" value={form.context} onChange={(e) => setForm(f => ({ ...f, context: e.target.value }))} placeholder="128K" />
             </div>
-          </div>
+          </div> */}
+          {/* <div className="pl-field">
+            <label>{t('settings.add_model.context')}</label>
+            <input className="mono" value={form.context} onChange={(e) => setForm(f => ({ ...f, context: e.target.value }))} placeholder="128K" />
+          </div> */}
         </div>
     </Modal>
   );
@@ -413,9 +419,6 @@ function ValidateModal({ open, api, onClose, onConfirm }) {
       width={560}
       onClose={onClose}
       footer={<>
-        <span className="muted-2" style={{fontSize: 11.5}}>
-          <Icon name="info" size={11} /> GET /api/models/diff · POST /api/models/model
-        </span>
         <div style={{display: "flex", gap: 8}}>
           <button className="btn ghost" onClick={onClose}>{phase === "done" ? t('common.close') : t('common.cancel')}</button>
           {phase === "done" && removeIds.size > 0 && (

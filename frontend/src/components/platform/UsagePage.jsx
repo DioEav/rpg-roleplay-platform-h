@@ -519,7 +519,7 @@ function UsagePage() {
       <CSContainer header={
         <CSHeader
           variant="h2"
-          description={`显示第 ${recentPage * RECENT_LIMIT + 1}–${recentPage * RECENT_LIMIT + Math.min(RECENT_LIMIT, recent.length)} 条（共 ${recentTotal} 条）· GET /api/me/usage`}
+          description={`显示第 ${recentPage * RECENT_LIMIT + 1}–${recentPage * RECENT_LIMIT + Math.min(RECENT_LIMIT, recent.length)} 条（共 ${recentTotal} 条）`}
           /* 导出 CSV 按钮已隐藏(2026-10):SHOW_USAGE_CSV_EXPORT 开关控制 */
           actions={SHOW_USAGE_CSV_EXPORT && (
             /* U7: 导出 CSV */

@@ -223,7 +223,6 @@ function BranchesPage() {
             {t('saves.branches.delete_body_suffix')} <strong>{deleteTarget?.summary || deleteTarget?.message || t('saves.branches.delete_body_node', { id: deleteTarget?.commit_id ?? deleteTarget?.id })}</strong>
             {" "}
             {t('saves.branches.delete_body_irrev')}
-            <div style={{marginTop: 8, fontSize: 12, color: "var(--muted)"}}>POST /api/branches/delete</div>
           </>
         }
         danger confirmLabel={t('saves.branches.delete_confirm_label')}
