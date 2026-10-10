@@ -38,21 +38,24 @@ function PrefSection() {
         <SetSelect value={interfaceLang}
           options={[
             { value: 'zh-CN', label: '简体中文' },
-            { value: 'zh-TW', label: '繁體中文' },
             { value: 'en', label: 'English (Beta)' },
+            // 繁體中文选项已移除(2026-10):i18n 资源复用简体,选项无实际意义。恢复 = 加回 { value: 'zh-TW', label: '繁體中文' }。
           ]}
           onChange={(v) => { setInterfaceLang(v); save("ui_language", v); changeLanguage(v); }} />
       </SetRow>
-      <SetRow label={t('settings.preferences.serif_font')} description={t('settings.preferences.serif_font_desc')}>
+      {/* 叙述字体/自动存档两个开关已隐藏(2026-10):pref.serif / pref.autosave 是死键
+          (全库无运行时消费者)。真功能在游戏内设置弹窗(localStorage rpg.narrativeFont /
+          rpg.autosave)。恢复 = 解注释以下两段 SetRow。 */}
+      {/* <SetRow label={t('settings.preferences.serif_font')} description={t('settings.preferences.serif_font_desc')}>
         <CSToggle checked={serif} onChange={({ detail }) => { setSerif(detail.checked); save("serif", detail.checked); }}>
           {serif ? t('settings.preferences.serif_on') : t('settings.preferences.serif_off')}
         </CSToggle>
-      </SetRow>
-      <SetRow label={t('settings.preferences.autosave')} description={t('settings.preferences.autosave_desc')}>
+      </SetRow> */}
+      {/* <SetRow label={t('settings.preferences.autosave')} description={t('settings.preferences.autosave_desc')}>
         <CSToggle checked={auto} onChange={({ detail }) => { setAuto(detail.checked); save("autosave", detail.checked); }}>
           {auto ? t('settings.preferences.autosave_on') : t('settings.preferences.autosave_off')}
         </CSToggle>
-      </SetRow>
+      </SetRow> */}
     </SetGroup>
   );
 }

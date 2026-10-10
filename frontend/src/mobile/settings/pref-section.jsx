@@ -55,7 +55,8 @@ function PrefSection({ nav }) {
             <span>{t('mobile.settings.pref.ui_language_desc')}</span>
           </div>
           <div className="pl-seg2" style={{ marginLeft: 'auto', flexShrink: 0, width: 170 }}>
-            {[['zh-CN','简体'],['zh-TW','繁體'],['en','EN']].map(([id, l]) => (
+            {/* 繁體选项已移除(2026-10):i18n 资源复用简体,选项无实际意义。恢复 = 加回 ['zh-TW','繁體']。 */}
+            {[['zh-CN','简体'],['en','EN']].map(([id, l]) => (
               <button key={id} className={lang===id?'active accent':''} onClick={() => {
                 setLang(id); save('ui_language', id);
                 Promise.resolve(changeLanguage(id)).catch(() => {});
@@ -63,7 +64,9 @@ function PrefSection({ nav }) {
             ))}
           </div>
         </div>
-        <div className="pl-setrow">
+        {/* 叙述字体/自动存档已隐藏(2026-10):pref.serif / pref.autosave 是死键
+            (全库无运行时消费者),真功能在游戏内设置弹窗(localStorage)。 */}
+        {/* <div className="pl-setrow">
           <div className="pl-setrow-tx">
             <strong>{t('mobile.settings.pref.serif_font')}</strong>
             <span>{t('mobile.settings.pref.serif_font_desc')}</span>
@@ -76,7 +79,7 @@ function PrefSection({ nav }) {
             <span>{t('mobile.settings.pref.autosave_desc')}</span>
           </div>
           <Toggle on={auto} onChange={(v) => { setAuto(v); save('autosave', v); }} />
-        </div>
+        </div> */}
       </SetGroup>
 
       {/* GM 叙事风格 */}
