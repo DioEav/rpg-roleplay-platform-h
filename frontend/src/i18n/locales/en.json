@@ -7439,6 +7439,8 @@
       "ok_saved_script": "Saved. This script's style has been updated — takes effect from the next GM turn.",
       "ok_saved_user": "Saved. Your default style has been updated — takes effect from the next GM turn.",
       "revert": "Revert",
+      "restore_defaults": "Restore platform defaults",
+      "defaults_applied": "Platform defaults applied — click Save to persist",
       "readonly_notice": "Only the script author can edit this script's narrative style.",
       "knobs": {
         "reply_length": {

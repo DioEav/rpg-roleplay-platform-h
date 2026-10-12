@@ -7436,6 +7436,8 @@
       "ok_saved_script": "已保存。本剧本风格已更新,下一轮 GM 即按此生效。",
       "ok_saved_user": "已保存。你的默认风格已更新,下一轮 GM 即按此生效。",
       "revert": "还原",
+      "restore_defaults": "恢复平台默认",
+      "defaults_applied": "已应用平台默认值（回复长度等），点「保存」后生效",
       "readonly_notice": "只有剧本作者能修改本剧本的叙事风格。",
       "knobs": {
         "reply_length": {
