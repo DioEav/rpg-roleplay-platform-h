@@ -33,7 +33,9 @@ function SchemaField({ field, value, onChange }) {
       <span>{field.label}{field.required && <span className="pl-field-req">*</span>}</span>
     );
     return (
-      <div className="pl-field" style={{flexDirection: 'row', alignItems: 'flex-start', gap: 8, marginTop: 6}}>
+      // .pl-field 默认 display:grid(子元素各占一行),这里必须显式覆盖为 flex,
+      // 否则 flexDirection 无效,勾选框会被 grid 拆到文字上方单独一行。
+      <div className="pl-field" style={{display: 'flex', flexDirection: 'row', alignItems: 'flex-start', gap: 8, marginTop: 6}}>
         <input
           id={field.key}
           type="checkbox"
