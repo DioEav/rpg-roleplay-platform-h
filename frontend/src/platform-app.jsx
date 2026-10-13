@@ -216,14 +216,18 @@ const getCSModules = (t) => [
   //     { text: t('platform.nav.rath', { defaultValue: 'RATH' }), href: '#rath' },
   //   ] },
   { id: 'account', label: t('platform.nav.account'), group: t('platform.nav.group_system'),
-    pages: ['me', 'me-edit', 'me-settings', 'settings', 'settings-models',
+    pages: ['me', 'me-edit', 'settings', 'settings-models',
       'settings-modelparams', 'settings-modules', 'settings-memory', 'usage'],
       // 'usage'(用量)自「扩展」模块完整迁入(2026-10):账户级用量统计归设置&账户。
+      // 「隐私与安全」(me-settings)已隐藏(2026-10):改密入口已迁移至「编辑资料」页;
+      // 恢复 = pages 加回 'me-settings' + 解注释下方左栏条目 + 用户下拉菜单项
+      //   + entries/platform.jsx 的 PL_IDS 与路由 + UnifiedSearch 条目。
       // 'settings-account' 与 'settings-permissions' 已隐藏(2026-10):从 pages 移除后直链回落主页。
     sub: [
       { text: t('platform.nav.me'),                  href: '#me' },
       { text: t('platform.nav.me_edit'),              href: '#me-edit' },
-      { text: t('platform.nav.me_settings'),          href: '#me-settings' },
+      // 「隐私与安全」(me-settings) 入口已隐藏(2026-10);组件保留,恢复见上方注释。
+      // { text: t('platform.nav.me_settings'),          href: '#me-settings' },
       { text: t('platform.nav.settings_preferences'), href: '#settings' },
       { text: t('platform.nav.settings_models'),      href: '#settings-models' },
       { text: t('platform.nav.settings_modelparams'), href: '#settings-modelparams' },
@@ -678,7 +682,6 @@ function PlatformShellCS({ page, setPage, children, assistant, assistantOpen, on
                 items: [
                   { id: 'me', text: t('platform.nav.me') },
                   { id: 'me-edit', text: t('platform.nav.me_edit') },
-                  { id: 'me-settings', text: t('platform.nav.me_settings') },
                   { id: 'feedback', text: t('platform.menu.feedback') },
                   // 「帮助」菜单项已隐藏(与顶栏帮助按钮同步;恢复时解注释)。
                   // { id: 'help', text: t('platform.menu.help') },

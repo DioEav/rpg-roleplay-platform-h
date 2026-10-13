@@ -1086,6 +1086,8 @@
         "section_avatar": "头像",
         "section_basic": "基本资料",
         "section_contact": "联系方式",
+        "section_security": "账号安全",
+        "security_desc": "修改密码后，其他设备的登录会话将被下线",
         "section_locale": "本地化",
         "field_display_name": "显示名",
         "field_pronouns": "代词",
@@ -1128,7 +1130,7 @@
         "field_optional": "选填",
         "field_phone_hint": "选填，仅自己可见",
         "field_real_name_hint": "仅自己可见",
-        "field_username_hint": "登录用，6 个月可改一次",
+        "field_username_hint": "登录用，修改后即时生效",
         "file_too_large": "文件过大",
         "max_size": "最大 2 MB",
         "op_failed": "操作失败",
@@ -4679,10 +4681,6 @@
   "feedback_page": {
     "header_title": "支持与反馈",
     "header_description": "提交问题或建议,跟踪处理进度与官方回复。需要快速反馈也可点顶栏「反馈」随时弹窗提交。",
-    "content_limit": {
-      "title": "内容限制",
-      "body": "反馈渠道不得包含性、露骨、NSFW 等成人材料(无论是否年满 18)。违反将永久封号并加入禁注表。详见"
-    },
     "form": {
       "container_title": "提交反馈",
       "container_description": "带运行环境信息能让排查更快(仅管理员可见)。",
@@ -4694,7 +4692,6 @@
       "text_placeholder": "请描述你遇到的问题或建议…(复现步骤 / 期望 / 实际 越具体越好)",
       "include_runtime": "附带运行环境信息(页面 / 活动剧本存档 / 最近错误 / 最近 3 轮对话,仅管理员可见,强烈建议)",
       "include_excerpts": "包含对话节选(最多 5 段)",
-      "consent_required": "请先勾选同意以启用提交",
       "submit_btn": "提交反馈"
     },
     "error": {
@@ -4715,7 +4712,6 @@
       "label_player": "玩家",
       "label_gm": "GM"
     },
-    "consent_text": "我已阅读 AUP §2.J,理解不得包含成人主题节选,同意(此操作记录我的同意)",
     "withdraw": {
       "confirm_title": "撤回反馈",
       "confirm_message": "撤回反馈 #{{id}}?",
@@ -4740,12 +4736,6 @@
       "reviewed_at": "处理 {{time}}",
       "no_text": "(无文字内容)",
       "admin_reply": "官方回复"
-    },
-    "community": {
-      "title": "玩家交流群",
-      "description": "遇到问题、想交流玩法,欢迎加入玩家 QQ 群(群号 {{group}})。",
-      "qr_alt": "QQ 群二维码 {{group}}",
-      "join_btn": "用 QQ 加入群聊"
     },
     "tips": {
       "title": "提示",
@@ -5169,7 +5159,7 @@
         "field_display_name": "显示名",
         "field_display_name_hint": "出现在游戏和评论里",
         "field_username": "用户名",
-        "field_username_hint": "登录用，6 个月可改一次",
+        "field_username_hint": "登录用，修改后即时生效",
         "field_real_name": "真实姓名",
         "field_real_name_hint": "仅自己可见",
         "field_gender": "性别",
@@ -7172,10 +7162,6 @@
         "section_header": "选择要包含的对话节选（最多 5 段）",
         "empty": "暂无可用对话节选",
         "role_player": "玩家"
-      },
-      "consent": {
-        "label": "我已阅读 AUP §2.J，理解不得包含成人主题节选，同意（此操作记录我的同意）",
-        "error": "请先勾选同意以启用提交"
       },
       "qq": {
         "header": "玩家交流群",

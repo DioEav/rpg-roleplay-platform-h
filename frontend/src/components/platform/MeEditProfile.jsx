@@ -6,7 +6,7 @@ import { useTranslation } from 'react-i18next';
 import { plNavigate } from '../../router.js';
 import AvatarImg from '../AvatarImg.jsx';
 import MediaStudio from '../MediaStudio.jsx';
-import { _FORM_KEYS, ConfirmModal, publishUser, useReactiveUser, Field } from './shared.jsx';
+import { _FORM_KEYS, ConfirmModal, PromptModal, publishUser, useReactiveUser, Field } from './shared.jsx';
 import CSBox from '@cloudscape-design/components/box';
 import CSButton from '@cloudscape-design/components/button';
 import CSContainer from '@cloudscape-design/components/container';
@@ -85,6 +85,15 @@ function MeEditProfile() {
   const onSave = async () => {
     setSaving(true);
     try {
+      // 用户名改名走 PATCH /api/me/profile —— 唯一真实通道(saveProfile 会静默丢弃
+      // username)。仅在有变更时调用;重名/格式错误由后端返回 400,提示透传。
+      const oldUsername = (user.username || "").trim().toLowerCase();
+      const newUsername = (form.username || "").trim();
+      if (newUsername && newUsername.toLowerCase() !== oldUsername) {
+        const r2 = await window.api.account.meProfilePatch({ username: newUsername });
+        if (r2 && r2.ok === false) throw new Error(r2.error || t('platform.me.edit.rename_failed', '用户名修改失败'));
+        setForm(f => ({ ...f, username: newUsername }));
+      }
       await window.api.account.saveProfile(form);
       try { window.__capClearDirty && window.__capClearDirty("settings.profile"); } catch (_) {}
       // task 13: 拉一次权威源（/api/auth/me），用回包的 user 字段更新全局并广播事件，
@@ -145,6 +154,25 @@ function MeEditProfile() {
       window.__apiToast?.(t('platform.me.edit.op_failed', '操作失败'), { kind: "danger", detail: e?.message });
     }
   };
+
+  // ── 修改密码(自「隐私与安全」页迁移一份到编辑资料页,方便就地改密)──
+  // 与 MeUserSettings 的弹窗同字段同端点(POST /api/auth/password),改密后其他
+  // 设备的登录会话将被下线(后端行为,当前会话保留)。
+  const [pwOpen, setPwOpen] = useStatePL(false);
+  const onChangePassword = async (vals) => {
+    if (!vals?.next || vals.next !== vals.confirm) {
+      window.__apiToast?.(t('platform.me.settings.pw_mismatch', '两次密码不一致'), { kind: "danger" });
+      return;
+    }
+    try {
+      await window.api.auth.changePassword({ current: vals.current, next: vals.next });
+      window.__apiToast?.(t('platform.me.settings.pw_changed', '密码已修改'), { kind: "ok" });
+      setPwOpen(false);
+    } catch (e) {
+      window.__apiToast?.(t('platform.me.settings.pw_change_failed', '修改失败'), { kind: "danger", detail: e?.message });
+    }
+  };
+  const hasPassword = user.has_password !== false;
 
   return (
     <CSSpaceBetween size="l">
@@ -231,6 +259,20 @@ function MeEditProfile() {
         </CSSpaceBetween>
       </CSContainer>
 
+      {/* 账号安全(2026-10 自「隐私与安全」页迁移一份:改密后就地可操作) */}
+      <CSContainer header={<CSHeader variant="h2">{t('platform.me.edit.section_security', '账号安全')}</CSHeader>}>
+        <CSSpaceBetween direction="horizontal" size="m">
+          <CSBox color="text-body-secondary" fontSize="body-s">
+            {t('platform.me.edit.security_desc', '修改密码后，其他设备的登录会话将被下线。')}
+          </CSBox>
+          <CSButton iconName="lock-private" onClick={() => setPwOpen(true)}>
+            {hasPassword
+              ? t('platform.me.settings.change_password', '修改密码')
+              : t('platform.me.settings.set_password', '设置密码')}
+          </CSButton>
+        </CSSpaceBetween>
+      </CSContainer>
+
       {/* 联系方式 */}
       <CSContainer header={<CSHeader variant="h2">{t('platform.me.edit.section_contact', '联系方式')}</CSHeader>}>
         <div className="pl-form-grid-2">
@@ -243,8 +285,9 @@ function MeEditProfile() {
         </div>
       </CSContainer>
 
-      {/* 本地化 */}
-      <CSContainer header={<CSHeader variant="h2">{t('platform.me.edit.section_locale', '本地化')}</CSHeader>}>
+      {/* 本地化区块已隐藏(2026-10):界面语言与 pref.ui_language 是两套体系(此处不生效),
+          时区无任何消费者。真功能在「偏好 → 界面语言」。恢复 = 解注释整个 CSContainer。 */}
+      {/* <CSContainer header={<CSHeader variant="h2">{t('platform.me.edit.section_locale', '本地化')}</CSHeader>}>
         <div className="pl-form-grid-2">
           <Field label={t('platform.me.edit.field_language', '界面语言')}>
             <CSSelect
@@ -261,7 +304,7 @@ function MeEditProfile() {
             />
           </Field>
         </div>
-      </CSContainer>
+      </CSContainer> */}
 
       {/* 保存按钮行 */}
       <CSSpaceBetween direction="horizontal" size="xs">
@@ -287,6 +330,20 @@ function MeEditProfile() {
         body={<>{t('platform.me.edit.reset_avatar_body', '将删除当前头像，使用由显示名首字生成的占位头像。')}</>}
         confirmLabel={t('platform.me.edit.reset_avatar_confirm', '恢复默认')}
         onClose={() => setResetAvatarOpen(false)} onConfirm={onResetAvatar}
+      />
+      <PromptModal
+        open={pwOpen}
+        eyebrow={t('platform.me.settings.pw_eyebrow', '修改密码')}
+        title={hasPassword ? t('platform.me.settings.pw_title_change', '设置新密码') : t('platform.me.settings.pw_title_set', '设置登录密码')}
+        hint="修改密码后，其他设备的登录会话将被下线"
+        fields={[
+          ...(hasPassword ? [{ key: "current", label: t('platform.me.settings.pw_current', '当前密码'), required: true, type: "password" }] : []),
+          { key: "next", label: t('platform.me.settings.pw_new', '新密码'), required: true, type: "password", hint: t('platform.me.settings.pw_hint', '至少 12 位 · 大小写 + 数字') },
+          { key: "confirm", label: t('platform.me.settings.pw_confirm', '确认新密码'), required: true, type: "password" },
+        ]}
+        submitLabel={hasPassword ? t('platform.me.settings.change_password', '修改密码') : t('platform.me.settings.set_password', '设置密码')}
+        onClose={() => setPwOpen(false)}
+        onConfirm={onChangePassword}
       />
     </CSSpaceBetween>
   );

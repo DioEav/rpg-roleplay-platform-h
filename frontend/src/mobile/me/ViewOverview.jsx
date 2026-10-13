@@ -242,11 +242,7 @@ function ViewOverview({ nav, user }) {
               <span className="pl-row-tx"><strong>{t('mobile.me.edit.title')}</strong><span>{t('mobile.me.overview.edit_desc')}</span></span>
               <span className="pl-row-chev"><Icon name="chevron_right" size={17} /></span>
             </button>
-            <button className="pl-row" onClick={() => nav.go('me-settings')}>
-              <span className="pl-row-ic"><Icon name="settings" size={17} /></span>
-              <span className="pl-row-tx"><strong>{t('mobile.me.settings.title')}</strong><span>{t('mobile.me.overview.settings_desc')}</span></span>
-              <span className="pl-row-chev"><Icon name="chevron_right" size={17} /></span>
-            </button>
+            {/* 「隐私与安全」入口已隐藏(2026-10):恢复 = 解注释此按钮 */}
             <button className="pl-row" onClick={() => nav.go('usage')}>
               <span className="pl-row-ic info"><Icon name="usage" size={17} /></span>
               <span className="pl-row-tx"><strong>{t('mobile.me.usage.title')}</strong><span>{t('mobile.me.overview.usage_desc')}</span></span>

@@ -55,12 +55,13 @@ function ViewSettings({ nav, user }) {
         const p = r?.preferences || r || {};
         setTwofa(p.two_fa != null ? !!p.two_fa : true);
         setEmailNotif(p.email_notif != null ? !!p.email_notif : true);
-        setPublicProfile(p.public_profile != null ? !!p.public_profile : false);
+        // 2026-10:公开主页默认开启 —— 未设置偏好时显示开(与后端判定口径一致)
+        setPublicProfile(p.public_profile != null ? !!p.public_profile : true);
         setSearchable(p.searchable != null ? !!p.searchable : true);
         setShareUsage(p.share_usage != null ? !!p.share_usage : false);
         setShareCrash(p.share_crash != null ? !!p.share_crash : true);
       } catch (_) {
-        if (!cancelled) { setTwofa(true); setEmailNotif(true); setPublicProfile(false); setSearchable(true); setShareUsage(false); setShareCrash(true); }
+        if (!cancelled) { setTwofa(true); setEmailNotif(true); setPublicProfile(true); setSearchable(true); setShareUsage(false); setShareCrash(true); }
       } finally { if (!cancelled) setPrefLoaded(true); }
     })();
     return () => { cancelled = true; };

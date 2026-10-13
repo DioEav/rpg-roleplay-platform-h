@@ -50,7 +50,6 @@ export function FeedbackDrawer({ open, onClose }) {
   const [includeExcerpts, setIncludeExcerpts] = React.useState(false);
   const [selectedExcerpts, setSelectedExcerpts] = React.useState([]);  // indices
   const [recentTurns, setRecentTurns]     = React.useState([]);
-  const [consent, setConsent]             = React.useState(false);
   const [busy, setBusy]                   = React.useState(false);
   const [done, setDone]                   = React.useState(false);
   const [error, setError]                 = React.useState(null);
@@ -94,7 +93,6 @@ export function FeedbackDrawer({ open, onClose }) {
     setFreeText('');
     setIncludeExcerpts(false);
     setSelectedExcerpts([]);
-    setConsent(false);
     setBusy(false);
     setDone(false);
     setError(null);
@@ -161,7 +159,7 @@ export function FeedbackDrawer({ open, onClose }) {
     );
   }
 
-  const canSubmit = consent && freeText.trim().length > 0 && !busy && !done;
+  const canSubmit = freeText.trim().length > 0 && !busy && !done;
 
   async function handleSubmit() {
     if (!canSubmit) return;
@@ -366,18 +364,7 @@ export function FeedbackDrawer({ open, onClose }) {
               </CSContainer>
             )}
 
-            {/* ── 同意复选框 ── */}
-            <CSFormField
-              errorText={!consent && freeText.trim() ? t('components.feedback_drawer.consent.error') : undefined}
-            >
-              <CSCheckbox
-                checked={consent}
-                onChange={({ detail }) => setConsent(detail.checked)}
-                disabled={busy}
-              >
-                {t('components.feedback_drawer.consent.label')}
-              </CSCheckbox>
-            </CSFormField>
+            {/* ── 同意复选框已下线(2026-10):consent_token 仍由共享内核按 CONSENT_TEXT 静默生成 ── */}
           </>
         )}
 

@@ -52,7 +52,7 @@ const PAGE_TAB = {
   'scripts-editor': 'scripts', 'scripts-settings': 'scripts',
   saves: 'saves', 'saves-branches': 'saves', 'play-settings': 'saves', modules: 'saves', tavern: 'saves',
   cards: 'cards', 'cards-npc': 'cards', 'cards-online': 'cards',
-  me: 'me', 'me-edit': 'me', 'me-settings': 'me',
+  me: 'me', 'me-edit': 'me',
   settings: 'me', 'settings-models': 'me', 'settings-modelparams': 'me', 'settings-modules': 'me',
   'settings-memory': 'me',
   // 'settings-permissions' 与 'settings-account' 已隐藏(2026-10):未列出 → 走占位页
@@ -76,7 +76,7 @@ const MOBILE_PAGES = {
   // 'settings-permissions' 与 'settings-account' 已隐藏(2026-10):未列出 → 走占位页
   // 'settings-danger' 已隐藏(2026-09):未列出 → 走占位页
   plugins: MobileCaps, mcp: MobileCaps, skills: MobileCaps, apis: MobileCaps, feedback: MobileCaps,
-  me: MobileMe, 'me-edit': MobileMe, 'me-settings': MobileMe, usage: MobileMe, wall: MobileMe,
+  me: MobileMe, 'me-edit': MobileMe, usage: MobileMe, wall: MobileMe,
   tavern: MobileTavern,
 };
 // 占位文案(按 Tab / 路由)——titleKey/descKey 在组件内经 t() 解析
@@ -95,7 +95,6 @@ const PAGE_TITLE_KEYS = {
   'cards-online': 'mobile.root.page_title.cards_online',
   'cards-npc': 'mobile.root.page_title.cards_npc',
   'me-edit': 'mobile.root.page_title.me_edit',
-  'me-settings': 'mobile.root.page_title.me_settings',
   usage: 'mobile.root.page_title.usage',
   feedback: 'mobile.root.page_title.feedback',
   'settings-models': 'mobile.root.page_title.settings_models',

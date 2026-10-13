@@ -7,6 +7,7 @@ import { plNavigate } from '../../router.js';
 import AvatarImg from '../AvatarImg.jsx';
 import CSBox from '@cloudscape-design/components/box';
 import CSButton from '@cloudscape-design/components/button';
+import CSAlert from '@cloudscape-design/components/alert';
 import CSColumnLayout from '@cloudscape-design/components/column-layout';
 import CSContainer from '@cloudscape-design/components/container';
 import CSHeader from '@cloudscape-design/components/header';
@@ -77,7 +78,7 @@ function AchievementWall({ items }) {
   );
 }
 
-function AchvShareModal({ user, items, unlockedCount, total, onClose }) {
+function AchvShareModal({ user, items, unlockedCount, total, publicProfile, onClose }) {
   const { t } = useTranslation();
   const username = (user && user.username) || "";
   const wallUrl = `${location.origin}/wall?u=${encodeURIComponent(username)}`;
@@ -114,6 +115,12 @@ function AchvShareModal({ user, items, unlockedCount, total, onClose }) {
             ))}
           </div>
         </div>
+        {/* 公开状态提示(2026-10):publicProfile=false 时他人访问墙会 404,提前告知 */}
+        {publicProfile === false && (
+          <CSAlert type="warning">
+            {t('platform.achv.not_public_hint', { defaultValue: '你的「公开个人主页」当前为关闭状态——他人访问此链接将无法查看。可到「设置&账户 → 隐私与安全」开启。' })}
+          </CSAlert>
+        )}
         <CSBox color="text-body-secondary" fontSize="body-s">
           {t('platform.achv.wall_link_hint', '公开成就墙链接(需在「设置 → 隐私」开启「公开个人主页」后，他人方可访问):')}
           <div className="mono" style={{ marginTop: 4, wordBreak: "break-all", fontSize: 12 }}>{wallUrl}</div>

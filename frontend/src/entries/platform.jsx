@@ -87,7 +87,8 @@ const MOBILE_V2_MAX_WIDTH = 600;
 // PL_HASH_ALIASES 里归一。
 const PL_IDS = [
   ...((PL_NAV || []).filter((i) => i.id).map((i) => i.id)),
-  'me', 'me-edit', 'me-settings', 'saves-branches', 'scripts-import', 'cards-npc', 'cards-online',
+  'me', 'me-edit', 'saves-branches', 'scripts-import', 'cards-npc', 'cards-online',
+  // 'me-settings'(隐私与安全)已隐藏(2026-10):改密入口已迁移至「编辑资料」页,直链回落主页。
   // 新 IA 子页(Cloudscape 迁移后):剧本 / 开始游戏 / 设置&账户 各模块的左栏子页
   // 「play-settings」(游戏设置)已随「冒险模组」(modules,原经 PL_NAV 注入)一并隐藏:
   // 不在合法 page 集合 → 直链 /modules、/play-settings 由 plPathToPage 返回 null 回落主页。
@@ -167,7 +168,8 @@ function PlatformApp() {
   if (page === 'profile') body = <ProfilePage />;
   else if (page === 'me') body = <MePage subPage="overview" />;
   else if (page === 'me-edit') body = <MePage subPage="edit" />;
-  else if (page === 'me-settings') body = <MePage subPage="settings" />;
+  // 'me-settings'(隐私与安全)已隐藏(2026-10):PL_IDS 已不含 → 直链回落主页。
+  // else if (page === 'me-settings') body = <MePage subPage="settings" />;
   else if (page === 'scripts') body = <ScriptsPage subPage="list" />;
   else if (page === 'scripts-import') body = <ScriptsPage subPage="import" />;
   else if (page === 'scripts-library') body = <ScriptsPage subPage="library" />;

@@ -378,6 +378,8 @@
       publicWall: (username) => GET(`/api/u/${encodeURIComponent(username)}/achievements`),  // 公开成就墙
       preferences: (body) => POST(`${API_PREFIX}/me/preference`, body),
       getPreferences: () => GET(`${API_PREFIX}/me/profile`),
+      // 用户名改名的唯一真实通道(POST /api/profile 不读 username);后端有重名检查
+      meProfilePatch: (body) => PATCH(`${API_PREFIX}/me/profile`, body),
       gmStyleSchema: () => GET(`${API_PREFIX}/gm-style/schema`),
       getGmStyle: () => GET(`${API_PREFIX}/me/gm-style`),
       setGmStyle: (gm_style) => POST(`${API_PREFIX}/me/gm-style`, { gm_style }),

@@ -982,6 +982,9 @@
         "section_avatar": "Avatar",
         "section_basic": "Basic info",
         "section_contact": "Contact",
+      "section_contact": "Contact",
+        "security_desc": "Other device sessions will be signed out after a password change",
+        "section_security": "Account Security",
         "section_locale": "Localization",
         "field_display_name": "Display name",
         "field_pronouns": "Pronouns",
@@ -1024,7 +1027,7 @@
         "field_optional": "Optional",
         "field_phone_hint": "Optional · visible only to you",
         "field_real_name_hint": "Visible only to you",
-        "field_username_hint": "For login · changeable once every 6 months",
+        "field_username_hint": "Used to log in · changes apply immediately",
         "file_too_large": "File too large",
         "max_size": "Max 2 MB",
         "op_failed": "Operation failed",
@@ -4682,10 +4685,6 @@
   "feedback_page": {
     "header_title": "Support & Feedback",
     "header_description": "Submit issues or suggestions and track their status and official replies. For a quick note, click the Feedback button in the top bar at any time.",
-    "content_limit": {
-      "title": "Content Restrictions",
-      "body": "Feedback must not contain sexual, explicit, or NSFW adult material, regardless of age. Violations will result in a permanent ban. See"
-    },
     "form": {
       "container_title": "Submit Feedback",
       "container_description": "Including runtime diagnostics helps us investigate faster (visible to admins only).",
@@ -4697,7 +4696,6 @@
       "text_placeholder": "Describe the issue or suggestion… (steps to reproduce / expected / actual — the more specific, the better)",
       "include_runtime": "Attach runtime diagnostics (current page, active script/save, recent errors, last 3 dialog turns — admin-only, strongly recommended)",
       "include_excerpts": "Include dialog excerpts (up to 5)",
-      "consent_required": "Please check the consent box to enable submission",
       "submit_btn": "Submit Feedback"
     },
     "error": {
@@ -4718,7 +4716,6 @@
       "label_player": "Player",
       "label_gm": "GM"
     },
-    "consent_text": "I have read AUP §2.J, understand that adult content excerpts are not permitted, and agree (this action records my consent)",
     "withdraw": {
       "confirm_title": "Withdraw Feedback",
       "confirm_message": "Withdraw feedback #{{id}}?",
@@ -4743,12 +4740,6 @@
       "reviewed_at": "Reviewed {{time}}",
       "no_text": "(no text content)",
       "admin_reply": "Official Reply"
-    },
-    "community": {
-      "title": "Player Community",
-      "description": "Have questions or want to discuss gameplay? Join our QQ player group ({{group}}).",
-      "qr_alt": "QQ group QR code {{group}}",
-      "join_btn": "Join via QQ"
     },
     "tips": {
       "title": "Tips",
@@ -5172,7 +5163,7 @@
         "field_display_name": "Display name",
         "field_display_name_hint": "Shown in games and comments",
         "field_username": "Username",
-        "field_username_hint": "Used to log in, changeable once every 6 months",
+        "field_username_hint": "Used to log in · changes apply immediately",
         "field_real_name": "Real name",
         "field_real_name_hint": "Visible only to you",
         "field_gender": "Gender",
@@ -7175,10 +7166,6 @@
         "section_header": "Select excerpts to include (up to 5)",
         "empty": "No conversation excerpts available",
         "role_player": "Player"
-      },
-      "consent": {
-        "label": "I have read AUP §2.J, understand that adult-themed excerpts are not permitted, and consent (this action records my consent).",
-        "error": "Please check the consent box before submitting"
       },
       "qq": {
         "header": "Player community",

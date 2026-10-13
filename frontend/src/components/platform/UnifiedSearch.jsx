@@ -67,7 +67,7 @@ function UnifiedSearch({ open, onClose, setPage }) {
     { id: "profile",  label: tSearch('platform.nav.profile'),         kind: "page", icon: "home",     keywords: "home dashboard" },
     { id: "me",       label: tSearch('platform.nav.me'),              kind: "page", icon: "user",     keywords: "me profile account" },
     { id: "me-edit",  label: tSearch('platform.nav.me_edit_full'),    kind: "page", icon: "edit",     keywords: "edit profile avatar" },
-    { id: "me-settings", label: tSearch('platform.nav.me_settings_full'), kind: "page", icon: "settings", keywords: "privacy security 2fa" },
+    // 「隐私与安全」(me-settings)已隐藏(2026-10):入口全部下线,不再作为可搜索目的地
     { id: "scripts",  label: tSearch('platform.nav.scripts'),         kind: "page", icon: "book",     keywords: "scripts import" },
     { id: "cards",    label: tSearch('platform.nav.cards'),           kind: "page", icon: "cards",    keywords: "characters card user npc" },
     { id: "cards-npc", label: tSearch('platform.nav.cards_npc_full'), kind: "page", icon: "cards",   keywords: "npc characters" },

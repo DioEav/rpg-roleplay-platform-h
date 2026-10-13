@@ -3,8 +3,8 @@
  * 职责:历史反馈(状态/官方回复)+ 完整新反馈表单。快速新反馈走顶栏「反馈」弹窗(FeedbackQuickModal)。
  * 后端契约:POST /api/feedback · GET /api/me/feedback · DELETE /api/feedback/{id}
  *
- * 布局:单列居中(无空旷右栏)。内容限制 → 提交反馈 → 我的反馈记录(KPI + 状态筛选 + 卡片)
- *       → 玩家群/提示(等宽双列页脚)。
+ * 布局:单列居中(无空旷右栏)。提交反馈 → 我的反馈记录(KPI + 状态筛选 + 卡片) → 提示页脚。
+ *       (「内容限制」警示与「玩家交流群」模块已下线,2026-10)
  */
 import React from 'react';
 import { useTranslation } from 'react-i18next';
@@ -26,11 +26,7 @@ import { feedbackDecisionLabel } from '../lib/feedback.js';
 import { fmtTimeFallback } from '../data-loader.js';
 
 const CONSENT_TEXT = '我已阅读 AUP §2.J,理解不得包含成人主题节选,同意(此操作记录我的同意)';
-const AUP_LINK = 'https://play.stellatrix.icu/legal/aup#2J';
 const MAX_FREE_TEXT = 10000;
-const QQ_GROUP_NUMBER = '584876566';
-const QQ_JOIN_URL = 'https://qm.qq.com/q/49Dqcr0aw0';
-const QQ_QR_SRC = '/qq-group.jpg';
 
 const statusLabel = feedbackDecisionLabel;  // 语义统一 #26:用户侧决策标签(共享 lib/feedback.js)
 function statusColor(d) {
@@ -58,7 +54,6 @@ export function FeedbackPage() {
   const [includeExcerpts, setIncludeExcerpts] = React.useState(false);
   const [selectedExcerpts, setSelectedExcerpts] = React.useState([]);
   const [recentTurns, setRecentTurns] = React.useState([]);
-  const [consent, setConsent] = React.useState(false);
   const [busy, setBusy] = React.useState(false);
   const [done, setDone] = React.useState(false);
   const [error, setError] = React.useState(null);
@@ -118,12 +113,13 @@ export function FeedbackPage() {
   }, [includeExcerpts]);
 
   const toggleExcerpt = (idx) => setSelectedExcerpts((p) => p.includes(idx) ? p.filter((i) => i !== idx) : [...p, idx]);
-  const canSubmit = consent && freeText.trim().length > 0 && freeText.length <= MAX_FREE_TEXT && !busy;
+  const canSubmit = freeText.trim().length > 0 && freeText.length <= MAX_FREE_TEXT && !busy;
 
   async function handleSubmit() {
     if (!canSubmit) return;
     setBusy(true); setError(null);
     try {
+      // 同意勾选框已下线(2026-10);后端仍要求 64-hex consent_token,这里按规范文案静默生成。
       const token = await sha256hex(CONSENT_TEXT);
       const excerpts = includeExcerpts
         ? recentTurns.filter((t) => selectedExcerpts.includes(t.idx)).map(({ session_id, range, plaintext }) => ({ session_id, range, plaintext }))
@@ -145,7 +141,7 @@ export function FeedbackPage() {
       });
       const data = await res.json();
       if (!res.ok || !data.ok) throw new Error(data.detail || data.error || `HTTP ${res.status}`);
-      setDone(true); setFreeText(''); setConsent(false); setIncludeExcerpts(false); setSelectedExcerpts([]);
+      setDone(true); setFreeText(''); setIncludeExcerpts(false); setSelectedExcerpts([]);
       await loadHistory();
     } catch (e) { setError(e?.message || i18n.t('feedback_page.error.submit_failed')); }
     finally { setBusy(false); }
@@ -183,10 +179,6 @@ export function FeedbackPage() {
           actions={<CSButton iconName="refresh" loading={historyLoading} onClick={loadHistory}>{t('common.refresh')}</CSButton>}
         >{t('feedback_page.header_title')}</CSHeader>
 
-        <CSAlert type="warning" header={t('feedback_page.content_limit.title')}>
-          {t('feedback_page.content_limit.body')} <a href={AUP_LINK} target="_blank" rel="noopener noreferrer">AUP §2.J</a>。
-        </CSAlert>
-
         {/* ── 提交反馈 ── */}
         <CSContainer header={<CSHeader variant="h2" description={t('feedback_page.form.container_description')}>{t('feedback_page.form.container_title')}</CSHeader>}>
           <CSSpaceBetween size="m">
@@ -214,9 +206,6 @@ export function FeedbackPage() {
                     </CSCheckbox>
                   ))}</CSSpaceBetween>
             )}
-            <CSFormField errorText={!consent && freeText.trim() ? t('feedback_page.form.consent_required') : undefined}>
-              <CSCheckbox checked={consent} onChange={({ detail }) => setConsent(detail.checked)} disabled={busy}>{t('feedback_page.consent_text')}</CSCheckbox>
-            </CSFormField>
             <CSBox><CSButton variant="primary" iconName="upload" onClick={handleSubmit} loading={busy} disabled={!canSubmit}>{t('feedback_page.form.submit_btn')}</CSButton></CSBox>
           </CSSpaceBetween>
         </CSContainer>
@@ -271,24 +260,15 @@ export function FeedbackPage() {
           </CSSpaceBetween>
         </CSContainer>
 
-        {/* ── 页脚:玩家群 + 提示(等宽双列,填满宽度,无空旷)── */}
-        <CSColumnLayout columns={2} variant="text-grid">
-          <CSContainer header={<CSHeader variant="h3">{t('feedback_page.community.title')}</CSHeader>}>
-            <CSSpaceBetween size="s">
-              <CSBox fontSize="body-s" color="text-body-secondary">{t('feedback_page.community.description', { group: QQ_GROUP_NUMBER })}</CSBox>
-              <img src={QQ_QR_SRC} alt={t('feedback_page.community.qr_alt', { group: QQ_GROUP_NUMBER })} loading="lazy" style={{ width: 140, height: 'auto', borderRadius: 10, border: '1px solid var(--line, #36322d)' }} />
-              <CSBox><CSButton variant="primary" href={QQ_JOIN_URL} target="_blank" iconName="external">{t('feedback_page.community.join_btn')}</CSButton></CSBox>
-            </CSSpaceBetween>
-          </CSContainer>
-          <CSContainer header={<CSHeader variant="h3">{t('feedback_page.tips.title')}</CSHeader>}>
-            <CSBox fontSize="body-s" color="text-body-secondary">
-              {t('feedback_page.tips.line1')}<br />
-              {t('feedback_page.tips.line2')}<br />
-              {t('feedback_page.tips.line3')}<br />
-              {t('feedback_page.tips.line4')}
-            </CSBox>
-          </CSContainer>
-        </CSColumnLayout>
+        {/* ── 页脚:提示(原「玩家群+提示」双列,玩家群已下线,2026-10)── */}
+        <CSContainer header={<CSHeader variant="h3">{t('feedback_page.tips.title')}</CSHeader>}>
+          <CSBox fontSize="body-s" color="text-body-secondary">
+            {t('feedback_page.tips.line1')}<br />
+            {t('feedback_page.tips.line2')}<br />
+            {t('feedback_page.tips.line3')}<br />
+            {t('feedback_page.tips.line4')}
+          </CSBox>
+        </CSContainer>
       </CSSpaceBetween>
     </div>
   );

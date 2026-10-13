@@ -44,7 +44,7 @@ function MeUserSettings() {
         if (p.email_notif != null) setEmailNotif(!!p.email_notif);
         else setEmailNotif(true);
         if (p.public_profile != null) setPublicProfile(!!p.public_profile);
-        else setPublicProfile(false);
+        else setPublicProfile(true);  // 2026-10:公开主页默认开启(后端 achievements 同步默认)
         if (p.searchable != null) setSearchable(!!p.searchable);
         else setSearchable(true);
         if (p.share_usage != null) setShareUsage(!!p.share_usage);

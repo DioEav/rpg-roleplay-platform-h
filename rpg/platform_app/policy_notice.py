@@ -170,12 +170,16 @@ def dispatch_notice(db, notice_id: str) -> dict:
     effective_at_str = notice["effective_at"]
 
     # 拉收件人列表: email_verified=true 用户,取 email + 语言偏好
+    # 语言判定(2026-10 修列名错位):优先读界面语言偏好(user_preferences.ui_language,
+    # 设置页语言切换的真实存储),回退 profile_extras.language,最终兜底 zh-CN。
+    # 旧实现读 pe.default_language —— profile_extras 无此列,群发一旦执行即 UndefinedColumn。
     rows = db.execute(
         """
         select u.email,
-               coalesce(pe.default_language, 'zh-CN') as lang
+               coalesce(up.preferences->>'ui_language', pe.language, 'zh-CN') as lang
         from   users u
         left   join profile_extras pe on pe.user_id = u.id
+        left   join user_preferences up on up.user_id = u.id
         where  u.email_verified = true
           and  u.deactivated_at is null
         """

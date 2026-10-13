@@ -57,7 +57,9 @@ async def api_public_wall(username: str, viewer=Depends(require_user)):
             "select preferences->>'public_profile' as pp from user_preferences where user_id = %s",
             (u["id"],),
         ).fetchone()
-        is_public = bool(pref_row and pref_row["pp"] == "true")
+        # 2026-10:公开主页默认开启 —— 未设置偏好时视为公开;仅显式 false 才隐藏
+        pp = pref_row["pp"] if pref_row else None
+        is_public = True if pp is None else (pp == "true")
         is_self = bool(viewer and viewer.get("id") == u["id"])
         if not (is_public or is_self):
             return json_response({"ok": False, "error": "not found"}, status_code=404)

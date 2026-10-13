@@ -156,6 +156,14 @@ async def api_my_stats(request: Request, user=Depends(require_user)):
     from ...achievements import build_stats_snapshot
     with connect() as db:
         snap = build_stats_snapshot(db, user)
+        # 公开主页开关(2026-10 默认开启):MeOverview 分享弹窗读真实状态。
+        # 未设置偏好时视为公开(True),与黑天鹅/记忆等"未设=默认开"口径不同——此键默认开。
+        pp_row = db.execute(
+            "select preferences->>'public_profile' as pp from user_preferences where user_id = %s",
+            (user["id"],),
+        ).fetchone()
+    pp = pp_row["pp"] if pp_row and pp_row["pp"] is not None else None
+    public_profile = True if pp is None else (pp == "true")
     return json_response({
         "ok": True,
         "imported": {
@@ -174,6 +182,8 @@ async def api_my_stats(request: Request, user=Depends(require_user)):
         # 没有真实数据源的字段：显式 null，由 UI 显示 "—"，禁止编造
         "play_minutes_total": None,
         "play_minutes_week": None,
+        # 公开主页开关(2026-10 默认开启):MeOverview 分享弹窗读真实状态
+        "public_profile": public_profile,
     })
 
 
