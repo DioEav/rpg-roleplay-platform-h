@@ -10,7 +10,15 @@ validator 管线 (设计 5 层,当前确定性【已实现 3 层】:3a/3c/3d):
 4. retry (max 2 次)
 5. dispatcher 落地,origin="autonomous_agent"
 
-触发方式: Path B (post-GM chat handler hook)。
+触发方式(2026-10 重新接线):chat_pipeline/gm.py 的【async 生产默认路径】内联
+执行(create_task 起、两个 return 前 await,与 world_heartbeat / memory_summary
+同款纪律)—— 频率由 should_attempt 闸门控制(最少开局回合/尝试间隔/事件冷却)。
+⚠️历史教训:此前接在 postproc 队列 + worker 上,而 worker 进程拿不到实时内存
+state → handler 被迫 enable_llm=False → 功能在默认部署下静默空转(sync 模式
+路径保留作 parity)。新增调用通道时勿再接回队列。
+
+postproc 队列的 _handle_black_swan(worker 侧)仍保留,仅作历史遗留队列行的
+兼容兜底(以 enable_llm=False 空跑,无副作用)。
 """
 from __future__ import annotations
 
@@ -21,6 +29,51 @@ from collections.abc import Callable
 from typing import Any, cast
 
 log = logging.getLogger(__name__)
+
+# ─── 频率闸门(2026-10 内联接线配套)────────────────────────────────
+# 黑天鹅接线进 gm.py async 内联路径后,每回合都会评估一次是否提案;没有闸门
+# 就是每回合烧一次 LLM 调用。三级节流(仿 world_heartbeat 的间隔做法):
+MIN_TURN_TO_START = 4        # 前 3 回合让故事立足(与 world_heartbeat 同值)
+ATTEMPT_INTERVAL_TURNS = 5   # 两次提案尝试至少间隔 5 回合(控成本)
+EVENT_COOLDOWN_TURNS = 15    # 真正触发事件后,15 回合内不再尝试(世界需要喘息)
+
+
+def _swan_meta(state_data: dict) -> dict:
+    """读取/初始化 state_data["black_swan_meta"](纯内存操作,随 Phase 5 持久化)。"""
+    meta = state_data.get("black_swan_meta")
+    if not isinstance(meta, dict):
+        meta = {}
+        state_data["black_swan_meta"] = meta
+    return meta
+
+
+def should_attempt(state_data: dict) -> tuple[bool, str]:
+    """频率闸门:本回合是否应该尝试提案。纯函数(只读),不写状态。
+
+    判定顺序:最少开局回合 → 尝试间隔 → 事件冷却。
+    返回 (是否尝试, 原因/说明)。
+    """
+    try:
+        turn = int(state_data.get("turn") or 0)
+    except (TypeError, ValueError):
+        turn = 0
+    if turn < MIN_TURN_TO_START:
+        return False, f"turn {turn} < {MIN_TURN_TO_START}(开局立足期)"
+    meta = state_data.get("black_swan_meta") or {}
+    if not isinstance(meta, dict):
+        meta = {}
+    try:
+        last_attempt = int(meta.get("last_attempt_turn") or 0)
+        if last_attempt and turn - last_attempt < ATTEMPT_INTERVAL_TURNS:
+            return False, (f"距上次尝试仅 {turn - last_attempt} 回合"
+                           f"(间隔 {ATTEMPT_INTERVAL_TURNS})")
+        last_event = int(meta.get("last_event_turn") or 0)
+        if last_event and turn - last_event < EVENT_COOLDOWN_TURNS:
+            return False, (f"上次事件后仅 {turn - last_event} 回合"
+                           f"(冷却 {EVENT_COOLDOWN_TURNS})")
+    except (TypeError, ValueError):
+        pass
+    return True, ""
 
 # ─── Layer 1: 现实切片 ────────────────────────────────────────────
 
@@ -517,6 +570,16 @@ def maybe_trigger(
       - retries: int (实际重试次数)
       - reason: str (跳过/失败原因)
     """
+    state_data = getattr(state, 'data', {}) or {}
+    # 频率闸门记账:每次尝试都记 last_attempt_turn(成功/失败都算),供
+    # should_attempt 的尝试间隔/事件冷却判定(状态随 Phase 5 持久化)。
+    try:
+        _turn = int(state_data.get('turn') or 0)
+    except (TypeError, ValueError):
+        _turn = 0
+    _meta = _swan_meta(state_data)
+    _meta["last_attempt_turn"] = _turn
+
     snapshot = reality_snapshot(state, script_id)
 
     # 选定 LLM 通道:外部 callable 优先,否则使用 harness 自调,enable_llm=False 跳过
@@ -592,6 +655,8 @@ def maybe_trigger(
                 proposal, state,
                 user_id=user_id, save_id=save_id, script_id=script_id,
             )
+            # 事件冷却锚点:记录本次事件回合,供 should_attempt 的冷却判定
+            _meta["last_event_turn"] = _turn
             # 诚实日志:如实记「已实现层数 / 设计层数」+ 未实现层,别让读日志的人误以为 5 层全跑。
             log.info(
                 "[black_swan] save=%s 事件落地:%d/%d 设计层已实现且通过(未实现层不计入:%s)",

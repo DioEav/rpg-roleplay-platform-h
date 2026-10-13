@@ -690,7 +690,9 @@ async def run_gm_phase(
                     player_input=ctx.message_for_model,
                     gm_output=response,
                     api_user=api_user,
-                    is_bs_enabled=_is_bs,
+                    # 黑天鹅已改为 async 内联执行(见下方 _bs_task):worker 进程拿不到
+                    # 实时 state,队列路径只能 enable_llm=False 空转 —— 故不再入队。
+                    is_bs_enabled=False,
                     script_id=active_script_id(api_user),
                     api_id_override=_pp_api_id,
                     model_override=_pp_model,
@@ -760,6 +762,30 @@ async def run_gm_phase(
             except Exception as _ms_err:
                 log.warning(f"[chat] memory_summary 启动失败,跳过: {_ms_err}")
 
+            # 黑天鹅事件(agents/black_swan_agent):与心跳/摘要精修同款内联纪律 ——
+            # create_task 起、两个 return 前 await,通过工具调度器写实时 state,
+            # Phase 5 统一持久化。⚠️必须内联:dispatch_event 要写实时内存 state,
+            # worker 进程拿不到(队列 handler 的 enable_llm=False 就是因此空转)。
+            # 频率闸门 should_attempt:最少开局 4 回合、尝试间隔 5 回合、事件后
+            # 冷却 15 回合;闸门不过零开销。酒馆不豁免(与旧行为一致)。
+            _bs_task = None
+            try:
+                from agents.black_swan_agent import should_attempt as _bs_should
+                _bs_gate, _bs_reason = _bs_should(state.data)
+                if _is_bs and _bs_gate:
+                    from agents.black_swan_agent import maybe_trigger as _bs_run
+                    _bs_uid = _uid_of(api_user)
+                    _bs_task = asyncio.create_task(asyncio.to_thread(
+                        _bs_run, state,
+                        user_id=_bs_uid,
+                        save_id=ctx.active_save_id or ctx.early_active_save_id or 0,
+                        script_id=active_script_id(api_user),
+                    ))
+                elif _is_bs:
+                    log.debug(f"[chat] black_swan 闸门跳过: {_bs_reason}")
+            except Exception as _bs_err:
+                log.warning(f"[chat] black_swan 启动失败,跳过: {_bs_err}")
+
             # Q Phase 2 史官三合一(flag on):一次 recorder LLM 调用同时产 ops + 锚点判定,
             # 替代「独立 extractor + 独立 anchor_reconcile LLM」两次调用。off 时走原路径。
             # 酒馆豁免:tavern_gm 的 GM 已用自己的工具写状态(slim 已豁免、工具齐全),史官三合一对酒馆
@@ -820,6 +846,11 @@ async def run_gm_phase(
                             await _ms_task  # 摘要精修写完 state 再进 Phase 5 持久化
                         except Exception as _ms_err:
                             log.warning(f"[chat] memory_summary 等待失败: {_ms_err}")
+                    if _bs_task is not None:
+                        try:
+                            await _bs_task  # 黑天鹅写完 state 再进 Phase 5 持久化
+                        except Exception as _bs_err:
+                            log.warning(f"[chat] black_swan 等待失败: {_bs_err}")
                     return
             # 关键修复:GM JSON op 确定性写回(async 早退路径也必须 apply,否则 GM 经
             # JSON op 写的 location/time/resources/quest/relationships/选项 全部丢失)。
@@ -858,6 +889,11 @@ async def run_gm_phase(
                     await _ms_task  # 摘要精修写完 state 再进 Phase 5 持久化
                 except Exception as _ms_err:
                     log.warning(f"[chat] memory_summary 等待失败: {_ms_err}")
+            if _bs_task is not None:
+                try:
+                    await _bs_task  # 黑天鹅写完 state 再进 Phase 5 持久化
+                except Exception as _bs_err:
+                    log.warning(f"[chat] black_swan 等待失败: {_bs_err}")
             return
     # ── 同步后处理路径 (sync 模式 or enqueue 失败降级) ─────────────────────
 
