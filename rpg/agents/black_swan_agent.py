@@ -176,7 +176,8 @@ def proposal_tool_schema(snapshot: dict) -> dict:
                 },
                 "tools_to_call": {
                     "type": "array",
-                    "description": "Optional: tool calls to dispatch (e.g. upsert_active_entity)",
+                    "description": ("Optional: tool calls to dispatch. Usually leave empty — "
+                                    "the event summary is landed deterministically by the system."),
                     "items": {
                         "type": "object",
                         "properties": {
@@ -571,14 +572,12 @@ def maybe_trigger(
       - reason: str (跳过/失败原因)
     """
     state_data = getattr(state, 'data', {}) or {}
-    # 频率闸门记账:每次尝试都记 last_attempt_turn(成功/失败都算),供
-    # should_attempt 的尝试间隔/事件冷却判定(状态随 Phase 5 持久化)。
+    # 频率闸门记账(只在确认有可用 LLM 通道后执行 —— 记账过早会让无通道的
+    # 空尝试白耗尝试间隔;实际接线见 chat_pipeline/gm.py 内联路径)。
     try:
         _turn = int(state_data.get('turn') or 0)
     except (TypeError, ValueError):
         _turn = 0
-    _meta = _swan_meta(state_data)
-    _meta["last_attempt_turn"] = _turn
 
     snapshot = reality_snapshot(state, script_id)
 
@@ -599,6 +598,10 @@ def maybe_trigger(
             "snapshot": snapshot,
         }
     llm_caller = effective_caller  # below loop uses llm_caller name
+
+    # 确认真的要跑 LLM 了才记账尝试间隔(无通道的空转尝试不消耗间隔)
+    _meta = _swan_meta(state_data)
+    _meta["last_attempt_turn"] = _turn
 
     # 加载 script overrides (Layer 3a 需要)
     script_overrides = None
@@ -650,13 +653,44 @@ def maybe_trigger(
         all_passed = all(v[1] for v in last_validator_results)
 
         if all_passed:
-            # Layer 5: dispatch
+            # Layer 5: dispatch —— 尝试 LLM 提案里附带的工具调用。
+            # ⚠️ dispatch 的 origin 白名单只放行 generate_image,状态写工具会被
+            # origin_forbidden 拒掉 —— 所以事件的【真正落地】不靠这里,靠下方
+            # 的确定性摘要落库(2026-10 修复:此前落地层从未生效,事件从不进状态)。
             dispatch_results = dispatch_event(
                 proposal, state,
                 user_id=user_id, save_id=save_id, script_id=script_id,
             )
+            # 确定性落地:事件摘要写进 world.known_events(去重 + 100 条上限,
+            # 与 set_world_known_event 工具同规则)—— 这是黑天鹅的真正游戏效果:
+            # 下一轮起经由 known_events 注入 GM 提示词,并出现在世界书面板。
+            try:
+                event_text = str(proposal.get('summary') or proposal.get('event_kind') or '').strip()
+                if event_text:
+                    events = state_data.setdefault('world', {}).setdefault('known_events', [])
+                    if event_text not in events:
+                        events.append(event_text)
+                        if len(events) > 100:
+                            del events[:-100]
+            except Exception:
+                pass
             # 事件冷却锚点:记录本次事件回合,供 should_attempt 的冷却判定
             _meta["last_event_turn"] = _turn
+            # 审计留痕(内聚在此,内联/sync 两条路径恰好各记一次,不再双写)
+            try:
+                from datetime import datetime as _dt
+                audit = state_data.setdefault('permissions', {}).setdefault('audit_log', [])
+                audit.append({
+                    "ts": _dt.now().isoformat(timespec="seconds"),
+                    "kind": "black_swan_triggered",
+                    "source": "black_swan_agent",
+                    "hint": str(proposal.get('summary') or '')[:200],
+                    "turn": _turn,
+                })
+                if len(audit) > 200:
+                    state_data["permissions"]["audit_log"] = audit[-200:]
+            except Exception:
+                pass
             # 诚实日志:如实记「已实现层数 / 设计层数」+ 未实现层,别让读日志的人误以为 5 层全跑。
             log.info(
                 "[black_swan] save=%s 事件落地:%d/%d 设计层已实现且通过(未实现层不计入:%s)",

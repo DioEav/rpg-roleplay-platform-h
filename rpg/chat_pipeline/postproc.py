@@ -173,6 +173,13 @@ async def _run_post_gm_parallel(
                 if not _enable_black_swan():
                     return
             from agents.black_swan_agent import maybe_trigger as _maybe_trigger
+            # 频率闸门(与 gm.py 内联路径同款):最少开局回合/尝试间隔/事件冷却。
+            # 不内置进 maybe_trigger —— worker 侧 throwaway state 会让记账失效。
+            from agents.black_swan_agent import should_attempt as _bs_should
+            _bs_gate, _bs_reason = _bs_should(state.data)
+            if not _bs_gate:
+                log.debug(f"[black_swan] sync parity 闸门跳过: {_bs_reason}")
+                return
             _sub_gm = getattr(ctx, "sub_gm", None)
             _swan_api = getattr(_sub_gm, "api_id", None) if _sub_gm else None
             _swan_backend = getattr(_sub_gm, "_backend", None) if _sub_gm else None
@@ -187,18 +194,7 @@ async def _run_post_gm_parallel(
                 model_override=_swan_model,
                 enable_llm=bool(api_user),
             )
-            if result.get("triggered"):
-                from datetime import datetime as _dt
-                audit = state.data.setdefault("permissions", {}).setdefault("audit_log", [])
-                audit.append({
-                    "ts": _dt.now().isoformat(timespec="seconds"),
-                    "kind": "black_swan_triggered",
-                    "source": "black_swan_agent",
-                    "hint": (result.get("proposal") or {}).get("summary", "")[:200],
-                    "turn": state.data.get("turn", 0),
-                })
-                if len(audit) > 200:
-                    state.data["permissions"]["audit_log"] = audit[-200:]
+            # 触发后的审计已由 maybe_trigger 内聚写入(all_passed 分支),此处无需重复
         except Exception as exc:
             log.warning(f"[black_swan] failed silently: {exc}")
 

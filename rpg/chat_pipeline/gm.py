@@ -763,9 +763,10 @@ async def run_gm_phase(
                 log.warning(f"[chat] memory_summary 启动失败,跳过: {_ms_err}")
 
             # 黑天鹅事件(agents/black_swan_agent):与心跳/摘要精修同款内联纪律 ——
-            # create_task 起、两个 return 前 await,通过工具调度器写实时 state,
-            # Phase 5 统一持久化。⚠️必须内联:dispatch_event 要写实时内存 state,
-            # worker 进程拿不到(队列 handler 的 enable_llm=False 就是因此空转)。
+            # create_task 起、两个 return 前 await,事件摘要确定性落地为
+            # world.known_events(写实时 state),Phase 5 统一持久化。
+            # ⚠️必须内联:dispatch/落地要读写实时内存 state,worker 进程拿不到
+            #(队列 handler 的 enable_llm=False 就是因此空转)。
             # 频率闸门 should_attempt:最少开局 4 回合、尝试间隔 5 回合、事件后
             # 冷却 15 回合;闸门不过零开销。酒馆不豁免(与旧行为一致)。
             _bs_task = None
