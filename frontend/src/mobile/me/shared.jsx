@@ -68,7 +68,7 @@ function ActionBtn({ label, icon, onClick, danger, loading, style: s }) {
 }
 
 /* ── 文本输入框 ────────────────────────────────────────────────── */
-function Input({ label, hint, value, onChange, type = 'text', placeholder, multiline, rows = 3 }) {
+function Input({ label, hint, value, onChange, type = 'text', placeholder, multiline, rows = 3, readOnly }) {
   const inputStyle = {
     width: '100%', background: 'var(--panel)', border: '1px solid var(--line)',
     borderRadius: 10, color: 'var(--text)', fontSize: 16, padding: '10px 12px',
@@ -87,7 +87,7 @@ function Input({ label, hint, value, onChange, type = 'text', placeholder, multi
       ) : (
         <input
           type={type} value={value} onChange={e => onChange(e.target.value)}
-          placeholder={placeholder} style={inputStyle}
+          placeholder={placeholder} style={inputStyle} readOnly={readOnly}
         />
       )}
       {hint && <div style={{ fontSize: 11, color: 'var(--muted-2)', marginTop: 4 }}>{hint}</div>}

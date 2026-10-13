@@ -51,7 +51,9 @@ function ViewEdit({ nav, user }) {
   const onSave = async () => {
     setSaving(true);
     try {
-      await window.api.account.saveProfile(form);
+      // email 只读展示注册邮箱,不随表单保存(2026-10 联系邮箱下线)
+      const { email, ...payload } = form;
+      await window.api.account.saveProfile(payload);
       try {
         const me = await window.api?.auth?.me?.();
         if (me && me.user) {
@@ -163,7 +165,7 @@ function ViewEdit({ nav, user }) {
           {/* 联系方式 */}
           <div className="pl-sec">
             <div className="pl-sec-head"><h2>{t('mobile.me.edit.contact_section')}</h2></div>
-            <Input label={t('mobile.me.edit.field_email')} hint={t('mobile.me.edit.field_email_hint')} type="email" value={form.email} onChange={v => u('email', v)} placeholder="you@example.com" />
+            <Input label={t('mobile.me.edit.field_email')} hint={t('mobile.me.edit.field_email_hint')} type="email" value={form.email} readOnly placeholder="—" />
             <Input label={t('mobile.me.edit.field_phone')} hint={t('mobile.me.edit.field_phone_hint')} type="tel" value={form.phone} onChange={v => u('phone', v)} placeholder={t('mobile.me.edit.optional')} />
           </div>
 

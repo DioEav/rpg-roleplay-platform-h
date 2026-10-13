@@ -30,9 +30,10 @@ def api_platform(user=Depends(current_user)):
 
 
 # 编辑资料页可保存的扩展字段(持久化到 profile_extras 表,users 表只存核心 3 列)
+# email 已移除(2026-10):联系邮箱下线,编辑资料页的邮箱改为只读展示注册邮箱(users.email)。
 _PROFILE_EXTRA_FIELDS = (
     "real_name", "gender", "birthday", "location", "website",
-    "pronouns", "language", "timezone", "email", "phone",
+    "pronouns", "language", "timezone", "phone",
 )
 
 
@@ -45,7 +46,7 @@ async def api_profile(request: Request, user=Depends(require_user)):
         body.get("display_name", user["display_name"]),
         body.get("bio", user.get("bio", "")),
     )
-    # 扩展字段(真名/性别/生日/所在地/网站/代词/语言/时区/邮箱/手机)upsert 到 profile_extras
+    # 扩展字段(真名/性别/生日/所在地/网站/代词/语言/时区/手机)upsert 到 profile_extras
     extras = {k: body[k] for k in _PROFILE_EXTRA_FIELDS if k in body and body[k] is not None}
     if extras:
         from ..db import connect

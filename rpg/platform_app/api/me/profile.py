@@ -36,11 +36,15 @@ async def api_my_profile(user=Depends(require_user)):
         ).fetchone()
         # 在同一 db 连接内派生 is_co_builder（registration_allowlist join）
         user_public = dict(public_user(user, db=db))
-    # 合并 profile_extras 的扩展字段(真名/性别/生日/所在地/网站/代词/语言/时区/邮箱/手机)
+    # 合并 profile_extras 的扩展字段(真名/性别/生日/所在地/网站/代词/语言/时区/手机)
     extras = dict(extras_row) if extras_row else {}
     for drop in ("user_id", "visibility", "preferences", "updated_at"):
         extras.pop(drop, None)
+    # email 不再来自 profile_extras(2026-10 联系邮箱下线):编辑资料页的邮箱字段改为
+    # 只读展示注册邮箱,这里显式回填 users.email,并丢弃历史 extras.email 防止旧数据遮蔽。
+    extras.pop("email", None)
     user_public.update({k: v for k, v in extras.items() if v is not None})
+    user_public["email"] = user.get("email") or ""
     return json_response({
         "ok": True,
         "user": user_public,

@@ -94,7 +94,7 @@ function MeEditProfile() {
         if (r2 && r2.ok === false) throw new Error(r2.error || t('platform.me.edit.rename_failed', '用户名修改失败'));
         setForm(f => ({ ...f, username: newUsername }));
       }
-      await window.api.account.saveProfile(form);
+      await window.api.account.saveProfile((({ email, ...payload }) => payload)(form));
       try { window.__capClearDirty && window.__capClearDirty("settings.profile"); } catch (_) {}
       // task 13: 拉一次权威源（/api/auth/me），用回包的 user 字段更新全局并广播事件，
       // 让 PlatformShell 左侧栏立即同步。失败也兜底先按本地 form 写一次（视觉上立即看到改动）。
@@ -276,8 +276,9 @@ function MeEditProfile() {
       {/* 联系方式 */}
       <CSContainer header={<CSHeader variant="h2">{t('platform.me.edit.section_contact', '联系方式')}</CSHeader>}>
         <div className="pl-form-grid-2">
-          <Field label={t('platform.me.edit.field_email', '邮箱')} hint={t('platform.me.edit.field_email_hint', '用于通知与找回密码')}>
-            <CSInput value={form.email} onChange={({ detail }) => u("email", detail.value)} placeholder="you@example.com" />
+          {/* 邮箱 = 注册邮箱(users.email),只读展示(2026-10 联系邮箱下线) */}
+          <Field label={t('platform.me.edit.field_email', '邮箱')} hint={t('platform.me.edit.field_email_hint', '注册邮箱，用于登录与找回密码，不可修改')}>
+            <CSInput value={form.email} readOnly placeholder="—" />
           </Field>
           <Field label={t('platform.me.edit.field_phone', '手机')} hint={t('platform.me.edit.field_phone_hint', '选填，仅自己可见')}>
             <CSInput value={form.phone} onChange={({ detail }) => u("phone", detail.value)} placeholder={t('platform.me.edit.field_optional', '选填')} />

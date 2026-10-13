@@ -17,10 +17,11 @@ import { useState, useEffect, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
 import { __resolveNextOrDefault } from './components/login/nextTarget.js';
 import { InviteScreen } from './components/login/InviteScreen.jsx';
-import { VerifyForm, MagicOtpForm, NeedsProfileForm, CodeLoginForm, ForgotForm, ResetForm, MainAuthForm } from './components/login/AuthForms.jsx';
+import { VerifyForm, MagicOtpForm, NeedsProfileForm, ForgotForm, ResetForm, MainAuthForm } from './components/login/AuthForms.jsx';
 function LoginApp() {
   const { t } = useTranslation();
-  const [mode, setMode] = useState('login');     // 'login' | 'code-login' | 'register' | 'verify' | 'forgot' | 'reset' | 'magic-otp' | 'needs-profile'
+  // 「邮箱验证码登录」(code-login)已下线(2026-10):登录只保留密码登录 + 注册 + 找回密码。
+  const [mode, setMode] = useState('login');     // 'login' | 'register' | 'verify' | 'forgot' | 'reset' | 'magic-otp' | 'needs-profile'
   const [schema, setSchema] = useState(null);    // { login: [...], register: [...], notes: {...} }
   const [schemaErr, setSchemaErr] = useState('');
   const [values, setValues] = useState({});      // {[fieldKey]: string}
@@ -32,11 +33,6 @@ function LoginApp() {
   const [pendingEmailRaw, setPendingEmailRaw] = useState(''); // real email for API calls
   const [verifyCode, setVerifyCode] = useState('');
   const [resendCooldown, setResendCooldown] = useState(0);   // seconds remaining
-  // passwordless login state
-  const [loginCodeEmail, setLoginCodeEmail] = useState('');
-  const [loginCodeEmailMask, setLoginCodeEmailMask] = useState('');
-  const [loginCodeSent, setLoginCodeSent] = useState(false);
-  const [loginCode, setLoginCode] = useState('');
   // magic-link OTP state
   const [magicEmail, setMagicEmail] = useState('');
   const [magicCode, setMagicCode] = useState('');
@@ -209,7 +205,7 @@ function LoginApp() {
     };
   }, [turnstileSitekey, mode]);
 
-  const fields = ['verify', 'code-login', 'forgot', 'reset'].includes(mode) ? [] : (schema?.[mode] || []);
+  const fields = ['verify', 'forgot', 'reset'].includes(mode) ? [] : (schema?.[mode] || []);
   const minPw = schema?.notes?.min_password_length || 8;
   const inviteOnly = !!schema?.notes?.invite_only;
 
@@ -231,49 +227,8 @@ function LoginApp() {
     return () => clearTimeout(t);
   }, [resendCooldown]);
 
-  const requestLoginCode = async (email, { resend = false } = {}) => {
-    const cleanEmail = String(email || '').trim();
-    if (!cleanEmail || !cleanEmail.includes('@')) {
-      setErr(t('auth.login_code.email_required'));
-      return;
-    }
-    setBusy(true);
-    setErr(''); setNotice('');
-    try {
-      const j = await window.api.auth.loginCodeRequest({ email: cleanEmail });
-      if (!j || j.ok === false) throw new Error(j?.error || t('auth.login_code.send_fail'));
-      // 邮箱没注册:后端不会发信,这里必须把人领去注册,否则他会对着验证码框等一封
-      // 永远不会到的邮件(群反馈 08-01)。邮箱带过去预填,少让人重打一遍。
-      if (j.registered === false) {
-        setLoginCodeSent(false);
-        setLoginCode('');
-        setValues((v) => ({ ...v, email: cleanEmail }));
-        setMode('register');
-        setErr('');
-        setNotice(t('auth.login_code.not_registered', {
-          defaultValue: '这个邮箱还没有账号，已为你转到注册页（邮箱已填好）。',
-        }));
-        return;
-      }
-      setLoginCodeEmail(cleanEmail);
-      setLoginCodeEmailMask(j.email_mask || cleanEmail);
-      setLoginCodeSent(true);
-      setLoginCode('');
-      setResendCooldown(60);
-      setNotice(resend ? t('auth.verify.resend_ok') : t('auth.login_code.sent_notice', { mask: j.email_mask || cleanEmail }));
-    } catch (e) {
-      setErr(e?.message || t('auth.login_code.send_fail'));
-    } finally {
-      setBusy(false);
-    }
-  };
-
   const handleResend = async () => {
     if (resendCooldown > 0 || busy) return;
-    if (mode === 'code-login') {
-      await requestLoginCode(loginCodeEmail, { resend: true });
-      return;
-    }
     setBusy(true);
     setErr('');
     try {
@@ -325,28 +280,6 @@ function LoginApp() {
       }
     } catch (e) {
       setErr(e?.message || t('auth.request_fail'));
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const handleLoginCodeVerify = async (e, codeOverride) => {
-    e?.preventDefault?.();
-    if (busy) return;
-    const code = String(codeOverride ?? loginCode).trim();
-    if (code.length !== 6 || !/^\d{6}$/.test(code)) {
-      setErr(t('auth.verify.code_invalid'));
-      return;
-    }
-    setBusy(true);
-    setErr(''); setNotice('');
-    try {
-      const j = await window.api.auth.loginCodeVerify({ email: loginCodeEmail, code });
-      if (!j || j.ok === false) throw new Error(j?.error || t('auth.login_code.verify_fail'));
-      setNotice(t('auth.login_code.verify_ok'));
-      setTimeout(() => location.replace(__resolveNextOrDefault()), 200);
-    } catch (e) {
-      setErr(e?.message || t('auth.login_code.verify_fail'));
     } finally {
       setBusy(false);
     }
@@ -636,10 +569,6 @@ function LoginApp() {
                     aria-selected={mode === 'login'}
                     onClick={() => { setMode('login'); setErr(''); setNotice(''); }}>{t('auth.login_tab')}</button>
             <button type="button" role="tab"
-                    className={mode === 'code-login' ? 'active' : ''}
-                    aria-selected={mode === 'code-login'}
-                    onClick={() => { setMode('code-login'); setErr(''); setNotice(''); }}>{t('auth.login_code_tab')}</button>
-            <button type="button" role="tab"
                     className={mode === 'register' ? 'active' : ''}
                     aria-selected={mode === 'register'}
                     onClick={() => { setMode('register'); setErr(''); setNotice(''); }}
@@ -668,13 +597,7 @@ function LoginApp() {
             setProfileDisplayName={setProfileDisplayName} busy={busy} err={err} notice={notice} />
         )}
 
-        {/* ── 邮箱验证码登录 ─────────────────────────────────────────── */}
-        {mode === 'code-login' && (
-          <CodeLoginForm loginCodeSent={loginCodeSent} handleLoginCodeVerify={handleLoginCodeVerify} requestLoginCode={requestLoginCode}
-            loginCodeEmail={loginCodeEmail} setLoginCodeEmail={setLoginCodeEmail} loginCodeEmailMask={loginCodeEmailMask}
-            loginCode={loginCode} setLoginCode={setLoginCode} busy={busy} err={err} notice={notice} resendCooldown={resendCooldown}
-            setLoginCodeSent={setLoginCodeSent} setErr={setErr} setNotice={setNotice} handleResend={handleResend} />
-        )}
+        {/* 「邮箱验证码登录」表单已下线(2026-10),见 mode 注释 */}
 
         {/* ── 忘记密码表单 ─────────────────────────────────────────── */}
         {mode === 'forgot' && (
@@ -689,7 +612,7 @@ function LoginApp() {
         )}
 
         {/* ── 登录 / 注册表单 ────────────────────────────────────────── */}
-        {mode !== 'verify' && mode !== 'code-login' && mode !== 'forgot' && mode !== 'reset' && mode !== 'magic-otp' && mode !== 'needs-profile' && <MainAuthForm
+        {mode !== 'verify' && mode !== 'forgot' && mode !== 'reset' && mode !== 'magic-otp' && mode !== 'needs-profile' && <MainAuthForm
           submit={submit} schemaErr={schemaErr} schema={schema} fields={fields} values={values} setField={setField}
           err={err} notice={notice} mode={mode} turnstileSitekey={turnstileSitekey} tsRef={tsRef} busy={busy} minPw={minPw}
           setForgotEmail={setForgotEmail} setErr={setErr} setNotice={setNotice} setMode={setMode} />}

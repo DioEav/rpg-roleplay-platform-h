@@ -137,79 +137,6 @@ function NeedsProfileForm({ handleProfileSubmit, profileUsername, setProfileUser
   );
 }
 
-function CodeLoginForm({ loginCodeSent, handleLoginCodeVerify, requestLoginCode, loginCodeEmail, setLoginCodeEmail, loginCodeEmailMask, loginCode, setLoginCode, busy, err, notice, resendCooldown, setLoginCodeSent, setErr, setNotice, handleResend }) {
-  const { t } = useTranslation();
-  return (
-          <form className="pl-auth-form" onSubmit={(e) => loginCodeSent ? handleLoginCodeVerify(e) : (e.preventDefault(), requestLoginCode(loginCodeEmail))}>
-            {!loginCodeSent ? (
-              <>
-                <div style={{fontSize: 13, color: 'var(--muted)', marginBottom: 8}}>
-                  {t('auth.login_code.desc')}
-                </div>
-                <div className="pl-field">
-                  <label htmlFor="login_code_email">{t('auth.login_code.email_label')}</label>
-                  <input
-                    id="login_code_email"
-                    type="email"
-                    autoComplete="email"
-                    value={loginCodeEmail}
-                    onChange={(e) => setLoginCodeEmail(e.target.value)}
-                    autoFocus
-                  />
-                </div>
-              </>
-            ) : (
-              <>
-                <div style={{fontSize: 13, color: 'var(--muted)', marginBottom: 8}}>
-                  {t('auth.verify.sent_to')} <strong>{loginCodeEmailMask}</strong>{t('auth.verify.expires')}
-                </div>
-                <div className="pl-field">
-                  <label htmlFor="login_code">{t('auth.login_code.code_label')}</label>
-                  <OtpInput
-                    value={loginCode}
-                    onChange={setLoginCode}
-                    onComplete={(code) => handleLoginCodeVerify(null, code)}
-                    disabled={busy}
-                    autoFocus
-                    label={t('auth.login_code.code_label')}
-                  />
-                </div>
-              </>
-            )}
-            {err && (
-              <div className="pl-auth-error" role="alert"
-                   style={{color: 'var(--danger)', fontSize: 12.5, padding: '4px 0'}}>{err}</div>
-            )}
-            {notice && (
-              <div className="pl-auth-notice" role="status" aria-live="polite"
-                   style={{color: 'var(--muted)', fontSize: 12.5, padding: '4px 0',
-                           borderLeft: '2px solid var(--accent)', paddingLeft: 8}}>{notice}</div>
-            )}
-            <button type="submit" className="btn primary"
-                    disabled={busy || (loginCodeSent ? loginCode.length !== 6 : !loginCodeEmail.trim())}
-                    style={{justifyContent: 'center', height: 34, opacity: busy ? 0.7 : 1}}>
-              {busy
-                ? (loginCodeSent ? t('auth.login_code.verifying') : t('auth.login_code.sending'))
-                : (loginCodeSent ? t('auth.login_code.verify_btn') : t('auth.login_code.send_btn'))}
-            </button>
-            {loginCodeSent && (
-              <div className="pl-auth-foot" style={{justifyContent: 'space-between'}}>
-                <button type="button" style={{background: 'none', border: 'none', color: 'var(--muted)', cursor: 'pointer', fontSize: 13, padding: 0}}
-                        onClick={() => { setLoginCodeSent(false); setLoginCode(''); setErr(''); setNotice(''); }}>
-                  {t('auth.login_code.back')}
-                </button>
-                <button type="button"
-                        disabled={resendCooldown > 0 || busy}
-                        style={{background: 'none', border: 'none', color: resendCooldown > 0 ? 'var(--muted)' : 'var(--accent)', cursor: resendCooldown > 0 ? 'default' : 'pointer', fontSize: 13, padding: 0}}
-                        onClick={handleResend}>
-                  {resendCooldown > 0 ? t('auth.verify.resend_cooldown', { s: resendCooldown }) : t('auth.verify.resend')}
-                </button>
-              </div>
-            )}
-          </form>
-  );
-}
-
 function ForgotForm({ handleForgot, forgotEmail, setForgotEmail, busy, err, notice, setMode, setErr, setNotice }) {
   const { t } = useTranslation();
   return (
@@ -368,4 +295,4 @@ function MainAuthForm({ submit, schemaErr, schema, fields, values, setField, err
   );
 }
 
-export { VerifyForm, MagicOtpForm, NeedsProfileForm, CodeLoginForm, ForgotForm, ResetForm, MainAuthForm };
+export { VerifyForm, MagicOtpForm, NeedsProfileForm, ForgotForm, ResetForm, MainAuthForm };
