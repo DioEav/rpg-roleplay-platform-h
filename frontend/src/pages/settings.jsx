@@ -84,7 +84,9 @@ function SettingsPage({ section: sectionProp } = {}) {
         </CSSpaceBetween>
       )}
       {external && <CSHeader variant="h1">{sectionLabel}</CSHeader>}
-      {section === "preferences" && [<PrefSection key="pref" />, <CSContainer key="gmstyle"><GmStyleEditor scope="user" /></CSContainer>, <BlackSwanSection key="bs" />, <ExtractorSection key="ext" />, <ClarifySection key="clar" />]}
+      {/* 「Curator 反问阈值」(ClarifySection)已隐藏(2026-10):task 141 移除短路反问后,
+          该滑块仅控制一条审计日志,无游戏效果。恢复 = 解注释 + 恢复 ClarifySection 导出。 */}
+      {section === "preferences" && [<PrefSection key="pref" />, <CSContainer key="gmstyle"><GmStyleEditor scope="user" /></CSContainer>, <BlackSwanSection key="bs" />, <ExtractorSection key="ext" />]}
       {section === "models" && <ModelsSection />}
       {section === "modelparams" && <ModelParamsSection />}
       {section === "modules" && <ModuleModelsSection />}

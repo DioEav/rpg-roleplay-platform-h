@@ -104,18 +104,16 @@ export default function GmStyleEditor({ scope = 'user', scriptId = null, canWrit
 
   const reset = () => { setVals(base); setOkMsg(''); };
 
-  // 恢复【平台默认】:从 /api/me/gm-style/schema 取后端 default_profile(单一真源),
-  // 应用到滑块(标记为未保存改动,点「保存」落库)。与「还原」的区别:还原只撤销
-  // 未保存的编辑、回到加载时的值;本按钮把历史保存的旧值(如默认曾为 45 时期存下的)
-  // 一键替换成当前平台默认。schema 端点返回的 defaults 永远是后端 KNOBS 的当前默认,
-  // 不受用户已存值影响。
+  // 恢复【平台默认】:经 api-client 现成封装拉取后端 default_profile(单一真源,
+  // 2026-10 起回复长度默认 19/拉满 2000 字),应用到滑块(标记为未保存改动,点
+  // 「保存」落库)。与「还原」的区别:还原只撤销未保存的编辑、回到加载时的值;
+  // 本按钮把历史保存的旧值(如默认曾为 45 时期存下的)一键替换成当前平台默认。
   const [restoringDefaults, setRestoringDefaults] = React.useState(false);
   const applyPlatformDefaults = async () => {
     setRestoringDefaults(true); setOkMsg(''); setErr('');
     try {
-      const res = await fetch('/api/me/gm-style/schema', { credentials: 'include' });
-      const data = await res.json();
-      const d = (data && data.defaults) || null;
+      const r = await window.api.account.gmStyleSchema();
+      const d = (r && r.defaults) || null;
       if (!d || typeof d !== 'object') throw new Error(t('components.gm_style_editor.err_load'));
       setVals((p) => ({ ...p, ...d }));
       setOkMsg(t('components.gm_style_editor.defaults_applied',

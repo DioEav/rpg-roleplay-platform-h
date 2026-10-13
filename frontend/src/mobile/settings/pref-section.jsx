@@ -119,8 +119,9 @@ function PrefSection({ nav }) {
         </div>
       </SetGroup>
 
-      {/* Curator 反问阈值 */}
-      <div className="pl-sec" style={{ marginTop: 18 }}>
+      {/* Curator 反问阈值已隐藏(2026-10):task 141 移除短路反问后,该滑块仅控制
+          一条审计日志,无游戏效果。恢复 = 解注释以下整块。 */}
+      {/* <div className="pl-sec" style={{ marginTop: 18 }}>
         <div className="pl-sec-head"><h2>{t('mobile.settings.pref.curator_threshold')}</h2></div>
         <div className="pl-card" style={{ border: '1px solid var(--line-soft)', borderRadius: 14, background: 'var(--panel)', padding: 14 }}>
           <MSlider
@@ -141,7 +142,7 @@ function PrefSection({ nav }) {
             </button>
           </div>
         </div>
-      </div>
+      </div> */}
     </>
   );
 }

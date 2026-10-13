@@ -65,30 +65,22 @@ function PrefSection() {
    useAutoSave("叙事提取器", "extractor") 让 save("enabled", v) 写到 extractor.enabled，键正好对齐。 */
 function ExtractorSection() {
   const { t } = useTranslation();
-  const [enabled, setEnabled] = useStatePL(false);
+  // 启用开关已隐藏(2026-10):extractor.enabled 只在 sync 后处理模式(调试用)下生效,
+  // 默认 async 部署下职能已被史官三合一(recorder_unified,默认开)接管 —— 开关拨了
+  // 也没用,且 UI 文案("两步式 GM/错误率低 5×")描述的是旧路径的历史行为。
+  // 恢复 = 解注释以下 SetRow。
   const save = useAutoSave(t('settings.extractor.title'), "extractor");
-  useEffectPL(() => {
-    let cancelled = false;
-    (async () => {
-      try {
-        const profile = await window.api.account.profile();
-        if (cancelled) return;
-        const p = (profile && profile.preferences) || {};
-        if (typeof p["extractor.enabled"] === "boolean") setEnabled(p["extractor.enabled"]);
-      } catch (_) {}
-    })();
-    return () => { cancelled = true; };
-  }, []);
 
   return (
     <SetGroup title={t('settings.extractor.title')}>
-      <SetRow label={t('settings.extractor.enable')} description={t('settings.extractor.enable_desc')}>
+      {/* <SetRow label={t('settings.extractor.enable')} description={t('settings.extractor.enable_desc')}>
         <CSToggle checked={enabled} onChange={({ detail }) => { setEnabled(detail.checked); save("enabled", detail.checked); }}>
           {enabled ? t('settings.extractor.enable_on') : t('settings.extractor.enable_off')}
         </CSToggle>
-      </SetRow>
+      </SetRow> */}
       {/* 统一共享组件:与「按模块分配模型」的提取器、scripts 导入流、cards 的 card_import
-          同一实现(Provider+Model + 未配 key 警告 + 写 extractor.* prefs)。 */}
+          同一实现(Provider+Model + 未配 key 警告 + 写 extractor.* prefs)。
+          此模型配置仍然超值:它是史官/验收官/记忆摘要精修/命令工具的回退模型。 */}
       <SetRow label={t('settings.extractor.api')} description={t('settings.extractor.model_desc')}>
         <AgentModelPicker
           prefPrefix="extractor"
