@@ -221,6 +221,9 @@ class _AnthropicBackend:
         return resp.content[0].text.strip()
 
     def stream(self, system: str, messages: list[dict], max_tokens: int) -> Iterator[str]:
+        from core.prompt_log import log_llm_prompt
+        log_llm_prompt(kind="gm_chat_stream", api_id="anthropic", model=self.model_name,
+                       system=system, messages=messages)
         # task 141: thinking 模型 max_tokens 必须容下 budget;不支持 thinking 的模型走旧路径
         _thinking = self._thinking_param()
         if _thinking:
@@ -287,6 +290,9 @@ class _AnthropicBackend:
         且置于 content 首位**(非交错思考下 Anthropic 恒先产 thinking 再产 text/tool_use,置首即
         还原原始顺序)。
         """
+        from core.prompt_log import log_llm_prompt
+        log_llm_prompt(kind="gm_chat_stream", api_id="anthropic", model=self.model_name,
+                       system=system, messages=messages)
         current_block: dict[str, Any] | None = None
         partial_json_buf = ""
         stop_reason: str | None = None

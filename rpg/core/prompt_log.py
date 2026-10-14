@@ -14,6 +14,8 @@
     (kind=harness:<agent_kind>:策展/黑天鹅/世界心跳/摘要精修/史官部分调用/…)
   · agents/gm/backends/{openai_compat,anthropic,vertex}.py 的 call / call_structured
     —— 主聊天 GM 与导出管线(kind=gm_chat / gm_structured)
+  · 同三文件的 stream / stream_with_mcp_loop / stream_with_tools_native
+    —— 主聊天流式热路径(kind=gm_chat_stream;工具循环每轮实际请求各打一条)
 
 用法:
   from core.prompt_log import log_llm_prompt

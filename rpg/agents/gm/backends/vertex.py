@@ -470,6 +470,9 @@ class _VertexBackend:
         return (resp.text or "").strip()
 
     def stream(self, system: str, messages: list[dict], max_tokens: int) -> Iterator[str]:
+        from core.prompt_log import log_llm_prompt
+        log_llm_prompt(kind="gm_chat_stream", api_id="vertex_ai", model=self.model_name,
+                       system=system, messages=messages)
         self._ensure_available()
         from google.genai import types
 
@@ -510,6 +513,9 @@ class _VertexBackend:
         max_tokens: int,
         mcp_call,
     ) -> Iterator[dict[str, Any]]:
+        from core.prompt_log import log_llm_prompt
+        log_llm_prompt(kind="gm_chat_stream", api_id="vertex_ai", model=self.model_name,
+                       system=system, messages=messages)
         self._ensure_available()
         """Vertex (Gemini) native function calling MCP 循环。
 

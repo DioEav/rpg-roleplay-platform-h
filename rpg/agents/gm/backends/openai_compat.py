@@ -399,6 +399,9 @@ class _OpenAICompatBackend:
         return (resp.choices[0].message.content or "").strip()
 
     def stream(self, system: str, messages: list[dict], max_tokens: int) -> Iterator[str]:
+        from core.prompt_log import log_llm_prompt
+        log_llm_prompt(kind="gm_chat_stream", api_id=self.api_id, model=self.model_name,
+                       system=system, messages=messages)
         _tuning = self._tuning_kwargs(0.9)  # task 141: 采样 + 思考控制(extra_body 已深合并)
         finish_reason: str | None = None
         stream = self._create(
@@ -529,6 +532,11 @@ class _OpenAICompatBackend:
             dsml = DsmlStreamFilter()
             try:
                 _tuning = self._tuning_kwargs(0.9)  # task 141: 采样 + 思考控制(extra_body 已深合并)
+                # 每个工具轮的实际请求都打(含首轮);system 已由 _to_messages 折进 oai_messages 首条,
+                # 不再单独传 system 重复打印。
+                from core.prompt_log import log_llm_prompt
+                log_llm_prompt(kind="gm_chat_stream", api_id=self.api_id, model=self.model_name,
+                               messages=oai_messages)
                 stream = self._create(
                     model=self.model_name,
                     messages=oai_messages,
