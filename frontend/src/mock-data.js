@@ -155,7 +155,7 @@ window.MOCK_PLATFORM = {
     display_name: "Demo 体验用户",
     role: "admin",
     uid: "demo_preview",
-    bio: "做长篇拆书 RPG，主要测试中文叙事。",
+    bio: "续写自己的故事",
   },
   database: { driver: "PostgreSQL", url: "postgresql://localhost/rpg", ok: true },
   stats: { scripts: 4, saves: 12, branches: 38, assets: 67, api_calls: 21_400 },

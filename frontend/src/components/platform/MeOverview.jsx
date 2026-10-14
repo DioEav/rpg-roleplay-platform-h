@@ -180,15 +180,19 @@ function MeOverview() {
       </CSContainer>
 
       {/* Stat row */}
+      {/* 游玩时长无真实数据源(后端 play_minutes_* 恒为 null)→ 整卡隐藏,列数 5→4 自适应;
+          后端未来补计时埋点后数据一到自动恢复显示。 */}
       <CSContainer>
-        <CSColumnLayout columns={5} variant="text-grid">
-          <div>
-            <CSBox variant="awsui-key-label">{t('platform.me.stat_playtime', '游玩时长')}</CSBox>
-            <CSBox fontSize="display-l" fontWeight="bold">
-              {playHoursLabel}{playMinutesTotal != null && <span style={{fontSize: 14, color: "var(--muted)", marginLeft: 4}}>h</span>}
-            </CSBox>
-            <CSBox color="text-body-secondary" fontSize="body-s">{playMinutesWeek != null ? t('platform.me.stat_playtime_week', { h: (playMinutesWeek / 60).toFixed(1), defaultValue: `本周 +${(playMinutesWeek / 60).toFixed(1)}h` }) : t('platform.me.stat_no_data', '暂无统计')}</CSBox>
-          </div>
+        <CSColumnLayout columns={playMinutesTotal != null || playMinutesWeek != null ? 5 : 4} variant="text-grid">
+          {(playMinutesTotal != null || playMinutesWeek != null) && (
+            <div>
+              <CSBox variant="awsui-key-label">{t('platform.me.stat_playtime', '游玩时长')}</CSBox>
+              <CSBox fontSize="display-l" fontWeight="bold">
+                {playHoursLabel}{playMinutesTotal != null && <span style={{fontSize: 14, color: "var(--muted)", marginLeft: 4}}>h</span>}
+              </CSBox>
+              <CSBox color="text-body-secondary" fontSize="body-s">{playMinutesWeek != null ? t('platform.me.stat_playtime_week', { h: (playMinutesWeek / 60).toFixed(1), defaultValue: `本周 +${(playMinutesWeek / 60).toFixed(1)}h` }) : t('platform.me.stat_no_data', '暂无统计')}</CSBox>
+            </div>
+          )}
           <div>
             <CSBox variant="awsui-key-label">{t('platform.me.stat_rounds', '回合数')}</CSBox>
             <CSBox fontSize="display-l" fontWeight="bold">{totalRounds != null ? totalRounds.toLocaleString() : "—"}</CSBox>

@@ -99,7 +99,13 @@ function ModelParamsSection() {
   // Reasoning Effort 已整体隐藏(2026-09):它写 settings.reasoning_effort,后端没有任何读取者(未接线),
   // 真正管思考深度的是下方 Extended Thinking 开关。恢复显示 / 接线时把 false 改回 true。
   const SHOW_REASONING_EFFORT = false;
-  const [params, setParams] = useStatePL(MODEL_PARAM_DEFAULTS);
+  // Extended Thinking 开关门槛(2026-10 收紧):供应商白名单 **且** 模型目录声明了 reasoning
+  // 能力才显示。四家之外的后端静默忽略 model_effort;四家之内也有不支持思考的模型
+  // (如 openai 的非推理模型),都不该显示「已启用」的假开关。capabilities 缺失时按不支持隐藏。
+  const THINKING_EFFORT_PROVIDERS = ["anthropic", "vertex_ai", "openai", "deepseek"];
+  const showThinkingToggle = !!selectedModelKey
+    && THINKING_EFFORT_PROVIDERS.includes(selectedModelKey.split(":")[0])
+    && selectedModelCaps.includes("reasoning");  const [params, setParams] = useStatePL(MODEL_PARAM_DEFAULTS);
   useEffectPL(() => {
     let cancelled = false;
     (async () => {
@@ -211,12 +217,11 @@ function ModelParamsSection() {
         </SetRow>
       )}
 
-      {/* task 141: Extended Thinking 开关 — 只对真正消费 model_effort 的 provider 显示:
-          anthropic/vertex_ai 走 budget_tokens(backends/anthropic.py、vertex.py),
-          openai 走 reasoning_effort、deepseek 走 reasoning_effort + thinking.type
-          (均在 openai_compat.py 的 _reasoning_param 里按 api_id 分方言)。
-          其余 provider(Qwen/Hunyuan/中转/本地)后端静默忽略该偏好,显示开关=「已启用」谎报。 */}
-      {selectedModelKey && ["anthropic", "vertex_ai", "openai", "deepseek"].includes(selectedModelKey.split(":")[0]) && (
+      {/* task 141: Extended Thinking 开关 — 只对真正消费 model_effort 且模型本身支持思考的
+          组合显示:供应商白名单(anthropic/vertex_ai 走 budget_tokens、openai/deepseek 走
+          reasoning_effort,见 openai_compat.py _reasoning_param)+ 模型目录声明 reasoning 能力。
+          其余(中转/本地/非推理模型)后端会静默忽略该偏好,显示开关=「已启用」谎报,一律隐藏。 */}
+      {showThinkingToggle && (
         <SetRow label={t('settings.modelparams.extended_thinking')}
           description={t('settings.modelparams.extended_thinking_desc')}>
           <CSToggle checked={thinkingEnabled} onChange={({ detail }) => toggleThinking(detail.checked)}>

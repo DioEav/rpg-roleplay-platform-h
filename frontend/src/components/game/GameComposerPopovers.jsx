@@ -27,6 +27,12 @@ const PERMISSION_OPTIONS = [
   { id: "full_access", labelKey: "game.permission.full_access_label", descKey: "game.permission.full_access_desc", icon: "unlock" },
 ];
 
+// Effort/深度思考控件的显示门槛(2026-10,与 settings modelparams-section 同规则):
+// 供应商白名单(后端真正消费 model_effort:anthropic/vertex_ai 走 budget_tokens,
+// openai/deepseek 走 reasoning_effort)**且**模型目录声明 reasoning 能力。
+// 其余(中转/本地/非推理模型)后端静默忽略该偏好,显示档位=「已启用」谎报,caps 缺失按不支持隐藏。
+const THINKING_EFFORT_PROVIDERS = ["anthropic", "vertex_ai", "openai", "deepseek"];
+
 /* ModelPopover — 游戏内底栏「模型」浮层。
    重构:模型列表 / 已配 key 过滤 / health / pricing / 切换落库(/api/models/select)
    全部委托给全站唯一规范组件 AgentModelPicker(variant="popover")。本组件只保留游戏台
@@ -107,6 +113,8 @@ function EffortSection({ selectedKey }) {
   // selectedKey 格式: "api_id::model_real_name" — backend pref key 用 "api_id:model_id"
   const [effort, setEffort] = useStateC('high');
   const [busy, setBusy] = useStateC(false);
+  // 显示门槛:供应商白名单 + 模型目录声明 reasoning 能力(缺数据按不支持隐藏)
+  const [capsOk, setCapsOk] = useStateC(false);
   const cancelledRef = React.useRef(false);  // 卸载守卫:卸载后跳过 setBusy
   const reqIdRef = React.useRef(0);          // RMW 竞态守卫:只让最新请求写回
   React.useEffect(() => { cancelledRef.current = false; return () => { cancelledRef.current = true; }; }, []);
@@ -115,6 +123,27 @@ function EffortSection({ selectedKey }) {
     const [api, model] = selectedKey.split('::');
     return api && model ? `${api}:${model}` : '';
   }, [selectedKey]);
+
+  React.useEffect(() => {
+    if (!prefKey) { setCapsOk(false); return; }
+    let cancelled = false;
+    (async () => {
+      try {
+        const d = await window.api.models.list().catch(() => ({}));
+        if (cancelled) return;
+        const colon = prefKey.indexOf(':');
+        const apiId = prefKey.slice(0, colon);
+        const modelKey = prefKey.slice(colon + 1);
+        const api = ((d && d.models && d.models.apis) || []).find((a) => a.id === apiId);
+        const m = ((api && api.models) || []).find((mm) => (mm.real_name || mm.id) === modelKey || mm.id === modelKey);
+        const caps = Array.isArray(m && m.capabilities)
+          ? m.capabilities
+          : (m && m.capabilities ? Object.keys(m.capabilities) : []);
+        setCapsOk(THINKING_EFFORT_PROVIDERS.includes(apiId) && caps.includes('reasoning'));
+      } catch (_) { if (!cancelled) setCapsOk(false); }
+    })();
+    return () => { cancelled = true; };
+  }, [prefKey]);
 
   React.useEffect(() => {
     if (!prefKey) return;
@@ -152,7 +181,7 @@ function EffortSection({ selectedKey }) {
     } finally { if (!cancelledRef.current) setBusy(false); }
   };
 
-  if (!prefKey) return null;
+  if (!prefKey || !capsOk) return null;
   return (
     <div style={{
       padding: '10px 12px',

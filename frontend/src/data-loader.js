@@ -179,6 +179,8 @@ async function hydratePlatform() {
         bio: me.user.bio || base.bio,
         avatar_url: me.user.avatar_url || '',
         id: me.user.id,
+        // 透传注册时间:个人主页 Hero 的「注册于」读 user.created_at,漏传会一直显示「注册于 —」
+        created_at: me.user.created_at || base.created_at || null,
         // 透传首登须知弹窗状态(null=从未 dismiss),否则前端 === null 判断永远拿不到字段
         welcome_dismissed_at: me.user.welcome_dismissed_at ?? null,
       };
