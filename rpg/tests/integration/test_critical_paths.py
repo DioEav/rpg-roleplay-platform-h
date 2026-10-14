@@ -516,6 +516,22 @@ class ModelsSelectInvalidatesSubGmCache(unittest.TestCase):
             sub_hit = _sub_gm_by_user.get(uid) is sentinel_sub
         return resp, gm_hit, sub_hit
 
+    def _pick_api_model(self):
+        """取 catalog 里第一个非 vertex_ai 且有 model 的 api。
+
+        vertex_ai 会被 select 端点对非 admin 用户前置拦截(400 needs_model_config),
+        测试未提升 admin,必须避开;整个 catalog 只有 vertex_ai 时跳过测试。
+        """
+        from model_registry import load_model_catalog, normalize_api_id
+        catalog = load_model_catalog()
+        for api in catalog.get("apis") or []:
+            if not (api.get("models") or []):
+                continue
+            if normalize_api_id(api.get("id") or "") == "vertex_ai":
+                continue
+            return api["id"], api["models"][0]["id"]
+        self.skipTest("catalog 里没有非 vertex_ai 的可用 api/model，跳过")
+
     def test_select_with_save_id_clears_sub_gm_cache(self):
         u = register_user(self.client)
         cookies = u["cookies"]
@@ -532,15 +548,10 @@ class ModelsSelectInvalidatesSubGmCache(unittest.TestCase):
         if not save_id:
             self.skipTest("未获到 save_id，跳过")
 
-        from model_registry import load_model_catalog
-        catalog = load_model_catalog()
-        first_api = catalog["apis"][0] if catalog.get("apis") else None
-        if not first_api or not (first_api.get("models") or []):
-            self.skipTest("catalog 里没有可用 api/model，跳过")
-
+        api_id, model_id = self._pick_api_model()
         resp, gm_hit, sub_hit = self._seed_and_select(uid, cookies, {
-            "api_id": first_api["id"],
-            "model_id": first_api["models"][0]["id"],
+            "api_id": api_id,
+            "model_id": model_id,
             "save_id": save_id,
         })
         self.assertEqual(resp.status_code, 200, f"select 失败: {resp.text[:300]}")
@@ -552,15 +563,10 @@ class ModelsSelectInvalidatesSubGmCache(unittest.TestCase):
         cookies = u["cookies"]
         uid = self._get_uid(u["username"])
 
-        from model_registry import load_model_catalog
-        catalog = load_model_catalog()
-        first_api = catalog["apis"][0] if catalog.get("apis") else None
-        if not first_api or not (first_api.get("models") or []):
-            self.skipTest("catalog 里没有可用 api/model，跳过")
-
+        api_id, model_id = self._pick_api_model()
         resp, gm_hit, sub_hit = self._seed_and_select(uid, cookies, {
-            "api_id": first_api["id"],
-            "model_id": first_api["models"][0]["id"],
+            "api_id": api_id,
+            "model_id": model_id,
         })
         self.assertEqual(resp.status_code, 200, f"select 失败: {resp.text[:300]}")
         self.assertFalse(gm_hit, "per-user 切模型后主 GM 缓存应已失效")

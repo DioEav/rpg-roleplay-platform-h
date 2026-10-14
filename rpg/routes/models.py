@@ -254,8 +254,8 @@ async def api_models_select(
             if state is not None:
                 state.set_session_model(model_id, api_id)
             # 清掉该用户的 GM 缓存，_ensure_loaded 重建时会读 session_model。
-            # sub_gm 缓存必须一起清:无 override 时 sub=主 GM 实例,不清会继续持有旧模型的
-            # GameMaster(切模型后 curator 仍走旧模型);有 override 时重建以刷新 BYOK 守卫口径。
+            # sub_gm 缓存必须一起清:无 override 时 sub 缓存的就是旧主 GM 实例,不清则
+            # 切模型后 curator 仍走旧模型;有 override 时重建以保持缓存与配置一致。
             _gm_by_user.pop(uid, None)
             _sub_gm_by_user.pop(uid, None)
         # 同步持久化到 DB（走 state_repository 的 runtime_checkouts）
