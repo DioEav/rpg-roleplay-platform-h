@@ -467,5 +467,105 @@ class ModelsSelectScope(unittest.TestCase):
                          f"A1 回归: 带 save_id 的 select_model 应返回 scope='save'；实际={body}")
 
 
+# ──────────────────────────────────────────────────────────────────────────────
+# CP-9: 切模型必须同时失效 sub_gm 缓存 (curator 旧模型回归)
+# ──────────────────────────────────────────────────────────────────────────────
+
+class ModelsSelectInvalidatesSubGmCache(unittest.TestCase):
+    """回归: 切模型若只 pop _gm_by_user 不 pop _sub_gm_by_user，curator 缓存
+    命中旧主 GM 实例 → 输入框切模型后 curator 仍走旧模型(前端日志
+    「经统一 harness 调 curator(api=mimo…)」而主 GM 已是新模型)。"""
+
+    @classmethod
+    def setUpClass(cls):
+        cleanup_test_users()
+        cls.client = make_client()
+
+    @classmethod
+    def tearDownClass(cls):
+        cleanup_test_users()
+
+    def _get_uid(self, username: str) -> int:
+        from platform_app.db import connect
+        with connect() as db:
+            row = db.execute(
+                "select id from users where username = %s", (username,)
+            ).fetchone()
+        return int(row["id"])
+
+    def _make_script(self, uid: int, title: str) -> int:
+        from platform_app.db import connect
+        with connect() as db:
+            row = db.execute(
+                "insert into scripts(owner_id, title) values (%s, %s) returning id",
+                (uid, title),
+            ).fetchone()
+        return int(row["id"])
+
+    def _seed_and_select(self, uid: int, cookies: dict, json_body: dict):
+        """往两个 GM 缓存塞哨兵 → 调 select → 返回 (resp, 主GM哨兵还在, 子GM哨兵还在)。"""
+        from app import _gm_by_user, _state_lock, _sub_gm_by_user
+        sentinel_gm = object()
+        sentinel_sub = object()
+        with _state_lock:
+            _gm_by_user[uid] = sentinel_gm
+            _sub_gm_by_user[uid] = sentinel_sub
+        resp = self.client.post("/api/models/select", json=json_body, cookies=cookies)
+        with _state_lock:
+            gm_hit = _gm_by_user.get(uid) is sentinel_gm
+            sub_hit = _sub_gm_by_user.get(uid) is sentinel_sub
+        return resp, gm_hit, sub_hit
+
+    def test_select_with_save_id_clears_sub_gm_cache(self):
+        u = register_user(self.client)
+        cookies = u["cookies"]
+        uid = self._get_uid(u["username"])
+        script_id = self._make_script(uid, f"integtest_script_{integtest_username()}")
+        create_resp = self.client.post(
+            "/api/v1/saves",
+            json={"title": "subgm_cache_scope_test", "script_id": script_id, "character_kind": "none"},
+            cookies=cookies,
+        )
+        if create_resp.status_code != 200:
+            self.skipTest(f"创建存档失败，跳过: {create_resp.text[:200]}")
+        save_id = (create_resp.json().get("save") or {}).get("id")
+        if not save_id:
+            self.skipTest("未获到 save_id，跳过")
+
+        from model_registry import load_model_catalog
+        catalog = load_model_catalog()
+        first_api = catalog["apis"][0] if catalog.get("apis") else None
+        if not first_api or not (first_api.get("models") or []):
+            self.skipTest("catalog 里没有可用 api/model，跳过")
+
+        resp, gm_hit, sub_hit = self._seed_and_select(uid, cookies, {
+            "api_id": first_api["id"],
+            "model_id": first_api["models"][0]["id"],
+            "save_id": save_id,
+        })
+        self.assertEqual(resp.status_code, 200, f"select 失败: {resp.text[:300]}")
+        self.assertFalse(gm_hit, "per-save 切模型后主 GM 缓存应已失效")
+        self.assertFalse(sub_hit, "per-save 切模型后 sub_gm 缓存必须同时失效(否则 curator 走旧模型)")
+
+    def test_select_user_scope_clears_sub_gm_cache(self):
+        u = register_user(self.client)
+        cookies = u["cookies"]
+        uid = self._get_uid(u["username"])
+
+        from model_registry import load_model_catalog
+        catalog = load_model_catalog()
+        first_api = catalog["apis"][0] if catalog.get("apis") else None
+        if not first_api or not (first_api.get("models") or []):
+            self.skipTest("catalog 里没有可用 api/model，跳过")
+
+        resp, gm_hit, sub_hit = self._seed_and_select(uid, cookies, {
+            "api_id": first_api["id"],
+            "model_id": first_api["models"][0]["id"],
+        })
+        self.assertEqual(resp.status_code, 200, f"select 失败: {resp.text[:300]}")
+        self.assertFalse(gm_hit, "per-user 切模型后主 GM 缓存应已失效")
+        self.assertFalse(sub_hit, "per-user 切模型后 sub_gm 缓存必须同时失效(否则 curator 走旧模型)")
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

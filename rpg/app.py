@@ -893,6 +893,9 @@ def _ensure_loaded(api_user: dict[str, Any] | None = None, *, ensure_gm: bool = 
                     cached = None
                 if model_drift:
                     _gm_by_user.pop(uid, None)
+                    # sub_gm 同理:无 override 时缓存的是旧主 GM 实例,不清则 curator 在
+                    # 跨 worker 切模型后永远走旧模型(models.select 只清本 worker,靠这里兜底)。
+                    _sub_gm_by_user.pop(uid, None)
             except Exception:
                 pass
         if cached is None:

@@ -217,6 +217,7 @@ async def api_models_select(
         _payload,
         _state_by_user,
         _state_lock,
+        _sub_gm_by_user,
         _user_key,
         select_model,
         selected_model,
@@ -252,8 +253,11 @@ async def api_models_select(
             state = _state_by_user.get(uid)
             if state is not None:
                 state.set_session_model(model_id, api_id)
-            # 清掉该用户的 GM 缓存，_ensure_loaded 重建时会读 session_model
+            # 清掉该用户的 GM 缓存，_ensure_loaded 重建时会读 session_model。
+            # sub_gm 缓存必须一起清:无 override 时 sub=主 GM 实例,不清会继续持有旧模型的
+            # GameMaster(切模型后 curator 仍走旧模型);有 override 时重建以刷新 BYOK 守卫口径。
             _gm_by_user.pop(uid, None)
+            _sub_gm_by_user.pop(uid, None)
         # 同步持久化到 DB（走 state_repository 的 runtime_checkouts）
         try:
             from state_repository import persist_session_model
@@ -290,6 +294,7 @@ async def api_models_select(
         catalog = select_model(api_id, model_id)
         with _state_lock:
             _gm_by_user.clear()
+            _sub_gm_by_user.clear()
         return json_response({"ok": True, "scope": "global", "models": catalog, "selected": selected_model(catalog), "state": _payload(api_user)})
 
     # per-user 路径:写 user_preferences.preferences['gm.api_id'/'gm.model_real_name']
@@ -331,6 +336,7 @@ async def api_models_select(
     uid = _user_key(api_user)
     with _state_lock:
         _gm_by_user.pop(uid, None)
+        _sub_gm_by_user.pop(uid, None)  # 与 per-save 路径同理:sub_gm 可能缓存旧主 GM 实例
     # selected 必须反映「用户刚选的模型」,而非 selected_model()(=全局 app_config 默认,常是 gemini)。
     # 否则前端拿到 select 响应的 selected 会是全局默认 → 选完即跳默认(用户报「修十次没好」)。
     return json_response({"ok": True, "scope": "user", "api_id": api_id, "model_id": model_id,
