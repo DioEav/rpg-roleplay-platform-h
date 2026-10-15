@@ -767,8 +767,8 @@ function SaveImagesStrip({ saveId }) {
     <div style={{
       margin: '12px 0 4px',
       padding: '10px 12px',
-      background: 'var(--surface-2, rgba(255,255,255,0.03))',
-      border: '1px solid var(--line-soft, rgba(255,255,255,0.07))',
+      background: 'var(--panel-2)',
+      border: '1px solid var(--line-soft)',
       borderRadius: 8,
     }}>
       <div style={{ fontSize: 11, color: 'var(--muted)', marginBottom: 8, letterSpacing: '0.04em', textTransform: 'uppercase' }}>

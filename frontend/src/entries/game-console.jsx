@@ -1696,8 +1696,10 @@ function App() {
 
       {sseLogOpen && (
         <div className="gc-overlay" style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.55)', zIndex: 9999, display: 'flex', alignItems: 'center', justifyContent: 'center' }} onClick={() => setSseLogOpen(false)}>
-          <div onClick={(e) => e.stopPropagation()} style={{ width: 'min(860px, 92vw)', maxHeight: '82vh', background: 'var(--surface, #1a1d22)', color: 'var(--text, #e6e6e6)', borderRadius: 8, border: '1px solid var(--line, #333)', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 16px', borderBottom: '1px solid var(--line, #333)' }}>
+          {/* 注意:面板颜色必须用 tokens.css 真实令牌(--panel 等)。此前写错为不存在的
+              --surface,var() 永远落到暗色兜底值 → 弹框在任何主题下都是深色。 */}
+          <div onClick={(e) => e.stopPropagation()} style={{ width: 'min(860px, 92vw)', maxHeight: '82vh', background: 'var(--panel)', color: 'var(--text)', borderRadius: 8, border: '1px solid var(--line)', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 16px', borderBottom: '1px solid var(--line)' }}>
               <strong>{t('game.console.sse_log.title_detailed', { count: sseLog.length })}</strong>
               <div style={{ display: 'flex', gap: 8 }}>
                 <button className="btn ghost" onClick={async () => { try { await navigator.clipboard.writeText(JSON.stringify(sseLog, null, 2)); window.__apiToast?.(t('game.console.sse_log.copied'), { kind: 'ok', duration: 1500 }); } catch { window.__apiToast?.(t('game.console.sse_log.copy_failed'), { kind: 'danger' }); } }}>{t('game.console.sse_log.copy_json_btn')}</button>
@@ -1705,11 +1707,11 @@ function App() {
               </div>
             </div>
             <div style={{ overflow: 'auto', padding: '8px 16px', fontFamily: 'var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace)', fontSize: 12, lineHeight: 1.5 }}>
-              {sseLog.length === 0 && <div style={{ padding: '24px 0', color: 'var(--muted, #888)' }}>{t('game.console.sse_log.empty_detailed')}</div>}
+              {sseLog.length === 0 && <div style={{ padding: '24px 0', color: 'var(--muted)' }}>{t('game.console.sse_log.empty_detailed')}</div>}
               {sseLog.map((ev, i) => (
-                <div key={i} style={{ padding: '4px 0', borderBottom: '1px dashed var(--line-soft, #2a2d33)' }}>
-                  <span style={{ color: 'var(--muted-2, #777)' }}>[{new Date(ev.t).toISOString().slice(11, 23)}]</span>{' '}
-                  <span style={{ color: 'var(--accent, #d4a45e)' }}>{ev.kind}</span>{' '}
+                <div key={i} style={{ padding: '4px 0', borderBottom: '1px dashed var(--line-soft)' }}>
+                  <span style={{ color: 'var(--muted-2)' }}>[{new Date(ev.t).toISOString().slice(11, 23)}]</span>{' '}
+                  <span style={{ color: 'var(--accent)' }}>{ev.kind}</span>{' '}
                   <span style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>{JSON.stringify(ev.payload)}</span>
                 </div>
               ))}

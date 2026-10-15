@@ -93,7 +93,7 @@ function OverridesModal({ script, onClose }) {
             spellCheck={false}
             style={{
               flex: 1, minHeight: 320, fontFamily: "var(--font-mono, monospace)", fontSize: 12.5,
-              lineHeight: 1.55, resize: "vertical", background: "var(--surface-2)",
+              lineHeight: 1.55, resize: "vertical", background: "var(--bg-deep)",
               border: "1px solid " + (jsonValid ? "var(--line-soft)" : "var(--danger)"),
               borderRadius: "var(--r-2)", padding: "10px 12px", color: "var(--text)",
               outline: "none",
