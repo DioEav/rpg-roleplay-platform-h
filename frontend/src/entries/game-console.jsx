@@ -1592,6 +1592,8 @@ function App() {
         <ModelConfigInterceptModal open={!!hardConfigItem} item={hardConfigItem} onResolve={onHardResolve} onCancel={onHardCancel} />
         {/* GM 模型选择走 Composer 内置 ModelPopover(下拉,基于统一规范组件 AgentModelPicker)。
             旧的全屏 ModelPicker modal(dead code)已删除。 */}
+        {/* narrativeFont 不再下传(2026-10-15):ChatArea 不再内联 --narrative-font,
+            GM 字体统一由 <html> 上的变量驱动(游戏内设置弹窗可实时切换)。 */}
         {mountStage >= 1 ? <ChatArea
           history={
             // G6: 存档已加载但 player 还未 setup,显示"等待开场..."占位而非空白
@@ -1599,7 +1601,7 @@ function App() {
               ? [{ role: 'assistant', content: t('game.console.opening.waiting'), _opening: true, _thinking: 'starting' }]
               : history
           } runState={runState} runStyle={tweaks.runStyle}
-          narrativeFont={tweaks.narrativeFont} narrativeSize={tweaks.narrativeSize}
+          narrativeSize={tweaks.narrativeSize}
           hasError={hasError}
           saveId={(activeSave && activeSave.id) || (game && game._raw && game._raw.save_id) || null}
           onRetry={onRetry} onShowSse={onShowSse}

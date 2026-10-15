@@ -9,7 +9,11 @@ import { NarrativeBlock, PlayerBlock, useSaveImages } from './GameChatMessages.j
 import { chatImageAnchor } from './chat-image-anchor.js';
 import { ThinkingPill } from './GameLeftRail.jsx';
 
-function ChatArea({ history, runState, runStyle, narrativeFont, narrativeSize, hasError, errorMessage, saveId, onRetry, onShowSse, memory }) {
+// narrativeFont prop 已移除(2026-10-15):此前在此处内联写死 --narrative-font(且 mono 无映射),
+// CSS 变量就近遮蔽了 <html> 上的真值 → 游戏内设置弹窗切字体永远无效。
+// 现在 GM 正文字体统一继承 <html> 的 --narrative-font(启动时 entries/game-console.jsx 从
+// localStorage 初始化,弹窗切换时即时更新),本组件不再干预。
+function ChatArea({ history, runState, runStyle, narrativeSize, hasError, errorMessage, saveId, onRetry, onShowSse, memory }) {
   const { t } = useTranslation();
   const ref = useRefA(null);
   // task 21：实战存档 history 可能有 100+ 条；一次性渲染整个数组 + 每次 setGame
@@ -61,7 +65,7 @@ function ChatArea({ history, runState, runStyle, narrativeFont, narrativeSize, h
       ref={ref}
       className="gc-chat"
       style={{
-        "--narrative-font": narrativeFont === "serif" ? "var(--font-serif)" : "var(--font-sans)",
+        // --narrative-font 不在此内联设置:内联会遮蔽 <html> 上的值导致设置弹窗切字体失效(见函数头注)。
         "--narrative-size": narrativeSize + "px"
       }}>
 

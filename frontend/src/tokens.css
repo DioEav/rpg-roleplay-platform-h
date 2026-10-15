@@ -307,6 +307,29 @@ textarea { resize: vertical; }
   background-color: var(--panel) !important;
 }
 
+/* 用户菜单文字锁定(Cloudscape 顶栏下拉):菜单头「用户名(awsui_title)/描述
+   (awsui_description)」与悬停/选中项(awsui_item-element)的文字令牌不在
+   themeable 白名单,applyTheme 无法覆盖、编译值固定白色 → 亮色下白底白字。
+   按 class 直选 + var() 强制主题色(与上方下拉背景锁色同款方案;
+   类名带 hash,升级若改名则此锁静默失效,回落现状,无害)。 */
+[class*="awsui_dropdown-content-wrapper"] [class*="awsui_header"] [class*="awsui_title"] {
+  color: var(--text) !important;
+}
+[class*="awsui_dropdown-content-wrapper"] [class*="awsui_description"] {
+  color: var(--muted) !important;
+}
+[class*="awsui_dropdown-content-wrapper"] li[class*="awsui_item-element"]:hover,
+[class*="awsui_dropdown-content-wrapper"] li[class*="awsui_item-element"]:focus-within,
+[class*="awsui_dropdown-content-wrapper"] li[aria-checked="true"][class*="awsui_item-element"],
+[class*="awsui_dropdown-content-wrapper"] li[class*="awsui_item-element"][aria-disabled],
+/* 顶栏用户菜单的新版 menu-item 家族(TopNavigation 下拉)悬停/焦点态 */
+[class*="awsui_dropdown-content-wrapper"] [class*="awsui_menu-item"]:hover,
+[class*="awsui_dropdown-content-wrapper"] [class*="awsui_menu-item"]:focus-within,
+[class*="awsui_dropdown-content-wrapper"] [aria-checked="true"][class*="awsui_menu-item"],
+[class*="awsui_dropdown-content-wrapper"] [class*="awsui_menu-item"][aria-disabled] {
+  color: var(--text) !important;
+}
+
 /* 隐藏 Cloudscape AppLayout 自带的侧栏折叠/展开触发器(圆形按钮):
    折叠按钮已自建并放进顶栏品牌名左侧。只隐藏「包含 navigation-toggle 的
    trigger-wrapper」,不影响 tools / split-panel 的触发器。
