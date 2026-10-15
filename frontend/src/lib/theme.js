@@ -4,9 +4,9 @@
  *   <html data-theme> 属性 + localStorage + CustomEvent + window.RPG_* 全局 API。
  *
  * 主题令牌三选一:
- *   - 'dark'    暖夜(现状默认,老用户观感零变化)
+ *   - 'light-b' 亮色 · 青竹(冷白微绿 + 竹青绿)← 默认
  *   - 'light-a' 亮色 · 暖纸(暖米白 + 赤陶橘,品牌延续)
- *   - 'light-b' 亮色 · 青竹(冷白微绿 + 竹青绿,最清透)
+ *   - 'dark'    暗色 · 暖夜(原暗色风格)
  * CSS 侧对应 tokens.css 的 :root / :root[data-theme="light-a"] / [data-theme="light-b"];
  * Cloudscape 侧对应 cloudscape-theme.js 的 installWarmTheme(token) / setTheme(token)。
  *
@@ -24,16 +24,16 @@ export function isLightTheme(token) {
   return token === 'light-a' || token === 'light-b';
 }
 
-/** 读取持久化的当前主题令牌(非法值回落 dark)。 */
+/** 读取持久化的当前主题令牌(非法/缺失回落默认 light-b 亮色·青竹)。 */
 export function getTheme() {
-  const v = lsGet(THEME_KEY, 'dark');
-  return THEMES.includes(v) ? v : 'dark';
+  const v = lsGet(THEME_KEY, 'light-b');
+  return THEMES.includes(v) ? v : 'light-b';
 }
 
-/** 读取「上次使用的亮色子风格」(快切用,非法/缺失回落 light-a)。 */
+/** 读取「上次使用的亮色子风格」(快切用,非法/缺失回落 light-b)。 */
 export function getLastLightTheme() {
-  const v = lsGet(THEME_LIGHT_KEY, 'light-a');
-  return isLightTheme(v) ? v : 'light-a';
+  const v = lsGet(THEME_LIGHT_KEY, 'light-b');
+  return isLightTheme(v) ? v : 'light-b';
 }
 
 /** 只把 data-theme 属性落到 <html>(不持久化、不发事件)。入口启动时首屏前调用。 */
@@ -48,7 +48,7 @@ export function applyThemeAttr(token) {
  * @returns {string} 实际生效的令牌
  */
 export function setTheme(token) {
-  const t = THEMES.includes(token) ? token : 'dark';
+  const t = THEMES.includes(token) ? token : 'light-b';
   applyThemeAttr(t);
   lsSet(THEME_KEY, t);
   if (isLightTheme(t)) lsSet(THEME_LIGHT_KEY, t);

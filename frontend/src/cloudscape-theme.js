@@ -1,8 +1,8 @@
 // Cloudscape 暖色主题 —— 把项目 tokens.css 的暖色板映射到 Cloudscape 设计令牌。
 // 三套调色板与 tokens.css 一一对应:
-//   dark    暖夜(默认,原现状)  → Mode.Dark
-//   light-a 亮色·暖纸          → Mode.Light
-//   light-b 亮色·青竹          → Mode.Light
+//   light-b 亮色·青竹(默认)  → Mode.Light
+//   light-a 亮色·暖纸        → Mode.Light
+//   dark    暗色·暖夜(原现状) → Mode.Dark
 // installWarmTheme(token) 启动时按已存主题安装;运行期切换走 setTheme(token),
 // 并监听 lib/theme.js 派发的 rpg-theme-change 自动跟随(调用方只需改 data-theme)。
 import { applyMode, Mode, applyDensity, Density } from '@cloudscape-design/global-styles';
@@ -66,6 +66,9 @@ const C_LIGHT_B = {
 };
 
 const PALETTES = { dark: C_DARK, 'light-a': C_LIGHT_A, 'light-b': C_LIGHT_B };
+
+// 默认主题(未存储过偏好时):亮色 · 青竹。与 lib/theme.js getTheme() 的回落值保持一致。
+const DEFAULT_THEME = 'light-b';
 
 // 颜色令牌:同时给 light/dark 槽位(Mode 由 applyMode 决定,双写更稳)
 const dual = (v) => ({ light: v, dark: v });
@@ -222,7 +225,7 @@ let _reset = null;
 
 // 按 token 安装 Cloudscape 模式 + 令牌。重复调用安全(先 reset 旧主题再上新主题)。
 function applyCloudscapeTheme(token) {
-  const C = PALETTES[token] || C_DARK;
+  const C = PALETTES[token] || PALETTES[DEFAULT_THEME];
   applyMode(token === 'dark' ? Mode.Dark : Mode.Light);
   try {
     if (_reset) {
@@ -238,10 +241,10 @@ function applyCloudscapeTheme(token) {
 }
 
 /**
- * 启动安装。token 缺省 'dark'(与历史行为一致)。
+ * 启动安装。token 缺省取默认主题(亮色·青竹)。
  * @param {'dark'|'light-a'|'light-b'} [token]
  */
-export function installWarmTheme(token = 'dark') {
+export function installWarmTheme(token = DEFAULT_THEME) {
   applyDensity(Density.Compact); // 紧凑密度:更小行高/内边距,提升信息密度
   applyCloudscapeTheme(token);
 }
@@ -252,13 +255,13 @@ export function installWarmTheme(token = 'dark') {
  * @param {'dark'|'light-a'|'light-b'} token
  */
 export function setCloudscapeTheme(token) {
-  applyCloudscapeTheme(PALETTES[token] ? token : 'dark');
+  applyCloudscapeTheme(PALETTES[token] ? token : DEFAULT_THEME);
 }
 
 // 跟随 lib/theme.js 的主题事件 —— 任何入口只要调用 window.RPG_setTheme /
 // dispatch 'rpg-theme-change',Cloudscape 表面即同步换装。
 if (typeof window !== 'undefined') {
   window.addEventListener('rpg-theme-change', (e) => {
-    setCloudscapeTheme((e && e.detail && e.detail.theme) || 'dark');
+    setCloudscapeTheme((e && e.detail && e.detail.theme) || DEFAULT_THEME);
   });
 }
