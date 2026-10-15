@@ -10,17 +10,22 @@ import { lsGet, lsSet } from '../../lib/storage.js';
 
 // ----------------------------- IN-GAME SETTINGS --------------------------
 // task 89 → task 135: 用真实可用的设置面板替换 placeholder。
-// MVP 范围: 密度预设 / 叙事字体 / 自动存档 / 权限模式只读展示 / 全局设置链接。
-// 所有改动均为纯前端 localStorage — 不需要后端。
+// 现范围: 密度预设 / 叙事字体 / token 用量显隐 / 保留未响应轮 / AI 改写建议 / 剧情引导强度 / 全局设置链接。
+// 已隐藏(2026-10-15): 自动存档(rpg.autosave 死键,后端无条件每回合存档)、写入权限只读展示
+// (纯回显,切换入口在顶栏 chip / 移动端 sheet)——两行均以注释保留,恢复前先接线。
+// 所有改动均为纯前端 localStorage — 不需要后端(引导强度/AI 改写建议除外,走真实 API)。
 function _readDensity() {
   return lsGet("rpg.density") || "default";
 }
 function _readNarrativeFont() {
   return lsGet("rpg.narrativeFont") || "serif";
 }
-function _readAutosave() {
-  return lsGet("rpg.autosave") !== "off";
-}
+// 自动存档开关已隐藏(2026-10-15):rpg.autosave 是死键 —— 全库(前端/移动端/后端)零运行时消费者,
+// 后端 autosave 是每存档每回合无感提交(migrations v24),不受任何客户端开关控制。与全局偏好页
+// pref-sections.jsx 同款处理:诚实优于装饰。恢复 = 先接线再解注释。
+// function _readAutosave() {
+//   return lsGet("rpg.autosave") !== "off";
+// }
 // #11: token 用量显示开关 — 默认关闭(=== "on")
 function _readShowUsage() {
   return lsGet("rpg.showTokenUsage") === "on";
@@ -30,11 +35,12 @@ function _readKeepFailedTurn() {
   return lsGet("gc.keepFailedTurn") === "on";
 }
 
-function GameSettingsModal({ open, onClose, saveTitle, permission, saveId }) {
+// permission prop 暂不解构:写入权限只读展示行已隐藏,恢复时连同 PERM_OPT 一起解注释。
+function GameSettingsModal({ open, onClose, saveTitle, saveId }) {
   const { t } = useTranslation();
   const [density, setDensityState] = useStateA(_readDensity);
   const [narrativeFont, setNarrativeFontState] = useStateA(_readNarrativeFont);
-  const [autosave, setAutosaveState] = useStateA(_readAutosave);
+  // const [autosave, setAutosaveState] = useStateA(_readAutosave); // 自动存档死键,开关已隐藏(见 _readAutosave 注)
   const [showUsage, setShowUsageState] = useStateA(_readShowUsage);
   const [keepFailedTurn, setKeepFailedTurnState] = useStateA(_readKeepFailedTurn);
   // null = 尚未从后端拉到本档真实值;加载期不高亮任何档,避免先闪默认「软引导」再跳真值(被误读成"自己回跳")
@@ -100,10 +106,7 @@ function GameSettingsModal({ open, onClose, saveTitle, permission, saveId }) {
     window.dispatchEvent(new CustomEvent("rpg-narrative-font-change", { detail: f }));
   };
 
-  const handleAutosave = (v) => {
-    setAutosaveState(v);
-    lsSet("rpg.autosave", v ? "on" : "off");
-  };
+  // const handleAutosave = ... // 自动存档死键,开关已隐藏(见 _readAutosave 注)
 
   const handleShowUsage = (v) => {
     setShowUsageState(v);
@@ -131,13 +134,14 @@ function GameSettingsModal({ open, onClose, saveTitle, permission, saveId }) {
 
   if (!open) return null;
 
-  const PERM_OPT = (typeof window.PERMISSION_OPTIONS !== "undefined" && window.PERMISSION_OPTIONS) || [
-    { id: "read_only",   label: t('game.app.settings.perm_read_only'), icon: "eye" },
-    { id: "default",     label: t('game.app.settings.perm_default'),   icon: "lock" },
-    { id: "review",      label: t('game.app.settings.perm_review'),    icon: "shield" },
-    { id: "full_access", label: t('game.app.settings.perm_full'),      icon: "unlock" },
-  ];
-  const currentPerm = PERM_OPT.find(p => p.id === permission) || PERM_OPT[1];
+  // PERM_OPT/currentPerm:写入权限只读展示已隐藏(2026-10-15),恢复展示时一并解注释。
+  // const PERM_OPT = (typeof window.PERMISSION_OPTIONS !== "undefined" && window.PERMISSION_OPTIONS) || [
+  //   { id: "read_only",   label: t('game.app.settings.perm_read_only'), icon: "eye" },
+  //   { id: "default",     label: t('game.app.settings.perm_default'),   icon: "lock" },
+  //   { id: "review",      label: t('game.app.settings.perm_review'),    icon: "shield" },
+  //   { id: "full_access", label: t('game.app.settings.perm_full'),      icon: "unlock" },
+  // ];
+  // const currentPerm = PERM_OPT.find(p => p.id === permission) || PERM_OPT[1];
 
   const DENSITY_OPTS = [
     { id: "compact",  label: t('game.app.settings.density_compact') },
@@ -220,7 +224,8 @@ function GameSettingsModal({ open, onClose, saveTitle, permission, saveId }) {
             </div>
           </div>
 
-          {/* ── 自动存档 ── */}
+          {/* ── 自动存档:已隐藏(2026-10-15)—— rpg.autosave 死键,后端每回合无条件自动存档,
+               开关不接线(见文件头 _readAutosave 注)。恢复 = 接线后解注释。
           <div style={rowStyle}>
             <div style={labelStyle}>
               <div>{t('game.app.settings.autosave_label')}</div>
@@ -233,6 +238,7 @@ function GameSettingsModal({ open, onClose, saveTitle, permission, saveId }) {
               <span style={{fontSize: 12.5, color: "var(--text-quiet)"}}>{autosave ? t('game.app.settings.on') : t('game.app.settings.off')}</span>
             </label>
           </div>
+          */}
 
           {/* ── 显示 token 用量 ── */}
           <div style={rowStyle}>
@@ -294,7 +300,8 @@ function GameSettingsModal({ open, onClose, saveTitle, permission, saveId }) {
             </div>
           )}
 
-          {/* ── 写入权限（只读展示） ── */}
+          {/* ── 写入权限(只读展示):已隐藏(2026-10-15)—— 仅回显 permissions.mode,弹框内
+               不可操作;移动端 sheet 与桌面顶栏 chip 才是真切换入口。要回显时解注释即可。
           <div style={{...rowStyle, borderBottom: "none"}}>
             <div style={labelStyle}>
               <div>{t('game.app.settings.perm_label')}</div>
@@ -305,6 +312,7 @@ function GameSettingsModal({ open, onClose, saveTitle, permission, saveId }) {
               {currentPerm.label}
             </div>
           </div>
+          */}
 
       </div>
     </Modal>
