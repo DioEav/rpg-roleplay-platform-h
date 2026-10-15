@@ -1,4 +1,17 @@
 {
+  "theme": {
+    "menu_title": "界面主题",
+    "toggle_light": "切换到亮色主题",
+    "toggle_dark": "切换到暗色主题",
+    "dark": "暗色 · 暖夜",
+    "light_a": "亮色 · 暖纸",
+    "light_b": "亮色 · 青竹",
+    "setting_label": "界面主题",
+    "setting_desc": "暗色保持原有暖夜风格；亮色提供暖纸与青竹两套清新子风格。",
+    "theme_dark_desc": "原有暖夜风格（默认）",
+    "theme_light_a_desc": "暖米白纸感，保留赤陶橘",
+    "theme_light_b_desc": "冷白微绿，竹青绿主色"
+  },
   "modules": {
     "matrix": {
       "title": "模块矩阵",

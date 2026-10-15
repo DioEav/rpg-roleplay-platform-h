@@ -24,10 +24,11 @@ import { isMobileV2Enabled } from '../lib/mobile-gate.js';
 // 客户端动作命令:本地执行、不发给 GM(区别于 /set /loc /time 等后端 directive,后者仍作为文本发送)。
 const CLIENT_CMDS = new Set(['retry', 'save', 'status', 'debug']);
 
-// 反馈抽屉使用 Cloudscape 组件；游戏页也必须加载同一套暗色主题。
+// 反馈抽屉使用 Cloudscape 组件；游戏页也加载同一套暖色主题(按已存主题,首屏前无闪烁)。
 import '@cloudscape-design/global-styles/index.css';
 import { installWarmTheme } from '../cloudscape-theme.js';
-installWarmTheme();
+import { getTheme } from '../lib/theme.js';
+installWarmTheme(getTheme());
 
 // 组件模块 — named import
 import { useResizable, useBreakpoint } from '../responsive.jsx';

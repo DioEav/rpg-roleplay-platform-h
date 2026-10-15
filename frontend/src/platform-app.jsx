@@ -45,6 +45,7 @@ import FileLibrary from './components/FileLibrary.jsx';
 import { credApiIdSet } from './components/catalog-helpers.js';
 import { createToastChannel } from './toast.jsx';
 import { lsGet, lsSet } from './lib/storage.js';
+import ThemeToggle from './components/ThemeToggle.jsx';
 // Cloudscape shell(AWS 控制台架构 + 暖色主题)
 import CSTopNavigation from '@cloudscape-design/components/top-navigation';
 import CSAppLayout from '@cloudscape-design/components/app-layout';
@@ -476,13 +477,18 @@ function PlatformShellCS({ page, setPage, children, assistant, assistantOpen, on
       }
       // 用户手势内先开空白标签,绕过弹窗拦截
       const gameWin = window.open("about:blank", "_blank");
-      // G1: activate 期间写 loading 骨架,避免黑屏
+      // G1: activate 期间写 loading 骨架,避免黑屏。
+      // 新标签是独立文档,拿不到 tokens.css 的 CSS 变量 → 按当前 data-theme 内联真值。
+      const _th = document.documentElement.getAttribute('data-theme') || 'dark';
+      const _spBg = { dark: '#121110', 'light-a': '#f7f3ec', 'light-b': '#f3f7f3' }[_th] || '#121110';
+      const _spFg = { dark: '#c8c2b7', 'light-a': '#827a6c', 'light-b': '#71806f' }[_th] || '#c8c2b7';
+      const _spAc = { dark: '#c96442', 'light-a': '#b5532c', 'light-b': '#2e8359' }[_th] || '#c96442';
       try {
         if (gameWin && gameWin.document) {
           gameWin.document.open();
           gameWin.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>正在加载存档…</title>
-<style>body{margin:0;background:#121110;color:#c8c2b7;font-family:system-ui;display:flex;align-items:center;justify-content:center;height:100vh}
-.sp{width:36px;height:36px;border:3px solid #333;border-top-color:var(--accent,#c49b4e);border-radius:50%;animation:spin 0.8s linear infinite}
+<style>body{margin:0;background:${_spBg};color:${_spFg};font-family:system-ui;display:flex;align-items:center;justify-content:center;height:100vh}
+.sp{width:36px;height:36px;border:3px solid rgba(128,128,128,.35);border-top-color:${_spAc};border-radius:50%;animation:spin 0.8s linear infinite}
 @keyframes spin{to{transform:rotate(360deg)}}</style></head>
 <body><div style="text-align:center"><div class="sp" style="margin:0 auto 18px"></div><p style="opacity:.6;font-size:14px">正在加载存档…</p></div></body></html>`);
           gameWin.document.close();
@@ -502,11 +508,11 @@ function PlatformShellCS({ page, setPage, children, assistant, assistantOpen, on
           if (gameWin && gameWin.document) {
             gameWin.document.open();
             gameWin.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>无法打开存档</title>
-<style>body{margin:0;background:#121110;color:#c8c2b7;font-family:system-ui;display:flex;align-items:center;justify-content:center;height:100vh}</style></head>
+<style>body{margin:0;background:${_spBg};color:${_spFg};font-family:system-ui;display:flex;align-items:center;justify-content:center;height:100vh}</style></head>
 <body><div style="text-align:center;padding:80px 20px">
   <h2 style="color:#d54;margin-bottom:12px">无法打开存档</h2>
   <p style="opacity:.75;margin-bottom:20px">${escapeHtml(e?.message || "存档已被删除或网络异常")}</p>
-  <p><a href="#" style="color:#c49b4e" onclick="window.close();return false;">返回存档列表</a></p>
+  <p><a href="#" style="color:${_spAc}" onclick="window.close();return false;">返回存档列表</a></p>
 </div></body></html>`);
             gameWin.document.close();
           }
@@ -598,7 +604,7 @@ function PlatformShellCS({ page, setPage, children, assistant, assistantOpen, on
       )}
       <HelpDrawerRoot />
       <div id="pl-cs-topnav" className="pl-cs-topbar"
-        style={{ position: 'sticky', top: 0, zIndex: 1002, display: 'flex', alignItems: 'center', background: '#131211' }}>
+        style={{ position: 'sticky', top: 0, zIndex: 1002, display: 'flex', alignItems: 'center', background: 'var(--bg-deep)' }}>
         {/* 左:折叠按钮 + logo + 全部功能(AWS 把服务菜单放左侧) */}
         <div style={{ display: 'flex', alignItems: 'center', flexShrink: 0, paddingLeft: 14, paddingRight: 6, gap: 12, height: 40 }}>
           {!standalone && (
@@ -606,8 +612,8 @@ function PlatformShellCS({ page, setPage, children, assistant, assistantOpen, on
             onClick={() => setNavOpen((v) => !v)}
             aria-label={navOpen ? '折叠侧栏' : '展开侧栏'}
             title={navOpen ? '折叠侧栏' : '展开侧栏'}
-            style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 30, height: 30, borderRadius: 7, border: 0, background: 'transparent', color: '#c8c2b7', cursor: 'pointer', padding: 0, flexShrink: 0 }}
-            onMouseEnter={(e) => { e.currentTarget.style.background = '#282623'; }}
+            style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 30, height: 30, borderRadius: 7, border: 0, background: 'transparent', color: 'var(--text-quiet)', cursor: 'pointer', padding: 0, flexShrink: 0 }}
+            onMouseEnter={(e) => { e.currentTarget.style.background = 'var(--panel-2)'; }}
             onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; }}
           >
             <svg width="17" height="17" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" aria-hidden="true">
@@ -616,7 +622,7 @@ function PlatformShellCS({ page, setPage, children, assistant, assistantOpen, on
           </button>
           )}
           <a href="/profile" onClick={(e) => { e.preventDefault(); plNavigate('profile'); }}
-            style={{ fontFamily: "'Noto Serif SC', serif", fontSize: 16, fontWeight: 600, color: '#ebe7df', textDecoration: 'none', whiteSpace: 'nowrap' }}>
+            style={{ fontFamily: "'Noto Serif SC', serif", fontSize: 16, fontWeight: 600, color: 'var(--text)', textDecoration: 'none', whiteSpace: 'nowrap' }}>
             RPG Roleplay
           </a>
           <CSButtonDropdown
@@ -643,9 +649,9 @@ function PlatformShellCS({ page, setPage, children, assistant, assistantOpen, on
             <button
               onClick={() => setFeedbackOpen(true)}
               title={t('platform.menu.feedback')}
-              style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '3px 10px', borderRadius: 6, border: '1px solid rgba(196,155,78,0.35)', background: 'transparent', color: '#c8c2b7', cursor: 'pointer', fontSize: 12.5, fontWeight: 500, whiteSpace: 'nowrap' }}
-              onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(196,155,78,0.10)'; e.currentTarget.style.borderColor = 'rgba(196,155,78,0.6)'; }}
-              onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.borderColor = 'rgba(196,155,78,0.35)'; }}
+              style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '3px 10px', borderRadius: 6, border: '1px solid var(--fb-line)', background: 'transparent', color: 'var(--text-quiet)', cursor: 'pointer', fontSize: 12.5, fontWeight: 500, whiteSpace: 'nowrap' }}
+              onMouseEnter={(e) => { e.currentTarget.style.background = 'var(--fb-hover-bg)'; e.currentTarget.style.borderColor = 'var(--fb-line-hover)'; }}
+              onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.borderColor = 'var(--fb-line)'; }}
             >
               <CSIcon name="contact" size="small" />
               {t('platform.menu.feedback_btn')}
@@ -654,9 +660,9 @@ function PlatformShellCS({ page, setPage, children, assistant, assistantOpen, on
               <button
                 onClick={() => { setWelcomeFirstTime(false); setWelcomeOpen(true); }}
                 title={t('platform.menu.guide_btn')}
-                style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '3px 10px', borderRadius: 6, border: '1px solid rgba(140,140,180,0.30)', background: 'transparent', color: '#c8c2b7', cursor: 'pointer', fontSize: 12.5, fontWeight: 500, whiteSpace: 'nowrap' }}
-                onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(140,140,180,0.10)'; e.currentTarget.style.borderColor = 'rgba(140,140,180,0.55)'; }}
-                onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.borderColor = 'rgba(140,140,180,0.30)'; }}
+                style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '3px 10px', borderRadius: 6, border: '1px solid var(--line)', background: 'transparent', color: 'var(--text-quiet)', cursor: 'pointer', fontSize: 12.5, fontWeight: 500, whiteSpace: 'nowrap' }}
+                onMouseEnter={(e) => { e.currentTarget.style.background = 'var(--panel-2)'; e.currentTarget.style.borderColor = 'var(--line-strong)'; }}
+                onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.borderColor = 'var(--line)'; }}
               >
                 <CSIcon name="status-info" size="small" />
                 {t('platform.menu.guide_btn')}
@@ -665,6 +671,8 @@ function PlatformShellCS({ page, setPage, children, assistant, assistantOpen, on
           </div>
           {/* (去掉了这里多余的一枚独立头像 —— 与右侧 CSTopNavigation 的用户菜单重复;
               用户身份/菜单统一走右上角下拉。) */}
+          {/* 主题切换(快切 + 暗夜/暖纸/青竹三选下拉)—— 见 components/ThemeToggle.jsx */}
+          <ThemeToggle />
           <div style={{ flex: 1, minWidth: 0 }}>
           <CSTopNavigation
             identity={{ href: '#profile', title: '', onFollow: (e) => { e.preventDefault(); setPage('profile'); } }}

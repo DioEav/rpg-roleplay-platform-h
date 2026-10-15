@@ -27,6 +27,8 @@
   --accent: #c96442;
   --accent-soft: rgba(201, 100, 66, 0.14);
   --accent-edge: rgba(201, 100, 66, 0.42);
+  --accent-hover: #b85838;
+  --accent-active: #a44f34;
 
   /* status */
   --ok: #7eb88e;
@@ -37,6 +39,16 @@
   --danger-soft: rgba(200, 103, 93, 0.12);
   --info: #7aa6c2;
   --info-soft: rgba(122, 166, 194, 0.12);
+
+  /* 顶栏「反馈」按钮的金色描边(暗色现状;两套亮色各自覆盖) */
+  --fb-line: rgba(196, 155, 78, 0.35);
+  --fb-line-hover: rgba(196, 155, 78, 0.6);
+  --fb-hover-bg: rgba(196, 155, 78, 0.10);
+
+  /* 毛玻璃条面(顶栏/页头/底部 Tab 的半透明+blur 背景)。
+     游戏台/平台/移动端多处 topbar 原来写死 rgba(26,24,23,…) 暗色,亮色下不跟随。 */
+  --glass-bar: rgba(26, 24, 23, 0.92);
+  --glass-bar-strong: rgba(19, 18, 17, 0.98);
 
   /* type */
   --font-sans: "Noto Sans SC", ui-sans-serif, -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", sans-serif;
@@ -99,6 +111,121 @@
   --d-line: 1.75;
   --d-pad: 12px;
   --d-msg-pad: 32px;
+}
+
+/* === 亮色主题 — 切换由 lib/theme.js 写 <html data-theme>,Cloudscape 侧同步见
+   cloudscape-theme.js。暗色 :root 保持原样 = 默认主题,老用户观感零变化。 === */
+
+/* ── 亮色 A · 暖纸:暖米白纸感 + 赤陶橘品牌色延续(「暗色的白天版」) ── */
+:root[data-theme="light-a"] {
+  color-scheme: light;
+
+  /* surfaces */
+  --bg: #f7f3ec;
+  --bg-deep: #efe9dd;
+  --panel: #fffdf9;
+  --panel-2: #f2ecdf;
+  --panel-3: #eae2d1;
+  --rail: #f2ede3;
+
+  /* lines */
+  --line: #ddd2bf;
+  --line-soft: #e9e1d1;
+  --line-strong: #c4b69e;
+
+  /* text */
+  --text: #35312a;
+  --text-quiet: #5b554b;
+  --muted: #827a6c;
+  --muted-2: #a49b8a;
+  --muted-3: #beb5a2;
+
+  /* accents — 赤陶橘加深保对比度(亮底上 #c96442 对比不足) */
+  --accent: #b5532c;
+  --accent-soft: rgba(181, 83, 44, 0.1);
+  --accent-edge: rgba(181, 83, 44, 0.38);
+  --accent-hover: #a04623;
+  --accent-active: #8d3d1e;
+
+  /* status */
+  --ok: #43855e;
+  --ok-soft: rgba(67, 133, 94, 0.1);
+  --warn: #9a771f;
+  --warn-soft: rgba(176, 138, 44, 0.13);
+  --danger: #b34a3e;
+  --danger-soft: rgba(179, 74, 62, 0.1);
+  --info: #3f7a9e;
+  --info-soft: rgba(63, 122, 158, 0.1);
+
+  /* 阴影减淡(亮色下重阴影显脏) */
+  --shadow-1: 0 1px 2px rgba(88, 72, 48, 0.08);
+  --shadow-2: 0 14px 36px -16px rgba(88, 72, 48, 0.22), 0 2px 6px rgba(88, 72, 48, 0.08);
+  --shadow-3: 0 20px 56px -20px rgba(88, 72, 48, 0.3), 0 4px 12px rgba(88, 72, 48, 0.1);
+
+  /* 反馈按钮:金色描边在纸上转为琥珀 */
+  --fb-line: rgba(154, 119, 31, 0.38);
+  --fb-line-hover: rgba(154, 119, 31, 0.6);
+  --fb-hover-bg: rgba(154, 119, 31, 0.08);
+
+  /* 毛玻璃条面 → 暖纸半透明 */
+  --glass-bar: rgba(255, 253, 249, 0.9);
+  --glass-bar-strong: rgba(247, 243, 236, 0.97);
+}
+
+/* ── 亮色 B · 青竹:冷白微绿 + 竹青绿主色(最清透;主色让位绿色) ── */
+:root[data-theme="light-b"] {
+  color-scheme: light;
+
+  /* surfaces */
+  --bg: #f3f7f3;
+  --bg-deep: #e9efe8;
+  --panel: #ffffff;
+  --panel-2: #eef3ed;
+  --panel-3: #e3ece3;
+  --rail: #edf2ec;
+
+  /* lines */
+  --line: #d2dcd1;
+  --line-soft: #e1e8e0;
+  --line-strong: #b0c0af;
+
+  /* text */
+  --text: #273028;
+  --text-quiet: #4e5b50;
+  --muted: #71806f;
+  --muted-2: #94a292;
+  --muted-3: #aebaae;
+
+  /* accents — 竹青绿 */
+  --accent: #2e8359;
+  --accent-soft: rgba(46, 131, 89, 0.1);
+  --accent-edge: rgba(46, 131, 89, 0.38);
+  --accent-hover: #27714c;
+  --accent-active: #205e40;
+
+  /* status */
+  --ok: #2e8359;
+  --ok-soft: rgba(46, 131, 89, 0.1);
+  --warn: #9a771f;
+  --warn-soft: rgba(176, 138, 44, 0.13);
+  --danger: #b34a3e;
+  --danger-soft: rgba(179, 74, 62, 0.1);
+  --info: #3f7a9e;
+  --info-soft: rgba(63, 122, 158, 0.1);
+
+  /* 阴影减淡 */
+  --shadow-1: 0 1px 2px rgba(52, 78, 58, 0.08);
+  --shadow-2: 0 14px 36px -16px rgba(52, 78, 58, 0.2), 0 2px 6px rgba(52, 78, 58, 0.07);
+  --shadow-3: 0 20px 56px -20px rgba(52, 78, 58, 0.28), 0 4px 12px rgba(52, 78, 58, 0.09);
+
+  /* 反馈按钮:金色描边转为青蓝 */
+  --fb-line: rgba(63, 122, 158, 0.35);
+  --fb-line-hover: rgba(63, 122, 158, 0.55);
+  --fb-hover-bg: rgba(63, 122, 158, 0.08);
+
+  /* 毛玻璃条面 → 冷白半透明 */
+  --glass-bar: rgba(255, 255, 255, 0.88);
+  --glass-bar-strong: rgba(243, 247, 243, 0.96);
 }
 
 * { box-sizing: border-box; }
@@ -166,7 +293,7 @@ textarea { resize: vertical; }
 [class*="awsui_options-list"],
 [class*="awsui_popover-body"],
 [class*="awsui_popover-content"] {
-  background-color: #211f1d !important;
+  background-color: var(--panel) !important;
 }
 
 /* 隐藏 Cloudscape AppLayout 自带的侧栏折叠/展开触发器(圆形按钮):
@@ -202,7 +329,7 @@ textarea { resize: vertical; }
   position: sticky !important;
   top: 0 !important;
   z-index: 5;
-  background-color: #211f1d;
+  background-color: var(--panel);
 }
 
 /* ── SideNavigation 项美化 ──────────────────────────────────────
@@ -223,11 +350,11 @@ textarea { resize: vertical; }
   transition: background-color .12s ease;
 }
 [class*="awsui_navigation_"] [class*="awsui_link_l0dv0"]:hover {
-  background-color: #282623;
+  background-color: var(--panel-2);
 }
 [class*="awsui_navigation_"] [class*="awsui_link-active_l0dv0"],
 [class*="awsui_navigation_"] [class*="awsui_link_l0dv0"][aria-current="page"] {
-  background-color: rgba(201, 100, 66, 0.16);
+  background-color: var(--accent-soft);
   font-weight: 600;
 }
 /* 分组标题(header)对齐到同样的左内边距 */
@@ -330,7 +457,7 @@ a:hover { color: var(--text); }
 .btn.ghost { background: transparent; border-color: transparent; }
 .btn.ghost:hover { background: var(--panel-2); border-color: var(--line-soft); }
 .btn.primary { background: var(--accent); border-color: var(--accent); color: #fff8f3; }
-.btn.primary:hover { background: #b85838; border-color: #b85838; }
+.btn.primary:hover { background: var(--accent-hover); border-color: var(--accent-hover); }
 .btn.danger { color: var(--danger); border-color: rgba(200, 103, 93, 0.32); background: var(--danger-soft); }
 
 /* segmented */
@@ -401,6 +528,93 @@ a:hover { color: var(--text); }
   text-transform: uppercase;
   letter-spacing: 0.14em;
 }
+
+/* ── 主题切换开关(顶栏快切 + 子风格下拉,平台/游戏台共用) ──
+   结构:<span class="thm-wrap"><button .thm-quick>☀</button><button .thm-caret>▾</button>
+         <div .thm-menu>三个单选项(含三色小样点)</div></span>
+   行为见 components/ThemeToggle.jsx;色值样点固定写死(代表各主题自身,不随当前主题变)。 */
+.thm-wrap { position: relative; display: inline-flex; align-items: center; flex-shrink: 0; }
+.thm-quick, .thm-caret {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 30px;
+  color: var(--muted);
+  background: transparent;
+  border: 1px solid transparent;
+  cursor: pointer;
+  padding: 0;
+}
+.thm-quick { width: 30px; border-radius: var(--r-2) 0 0 var(--r-2); border-right: 0; }
+.thm-caret { width: 18px; border-radius: 0 var(--r-2) var(--r-2) 0; }
+.thm-quick svg { width: 16px; height: 16px; }
+.thm-caret svg { width: 12px; height: 12px; }
+.thm-wrap:hover .thm-quick,
+.thm-wrap:hover .thm-caret,
+.thm-wrap:focus-within .thm-quick,
+.thm-wrap:focus-within .thm-caret {
+  color: var(--text);
+  background: var(--panel-2);
+  border-color: var(--line-soft);
+}
+/* 暗色显太阳(点击去亮色);亮色显月亮 */
+.thm-sun, .thm-moon { display: inline-flex; }
+:root[data-theme="dark"] .thm-moon { display: none; }
+:root:not([data-theme="dark"]) .thm-sun { display: none; }
+
+.thm-menu {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  z-index: 1200;
+  min-width: 198px;
+  padding: 6px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  box-shadow: var(--shadow-3);
+}
+.thm-menu-title {
+  padding: 6px 10px 4px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.thm-item {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  width: 100%;
+  padding: 8px 10px;
+  border-radius: 8px;
+  font-size: 12.5px;
+  color: var(--text);
+  white-space: nowrap;
+  cursor: pointer;
+  background: transparent;
+  border: 0;
+  text-align: left;
+}
+.thm-item:hover { background: var(--panel-2); }
+.thm-item.active { background: var(--accent-soft); color: var(--accent); font-weight: 500; }
+.thm-check { display: none; margin-left: auto; color: var(--accent); }
+.thm-item.active .thm-check { display: inline-flex; }
+.thm-check svg { width: 14px; height: 14px; }
+.thm-sw { display: inline-flex; align-items: center; flex-shrink: 0; }
+.thm-sw i { width: 11px; height: 11px; border-radius: 50%; border: 1px solid var(--line-strong); font-style: normal; }
+.thm-sw i + i { margin-left: -4px; }
+.thm-sw i:first-child { position: relative; z-index: 2; }
+.thm-sw-dark i:nth-child(1) { background: #1a1817; }
+.thm-sw-dark i:nth-child(2) { background: #c96442; }
+.thm-sw-dark i:nth-child(3) { background: #ebe7df; }
+.thm-sw-pa i:nth-child(1) { background: #f7f3ec; }
+.thm-sw-pa i:nth-child(2) { background: #b5532c; }
+.thm-sw-pa i:nth-child(3) { background: #35312a; }
+.thm-sw-bam i:nth-child(1) { background: #eaf2ea; }
+.thm-sw-bam i:nth-child(2) { background: #2e8359; }
+.thm-sw-bam i:nth-child(3) { background: #273028; }
 
 /* focus ring */
 :focus-visible { outline: 1px solid var(--accent-edge); outline-offset: 2px; }

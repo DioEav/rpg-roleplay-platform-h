@@ -3,6 +3,7 @@ import React from 'react';
 import { useTranslation } from 'react-i18next';
 import { useState as useStateA, useEffect as useEffectA } from 'react';
 import { Icon } from '../../game-icons.jsx';
+import ThemeToggle from '../ThemeToggle.jsx';
 
 // ----------------------------- TOP BAR -----------------------------------
 // task 55: 新增 assistantCollapsed / onExpandAssistant —— 助手折叠时显示"展开助手"图标按钮。
@@ -71,6 +72,8 @@ function TopBar({ state, saveUpdatedAt, onOpenTweaks, onOpenSearch, onOpenHistor
           </a>
         ) : null}
         <button className="iconbtn" data-tip={t('game.app.topbar.settings_tip')} data-tip-pos="below" onClick={onOpenSettings}><Icon name="settings" size={14} /></button>
+        {/* 主题切换(快切 + 暗夜/暖纸/青竹三选下拉)— 与平台顶栏同款组件 */}
+        <ThemeToggle />
         {/* 反馈入口 — 玩家遇 bug 时不用切回 Platform tab,直接报。
             runtime-telemetry 已装钩子,提交时自动附带最近 20 errors + 10 失败
             API + 最近对话快照,无需手动复制日志(FeedbackDrawer.jsx:154

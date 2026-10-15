@@ -372,7 +372,7 @@
   padding-top: env(safe-area-inset-top, 0px);
   height: 64px;
   border-bottom: 1px solid var(--line-soft);
-  background: rgba(26, 24, 23, 0.92);
+  background: var(--glass-bar);
   backdrop-filter: blur(12px);
   position: relative;
   z-index: 2;
@@ -1202,7 +1202,7 @@
   padding: 6px 10px;
 }
 .gc-chip-primary { background: var(--accent); border-color: var(--accent); color: #fff8f3; }
-.gc-chip-primary:hover { background: #b85838; border-color: #b85838; color: #fff8f3; }
+.gc-chip-primary:hover { background: var(--accent-hover); border-color: var(--accent-hover); color: #fff8f3; }
 
 /* ============================ RIGHT PANEL ========================= */
 .gp-panel {

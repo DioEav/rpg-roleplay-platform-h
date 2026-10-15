@@ -13,7 +13,8 @@
   font-family: var(--font-sans);
   -webkit-font-smoothing: antialiased;
   overflow: hidden;
-  --accent-2: #b85838;
+  /* 跟随主题:亮色下 hover 深化值由 tokens.css 的 --accent-hover 提供(原写死 #b85838) */
+  --accent-2: var(--accent-hover, #b85838);
   --ease: cubic-bezier(0.22, 1, 0.36, 1);
   --safe-top: env(safe-area-inset-top, 0px);
   --safe-bottom: env(safe-area-inset-bottom, 0px);
@@ -21,40 +22,9 @@
 }
 .m-root * { -webkit-tap-highlight-color: transparent; }
 
-:root {
-  --bg: #1a1817;
-  --bg-deep: #131211;
-  --panel: #211f1d;
-  --panel-2: #282623;
-  --panel-3: #2f2c28;
-  --rail: #1d1b19;
-  --line: #36322d;
-  --line-soft: #2a2724;
-  --line-strong: #4a4540;
-  --text: #ebe7df;
-  --text-quiet: #c8c2b7;
-  --muted: #968f85;
-  --muted-2: #6b655e;
-  --muted-3: #4d4842;
-  --accent: #c96442;
-  --accent-2: #b85838;
-  --accent-soft: rgba(201, 100, 66, 0.14);
-  --accent-edge: rgba(201, 100, 66, 0.42);
-  --ok: #7eb88e;
-  --ok-soft: rgba(126, 184, 142, 0.12);
-  --warn: #d4b366;
-  --warn-soft: rgba(212, 179, 102, 0.12);
-  --danger: #c8675d;
-  --danger-soft: rgba(200, 103, 93, 0.12);
-  --info: #7aa6c2;
-  --info-soft: rgba(122, 166, 194, 0.12);
-  --font-sans: "Noto Sans SC", -apple-system, "PingFang SC", system-ui, sans-serif;
-  --font-serif: "Noto Serif SC", "Songti SC", serif;
-  --font-mono: "JetBrains Mono", ui-monospace, Menlo, monospace;
-  --safe-top: 50px;     
-  --safe-bottom: 26px;  
-  --ease: cubic-bezier(0.22, 1, 0.36, 1);
-}
+/* 令牌(原此处重复定义过一整套 :root 暗色值)已删除:
+   与 src/tokens.css 逐字重复,且会遮蔽亮色主题的演进。统一以 tokens.css 为唯一权威源
+   (各 HTML 入口均以 <link> 先于本文件加载);亮色切换见 tokens.css [data-theme] 块。 */
 .m-root * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
 html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
 .m-root button, .m-root a, .m-root [role="button"], .m-root summary, .m-root label {
@@ -97,7 +67,7 @@ html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
   display: flex;
   align-items: center;
   gap: 8px;
-  background: linear-gradient(to bottom, rgba(26,24,23,0.96), rgba(26,24,23,0.82));
+  background: linear-gradient(to bottom, var(--glass-bar-strong), var(--glass-bar));
   backdrop-filter: blur(14px);
   -webkit-backdrop-filter: blur(14px);
   border-bottom: 1px solid var(--line-soft);
@@ -714,7 +684,7 @@ html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
   flex: none;
   padding: max(calc(var(--safe-top) + 6px), 14px) 14px 10px;
   display: flex; align-items: center; gap: 10px;
-  background: linear-gradient(to bottom, rgba(26,24,23,0.97), rgba(26,24,23,0.82));
+  background: linear-gradient(to bottom, var(--glass-bar-strong), var(--glass-bar));
   backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px);
   border-bottom: 1px solid var(--line-soft);
   position: relative; z-index: 6;
@@ -745,7 +715,7 @@ html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
   display: flex; align-items: stretch;
   height: calc(var(--tabbar-h) + var(--safe-bottom));
   padding-bottom: var(--safe-bottom);
-  background: linear-gradient(to top, rgba(19,18,17,0.98), rgba(26,24,23,0.92));
+  background: linear-gradient(to top, var(--glass-bar-strong), var(--glass-bar));
   backdrop-filter: blur(18px); -webkit-backdrop-filter: blur(18px);
   border-top: 1px solid var(--line-soft);
 }
@@ -1111,7 +1081,7 @@ html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
   flex: none;
   padding: calc(var(--safe-top) + 4px) 12px 10px;
   display: flex; align-items: center; gap: 8px;
-  background: linear-gradient(to bottom, rgba(26,24,23,0.98), rgba(26,24,23,0.84));
+  background: linear-gradient(to bottom, var(--glass-bar-strong), var(--glass-bar));
   backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px);
   border-bottom: 1px solid var(--line-soft);
   position: relative; z-index: 6;

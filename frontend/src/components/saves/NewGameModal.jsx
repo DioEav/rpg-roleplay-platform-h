@@ -545,9 +545,9 @@ function NewGameModal({ open, onClose, onConfirm, defaultScriptId = null }) {
   const node = (
     <div style={{ position: 'fixed', top: 'var(--nav-h, 53px)', left: 0, right: 0, bottom: 0, zIndex: 1000, background: 'var(--bg, #1a1817)', overflow: 'auto' }}>
       {/* 顶部栏:标题 + 取消(位于平台顶栏下方,保留平台导航) */}
-      <div style={{ position: 'sticky', top: 0, zIndex: 3, background: '#131211', borderBottom: '1px solid #36322d' }}>
+      <div style={{ position: 'sticky', top: 0, zIndex: 3, background: 'var(--bg-deep)', borderBottom: '1px solid var(--line)' }}>
         <div style={{ maxWidth: 1240, margin: '0 auto', padding: '13px 24px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16 }}>
-          <div style={{ fontFamily: "'Noto Serif SC', serif", fontSize: 18, fontWeight: 600, color: '#ebe7df' }}>{t('saves.new_game.page_title')}</div>
+          <div style={{ fontFamily: "'Noto Serif SC', serif", fontSize: 18, fontWeight: 600, color: 'var(--text)' }}>{t('saves.new_game.page_title')}</div>
           <CSButton iconName="close" variant="link" onClick={onClose}>{t('saves.new_game.btn_cancel')}</CSButton>
         </div>
       </div>

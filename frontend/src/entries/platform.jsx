@@ -22,7 +22,8 @@ import { isMobileV2Enabled } from '../lib/mobile-gate.js';
 // Cloudscape 设计系统 + 暖色主题(UI 底座)
 import '@cloudscape-design/global-styles/index.css';
 import { installWarmTheme } from '../cloudscape-theme.js';
-installWarmTheme();
+import { getTheme } from '../lib/theme.js';
+installWarmTheme(getTheme()); // 按已存主题(rpg.theme)安装,首屏前生效无闪烁
 
 // 组件模块 — named import(ESM 自动拉入传递依赖)
 import { PlatformShellCS, ProfilePage, MePage, ModulesPage, LibraryPage, UsagePage, PL_NAV, AdminGuard,

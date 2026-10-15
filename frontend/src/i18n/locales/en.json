@@ -1,4 +1,17 @@
 {
+  "theme": {
+    "menu_title": "Theme",
+    "toggle_light": "Switch to light theme",
+    "toggle_dark": "Switch to dark theme",
+    "dark": "Dark · Warm Night",
+    "light_a": "Light · Warm Paper",
+    "light_b": "Light · Bamboo",
+    "setting_label": "Interface theme",
+    "setting_desc": "Dark keeps the original warm-night look; light offers two fresh variants, Warm Paper and Bamboo.",
+    "theme_dark_desc": "Original warm-night look (default)",
+    "theme_light_a_desc": "Warm ivory paper, keeps the terracotta accent",
+    "theme_light_b_desc": "Cool white-green with a bamboo accent"
+  },
   "common": {
     "save": "Save",
     "cancel": "Cancel",

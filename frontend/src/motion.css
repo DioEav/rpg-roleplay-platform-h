@@ -280,8 +280,8 @@
   background-color: var(--panel-3);
 }
 .btn.primary:hover {
-  background-color: #b85838;
-  box-shadow: 0 4px 12px -4px rgba(201, 100, 66, 0.5);
+  background-color: var(--accent-hover, #b85838);
+  box-shadow: 0 4px 12px -4px color-mix(in srgb, var(--accent, #c96442) 50%, transparent);
 }
 .btn:active:not(:disabled) { transform: scale(0.98); }
 

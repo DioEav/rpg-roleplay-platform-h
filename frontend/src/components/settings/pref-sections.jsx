@@ -7,6 +7,7 @@ import { useAutoSave } from '../../platform-app.jsx';
 import { SetGroup, SetRow, SetSelect } from './shared.jsx';
 import CSToggle from '@cloudscape-design/components/toggle';
 import { changeLanguage } from '../../i18n/index.js';
+import { getTheme, setTheme } from '../../lib/theme.js';
 
 function PrefSection() {
   // task 52：从 user_preferences 拉真实初值，改动直接 patch /api/me/preference。
@@ -14,6 +15,13 @@ function PrefSection() {
   const [interfaceLang, setInterfaceLang] = useStatePL("zh-CN");
   const [serif, setSerif] = useStatePL(true);
   const [auto, setAuto] = useStatePL(true);
+  // 界面主题:纯客户端偏好(localStorage rpg.theme),不走 useAutoSave/后端。
+  const [uiTheme, setUiTheme] = useStatePL(() => getTheme());
+  useEffectPL(() => {
+    const onCh = (e) => setUiTheme((e && e.detail && e.detail.theme) || getTheme());
+    window.addEventListener('rpg-theme-change', onCh);
+    return () => window.removeEventListener('rpg-theme-change', onCh);
+  }, []);
   const save = useAutoSave(t('settings.nav.preferences'), "pref");
   useEffectPL(() => {
     let cancelled = false;
@@ -42,6 +50,15 @@ function PrefSection() {
             // 繁體中文选项已移除(2026-10):i18n 资源复用简体,选项无实际意义。恢复 = 加回 { value: 'zh-TW', label: '繁體中文' }。
           ]}
           onChange={(v) => { setInterfaceLang(v); save("ui_language", v); changeLanguage(v); }} />
+      </SetRow>
+      <SetRow label={t('theme.setting_label')} description={t('theme.setting_desc')}>
+        <SetSelect value={uiTheme}
+          options={[
+            { value: 'dark', label: t('theme.dark') },
+            { value: 'light-a', label: t('theme.light_a') },
+            { value: 'light-b', label: t('theme.light_b') },
+          ]}
+          onChange={(v) => setUiTheme(setTheme(v))} />
       </SetRow>
       {/* 叙述字体/自动存档两个开关已隐藏(2026-10):pref.serif / pref.autosave 是死键
           (全库无运行时消费者)。真功能在游戏内设置弹窗(localStorage rpg.narrativeFont /

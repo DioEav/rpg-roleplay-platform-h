@@ -330,7 +330,7 @@ button, a, [role="button"], .btn, .iconbtn, summary, label {
   height: 72px;
   flex-shrink: 0;
   border-bottom: 1px solid var(--line-soft);
-  background: rgba(26, 24, 23, 0.92);
+  background: var(--glass-bar);
   backdrop-filter: blur(12px);
 }
 .pl-topbar h1 {
