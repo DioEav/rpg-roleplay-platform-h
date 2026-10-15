@@ -50,6 +50,10 @@
   --glass-bar: rgba(26, 24, 23, 0.92);
   --glass-bar-strong: rgba(19, 18, 17, 0.98);
 
+  /* 悬浮提示框([data-tip] 自定义 tooltip 的气泡/箭头背景,见 motion.css)。
+     暗色为近黑;亮色下气泡转面板白、文字随 --text 变深墨。 */
+  --tip-bg: #0e0d0c;
+
   /* type */
   --font-sans: "Noto Sans SC", ui-sans-serif, -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", sans-serif;
   --font-serif: "Noto Serif SC", "Source Han Serif SC", "Songti SC", "STSong", "SimSun", serif;
@@ -171,6 +175,9 @@
   /* 毛玻璃条面 → 暖纸半透明 */
   --glass-bar: rgba(255, 253, 249, 0.9);
   --glass-bar-strong: rgba(247, 243, 236, 0.97);
+
+  /* 悬浮提示框 → 暖纸面板白 */
+  --tip-bg: #fffdf9;
 }
 
 /* ── 亮色 B · 青竹:冷白微绿 + 竹青绿主色(最清透;主色让位绿色) ── */
@@ -227,6 +234,9 @@
   /* 毛玻璃条面 → 冷白半透明 */
   --glass-bar: rgba(255, 255, 255, 0.88);
   --glass-bar-strong: rgba(243, 247, 243, 0.96);
+
+  /* 悬浮提示框 → 纯白 */
+  --tip-bg: #ffffff;
 }
 
 * { box-sizing: border-box; }

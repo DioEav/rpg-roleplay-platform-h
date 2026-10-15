@@ -597,10 +597,10 @@ button, a, [role="button"], .btn, .iconbtn, summary, label {
   from { opacity: 0; transform: translateY(-8px) scale(0.96); }
   to   { opacity: 1; transform: none; }
 }
-.pl-toast-ok      { border-color: rgba(126, 184, 142, 0.36); }
-.pl-toast-info    { border-color: rgba(122, 166, 194, 0.36); }
-.pl-toast-warn    { border-color: rgba(212, 179, 102, 0.36); }
-.pl-toast-danger  { border-color: rgba(200, 103, 93, 0.36); }
+.pl-toast-ok      { border-color: color-mix(in srgb, var(--ok) 36%, transparent); }
+.pl-toast-info    { border-color: color-mix(in srgb, var(--info) 36%, transparent); }
+.pl-toast-warn    { border-color: color-mix(in srgb, var(--warn) 36%, transparent); }
+.pl-toast-danger  { border-color: color-mix(in srgb, var(--danger) 36%, transparent); }
 .pl-toast-icon {
   width: 8px; height: 8px;
   border-radius: 999px;
