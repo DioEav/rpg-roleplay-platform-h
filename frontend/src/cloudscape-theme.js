@@ -1,7 +1,7 @@
 // Cloudscape 暖色主题 —— 把项目 tokens.css 的暖色板映射到 Cloudscape 设计令牌。
 // 三套调色板与 tokens.css 一一对应:
-//   light-b 亮色·青竹(默认)  → Mode.Light
-//   light-a 亮色·暖纸        → Mode.Light
+//   light-a 亮色·暖纸(默认)  → Mode.Light
+//   light-b 亮色·青竹        → Mode.Light
 //   dark    暗色·暖夜(原现状) → Mode.Dark
 // installWarmTheme(token) 启动时按已存主题安装;运行期切换走 setTheme(token),
 // 并监听 lib/theme.js 派发的 rpg-theme-change 自动跟随(调用方只需改 data-theme)。
@@ -70,8 +70,8 @@ const C_LIGHT_B = {
 
 const PALETTES = { dark: C_DARK, 'light-a': C_LIGHT_A, 'light-b': C_LIGHT_B };
 
-// 默认主题(未存储过偏好时):亮色 · 青竹。与 lib/theme.js getTheme() 的回落值保持一致。
-const DEFAULT_THEME = 'light-b';
+// 默认主题(未存储过偏好时):亮色 · 暖纸。与 lib/theme.js getTheme() 的回落值保持一致。
+const DEFAULT_THEME = 'light-a';
 
 // 颜色令牌:同时给 light/dark 槽位(Mode 由 applyMode 决定,双写更稳)
 const dual = (v) => ({ light: v, dark: v });
@@ -250,7 +250,7 @@ function applyCloudscapeTheme(token) {
 }
 
 /**
- * 启动安装。token 缺省取默认主题(亮色·青竹)。
+ * 启动安装。token 缺省取默认主题(亮色·暖纸)。
  * @param {'dark'|'light-a'|'light-b'} [token]
  */
 export function installWarmTheme(token = DEFAULT_THEME) {
