@@ -4,11 +4,10 @@ import { useTranslation } from 'react-i18next';
 import { Icon } from '../icons.jsx';
 import { MField, EmptyState } from './shared.jsx';
 import { sha256hex } from '../../lib/crypto-safe.js';
-import { feedbackDecisionLabel } from '../../lib/feedback.js';
+import { feedbackDecisionLabel, AUP_LINK } from '../../lib/feedback.js';
 import { fmtTimeFallback } from '../../data-loader.js';
 
 const CONSENT_TEXT = '我已阅读 AUP §2.J,理解不得包含成人主题节选,同意(此操作记录我的同意)';
-const AUP_LINK = 'https://play.stellatrix.icu/legal/aup#2J';
 const MAX_FREE_TEXT = 10000;
 const QQ_GROUP_NUMBER = '584876566';
 const QQ_JOIN_URL = 'https://qm.qq.com/q/49Dqcr0aw0';

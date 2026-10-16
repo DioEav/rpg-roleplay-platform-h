@@ -14,8 +14,7 @@ import { EmberButton } from "@/components/ui";
 import { compliance } from "@/api";
 import { ApiError } from "@/api/http";
 import { theme } from "@/theme/theme";
-
-const LEGAL_URL = "https://play.stellatrix.icu/legal/adult-content-disclaimer.zh-CN.html";
+import { ADULT_DISCLAIMER_ZH_URL as LEGAL_URL } from "@/lib/brand";
 
 export function ThresholdOath({ version, onAcked }: { version: string; onAcked: () => void }) {
   const insets = useSafeAreaInsets();

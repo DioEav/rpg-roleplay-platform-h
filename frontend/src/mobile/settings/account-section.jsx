@@ -4,6 +4,7 @@ import { Icon } from '../icons.jsx';
 import { useReactiveUser } from '../../platform-app.jsx';
 import { Field as MField } from '../Field.jsx';
 import { SetGroup, Toggle } from './shared.jsx';
+import { ONLINE_BASE } from '../../lib/brand.js';
 
 /* ────────────────────────────────────────────────────────────────── */
 /* SECTION: 账户 (account)                                             */
@@ -116,7 +117,7 @@ function AccountSection({ nav }) {
 
   // 在线剧本库联邦
   const [conn, setConn] = useState(null);
-  const DEFAULT_ONLINE_BASE = 'https://rpg-roleplay.stellatrix.icu';
+  const DEFAULT_ONLINE_BASE = ONLINE_BASE;
   const reloadConn = useCallback(async () => {
     try { setConn(await window.api.federation.connectorGet()); }
     catch { setConn({ connected: false, base_url: DEFAULT_ONLINE_BASE }); }

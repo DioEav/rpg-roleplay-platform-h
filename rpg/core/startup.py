@@ -531,6 +531,8 @@ def _build_csp(dev: bool) -> str:
     # Cloudflare Turnstile（人机验证，仅注册页在配置 sitekey 时加载）:脚本 + iframe
     # 均来自 challenges.cloudflare.com。无条件 allowlist——未启用时该域名不会被访问,
     # 加上它零副作用,启用时缺它则 widget 被 CSP 拦死。
+    # DOCS_ORIGIN(默认 docs.stellatrix.icu):站内帮助抽屉以 iframe 打开开源文档站的 /embed/<slug>。
+    _docs_origin = os.environ.get("DOCS_ORIGIN", "https://docs.stellatrix.icu").rstrip("/")
     directives = [
         "default-src 'self'",
         "script-src 'self' 'unsafe-inline' 'unsafe-eval' static.cloudflareinsights.com challenges.cloudflare.com",
@@ -541,8 +543,7 @@ def _build_csp(dev: bool) -> str:
         "font-src 'self' fonts.gstatic.com data:",
         "img-src 'self' data: https:",
         f"connect-src {connect_src} cloudflareinsights.com static.cloudflareinsights.com challenges.cloudflare.com",
-        # docs.stellatrix.icu:站内帮助抽屉以 iframe 打开开源文档站的 /embed/<slug>。
-        "frame-src 'self' challenges.cloudflare.com https://docs.stellatrix.icu",
+        f"frame-src 'self' challenges.cloudflare.com {_docs_origin}",
         "frame-ancestors 'none'",
         "base-uri 'self'",
         "form-action 'self'",

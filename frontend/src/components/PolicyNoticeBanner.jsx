@@ -15,8 +15,8 @@
 import React, { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { lsGetJSON, lsSetJSON } from '../lib/storage.js';
+import { LEGAL_BASE as LANDING_BASE } from '../lib/brand.js';
 
-const LANDING_BASE = 'https://play.stellatrix.icu/legal';
 const STORAGE_KEY = 'policy_notice_dismissed';
 
 const POLICY_NAMES = {

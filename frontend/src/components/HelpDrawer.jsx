@@ -18,8 +18,8 @@ import CSModal from '@cloudscape-design/components/modal';
 import Box from '@cloudscape-design/components/box';
 import Button from '@cloudscape-design/components/button';
 import Spinner from '@cloudscape-design/components/spinner';
+import { DOCS_ORIGIN } from '../lib/brand.js';
 
-const DOCS_ORIGIN = 'https://docs.stellatrix.icu';
 const embedUrl = (slug) => `${DOCS_ORIGIN}/embed/${encodeURIComponent(slug)}/`;
 
 // ── HelpDrawer ──────────────────────────────────────────────────────────────

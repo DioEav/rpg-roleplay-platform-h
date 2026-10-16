@@ -7,8 +7,7 @@
  */
 import React, { useState, useEffect, useRef, useId } from 'react';
 import { useTranslation } from 'react-i18next';
-
-const LEGAL_BASE = 'https://play.stellatrix.icu/legal/adult-content-disclaimer';
+import { ADULT_DISCLAIMER_URL as LEGAL_BASE } from '../lib/brand.js';
 
 function getLang() {
   const lang = (navigator.language || 'zh-CN').toLowerCase();

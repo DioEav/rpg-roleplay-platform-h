@@ -1,7 +1,7 @@
 version: "3.9"
 
 # Meadhall 测试服 — ECS06
-# 域名:rpg-roleplay.stellatrix.icu
+# 域名:rpg-roleplay.stellatrix.icu(换域名清单见 nginx-meadhall.conf 头部注释)
 # 访问控制:CF orange-cloud + IP 白名单(154.29.152.100)
 #
 # 相对于生产 docker-compose.yml 的差异:

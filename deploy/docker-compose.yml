@@ -136,6 +136,8 @@ services:
       RPG_PORT: "7860"
       RPG_HOST: "0.0.0.0"
       # CORS:同源服务(Python 挂 frontend/dist),设成你的真实域名
+      # 换域名时同步:PUBLIC_BASE_URL/LANDING_BASE/DOCS_ORIGIN(见 rpg/.env.example 品牌段)
+      # 与前端 frontend/src/lib/brand.js
       RPG_CORS_ORIGINS: ${RPG_CORS_ORIGINS:-https://play.stellatrix.icu}
       RPG_COOKIE_SAMESITE: ${RPG_COOKIE_SAMESITE:-lax}
       RPG_COOKIE_SECURE: ${RPG_COOKIE_SECURE:-1}

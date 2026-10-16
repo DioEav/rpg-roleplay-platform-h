@@ -1,6 +1,7 @@
 /* Admin — AdminDmcaTakedownsPage / AdminDmcaStrikesPage — DMCA 下架队列 + Strike 管理。从 pages/admin.jsx 纯机械拆出,JSX / props / fetch 路径零变化。 */
 import React from 'react';
 import { useTranslation } from 'react-i18next';
+import { LANDING_BASE } from '../../lib/brand.js';
 import CSContainer from '@cloudscape-design/components/container';
 import CSHeader from '@cloudscape-design/components/header';
 import CSSpaceBetween from '@cloudscape-design/components/space-between';
@@ -205,7 +206,7 @@ export function AdminDmcaTakedownsPage() {
               <CSInput value={createForm.complainant_email} onChange={({ detail }) => setCreateForm((f) => ({ ...f, complainant_email: detail.value }))} type="email" />
             </CSFormField>
             <CSFormField label={t('admin_page.dmca_takedowns.field_infringing_url')}>
-              <CSInput value={createForm.infringing_url} onChange={({ detail }) => setCreateForm((f) => ({ ...f, infringing_url: detail.value }))} placeholder="https://play.stellatrix.icu/..." />
+              <CSInput value={createForm.infringing_url} onChange={({ detail }) => setCreateForm((f) => ({ ...f, infringing_url: detail.value }))} placeholder={`${LANDING_BASE}/...`} />
             </CSFormField>
             <CSFormField label={t('admin_page.dmca_takedowns.field_original_work')}>
               <CSTextarea value={createForm.original_work_desc} onChange={({ detail }) => setCreateForm((f) => ({ ...f, original_work_desc: detail.value }))} rows={3} />

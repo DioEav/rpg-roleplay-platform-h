@@ -1,6 +1,7 @@
 // SchemaField.jsx — mechanically split from login-app.jsx (JSX byte-for-byte).
 import React from 'react';
 import { useTranslation } from 'react-i18next';
+import { LEGAL_BASE as _legalBase } from '../../lib/brand.js';
 
 /// 渲染单个表单字段。`field` 形如:
 ///   { key, label, type, required, autocomplete, placeholder, min_length, max_length }
@@ -9,9 +10,8 @@ function SchemaField({ field, value, onChange }) {
   const { t } = useTranslation();
   if (field.type === 'boolean') {
     // 为 terms_accepted 字段注入带链接的 label;其余 boolean 字段用纯文本
-    // 法律文档正本托管在 landing 站(play.stellatrix.icu/legal/),软件内不复制以避免双权威。
+    // 法律文档正本托管在 landing 站(brand.js LANDING_BASE/legal/),软件内不复制以避免双权威。
     // landing 的 legal/ 已发布 v1.2 双语 6 篇:privacy/terms/acceptable-use/cookie/dmca/adult-content-disclaimer
-    const _legalBase = 'https://play.stellatrix.icu/legal';
     const _legalLang = (typeof navigator !== 'undefined' && /^en/i.test(navigator.language || '')) ? 'en' : 'zh-CN';
     const labelNode = field.key === 'terms_accepted' ? (
       <span>

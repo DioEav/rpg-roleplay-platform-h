@@ -408,7 +408,8 @@ def register(
                 (email_norm,),
             ).fetchone()
             if not wl:
-                raise ValueError("该邮箱不在内测白名单。本批次仅向早期预约者开放,如需加入下一批请到 play.stellatrix.icu 留邮箱。")
+                _landing = os.environ.get("LANDING_BASE", "https://play.stellatrix.icu").rstrip("/")
+                raise ValueError(f"该邮箱不在内测白名单。本批次仅向早期预约者开放,如需加入下一批请到 {_landing} 留邮箱。")
 
         # ── 注册风暴防护:成功路径也限流 ─────────────────────────────────────────
         # _check_rate_limit/_record_login_fail 只在【失败】时计数,对「每次换新用户名+

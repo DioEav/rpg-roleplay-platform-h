@@ -252,7 +252,7 @@ function DataMigrationSection() {
 }
 
 // 功能 B:本地↔在线剧本库联邦。集连接(PAT/设备码)+ 浏览/导入/发布 + 设备授权 + PAT 管理。
-const DEFAULT_ONLINE_BASE = 'https://rpg-roleplay.stellatrix.icu';
+import { ONLINE_BASE as DEFAULT_ONLINE_BASE } from '../../lib/brand.js';
 
 function OnlineLibrarySection() {
   const { t } = useTranslation();

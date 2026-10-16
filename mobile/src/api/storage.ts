@@ -6,6 +6,7 @@
  */
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import * as SecureStore from "expo-secure-store";
+import { ONLINE_BASE as DEFAULT_SERVER_URL } from "@/lib/brand";
 
 const K_SERVER = "rpg.serverUrl";
 const K_SESSION = "rpg.session";
@@ -17,8 +18,8 @@ export function normalizeBaseUrl(raw: string): string {
   return u.replace(/\/+$/, "");
 }
 
-/** The official cloud instance — used by default so the app opens straight to login. */
-export const DEFAULT_SERVER_URL = "https://rpg-roleplay.stellatrix.icu";
+/** The official cloud instance — used by default so the app opens straight to login.
+ *  Address lives in @/lib/brand (single source for domain swaps). */
 
 export async function getServerUrl(): Promise<string | null> {
   const stored = await AsyncStorage.getItem(K_SERVER);

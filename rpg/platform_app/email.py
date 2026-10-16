@@ -10,6 +10,7 @@ RESEND_API_KEY: str = os.environ.get("RESEND_API_KEY", "")
 RESEND_FROM: str = os.environ.get(
     "RESEND_FROM", "Meadhall Labs <noreply@stellatrix.icu>"
 )
+SUPPORT_EMAIL: str = os.environ.get("SUPPORT_EMAIL", "support@stellatrix.icu")
 
 
 class EmailSendError(Exception):
@@ -18,6 +19,13 @@ class EmailSendError(Exception):
 
 def _public_base_url() -> str:
     return os.environ.get("PUBLIC_BASE_URL", "https://rpg-roleplay.stellatrix.icu").rstrip("/")
+
+
+def _support_host() -> str:
+    """邮件页脚展示的主机名(联系入口链接文字)。"""
+    from urllib.parse import urlparse
+
+    return urlparse(_public_base_url()).netloc or _public_base_url()
 
 
 def _preheader(text: str) -> str:
@@ -142,7 +150,7 @@ def _render_email(
             <div style="height:14px;line-height:14px;">&nbsp;</div>
             <div class="sr-muted" style="color:#968f85;font-size:13px;line-height:1.65;">
               {footer_html or '如果你没有请求此邮件，可以安全忽略。<br>If you did not request this email, you can safely ignore it.'}
-              <br><a class="sr-link" style="color:#d97955;text-decoration:none;font-weight:700;" href="{support_url}">rpg-roleplay.stellatrix.icu</a>
+              <br><a class="sr-link" style="color:#d97955;text-decoration:none;font-weight:700;" href="{support_url}">{escape(_support_host())}</a>
             </div>
           </td>
         </tr>
@@ -346,7 +354,7 @@ def build_policy_notice_email(
             f"变更摘要:\n{summary}\n\n"
             f"生效时间: {effective_display}\n\n"
             f"查看完整政策: {url}\n\n"
-            f"如有疑问,请联系 support@stellatrix.icu\n\n"
+            f"如有疑问,请联系 {SUPPORT_EMAIL}\n\n"
             f"---\n"
             f"[EN] Meadhall is updating its {name_en} ({new_version}).\n"
             f"Summary: {summary}\n"
@@ -362,7 +370,7 @@ def build_policy_notice_email(
             f"Summary of changes:\n{summary}\n\n"
             f"Effective date: {effective_display}\n\n"
             f"Read the full policy: {url}\n\n"
-            f"For questions, contact support@stellatrix.icu\n\n"
+            f"For questions, contact {SUPPORT_EMAIL}\n\n"
             f"---\n"
             f"[ZH] 蜜酒厅即将更新{name_zh}({new_version})。\n"
             f"变更摘要: {summary}\n"
@@ -393,7 +401,7 @@ def build_policy_notice_email(
         title=title,
         lead_html=lead,
         main_html=main,
-        footer_html="如有疑问，请联系 support@stellatrix.icu。<br>For questions, contact support@stellatrix.icu.",
+        footer_html=f"如有疑问，请联系 {SUPPORT_EMAIL}。<br>For questions, contact {SUPPORT_EMAIL}.",
     )
     return subject, text, html
 

@@ -5,9 +5,9 @@
  * 以及「处理决策 → 中文标签」映射。抽到此处单一来源,各端 UI 仍各自保留。
  */
 import { sha256hex } from './crypto-safe.js';
+import { AUP_LINK } from './brand.js';
 
-// ── 法务 / 渠道常量(各端逐字一致 → 共享) ──────────────────────────────
-export const AUP_LINK = 'https://play.stellatrix.icu/legal/aup#2J';
+export { AUP_LINK };
 export const MAX_FREE_TEXT = 10000;
 export const QQ_GROUP_NUMBER = '';
 export const QQ_JOIN_URL = '';

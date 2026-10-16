@@ -17,6 +17,7 @@ federation.py — 本地部署 ↔ 在线剧本库打通(功能 B)
 """
 from __future__ import annotations
 
+import os
 import secrets
 import threading
 import time
@@ -58,7 +59,9 @@ def rate_ok(key: str, max_calls: int, window_s: float) -> bool:
 
 # ── 常量 ────────────────────────────────────────────────────────────────
 PAT_PREFIX = "rpgpat_"
-DEFAULT_OFFICIAL_BASE = "https://rpg-roleplay.stellatrix.icu"
+DEFAULT_OFFICIAL_BASE = os.environ.get(
+    "OFFICIAL_BASE_URL", "https://rpg-roleplay.stellatrix.icu"
+)
 CONNECTOR_API_ID = "online_library"          # user_api_credentials.api_id
 VALID_SCOPES = ("library:read", "library:publish")
 DEVICE_TTL_SECONDS = 600                      # 设备码 10 分钟有效
