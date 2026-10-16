@@ -1915,6 +1915,7 @@
       "est_time": "预计耗时",
       "est_time_val": "{{min}} 分钟",
       "est_tokens": "预估 Token",
+      "model_unresolved": "跟随全局模型设置",
       "calculating": "计算预算中…",
       "preview_split": "预览章节切分",
       "preview_progress": "分析进度",
@@ -2661,7 +2662,7 @@
     },
     "settings_form": {
       "title": "游戏设置",
-      "description": "元知识 / 引导 / 防剧透。建档锁死项（世界线/身份）在游戏中只读。",
+      "description": "穿越者先知程度 / 剧情引导强度。改动保存后下一回合生效。",
       "btn_save": "保存设置",
       "load_err": "加载设置失败",
       "loading": "加载设置…",
@@ -2669,6 +2670,18 @@
       "save_ok": "设置已保存",
       "save_locked_warn": "已保存，但 {{fields}} 为建档锁死项，未改",
       "save_fail": "保存失败"
+    },
+    "settings_opt": {
+      "foreknowledge_mode": {
+        "none": "与角色同步（无先知）",
+        "partial": "模糊预知（知道著名大事）",
+        "omniscient": "全知原著"
+      },
+      "steering_strength": {
+        "rail": "贴原著（强力收束）",
+        "guided": "软引导（默认·温和）",
+        "free": "自由发挥（不注入引导）"
+      }
     },
     "branches": {
       "title": "分支节点",

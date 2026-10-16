@@ -253,12 +253,13 @@ function ImportEstimateView({ estimate, rule, onCancel, onConfirm, hideActions =
       }
     >
       <CSSpaceBetween size="l">
+        {/* est_cost 金额行(2026-10-16)与 est_time 预计耗时行(2026-10-17)已移除:
+            金额=固定 $0.75/M 单价失真;耗时=tokens/800 固定吞吐假设,均无实测标定,展示误导。
+            token 行是真实标定系数的外推,保留。与 ScriptsImport 导入页同步。 */}
         <CSKeyValuePairs columns={5} items={[
           { label: t('scripts.my.chapters'), value: String(estimate.chapters) },
           { label: t('scripts.my.words'), value: `${(estimate.words / 10000).toFixed(1)} ${t('scripts.my.wan')}` },
           { label: t('scripts.import.est_tokens'), value: fmtN(estimate.totalTokens) },
-          { label: t('scripts.import.est_cost'), value: <CSBox color="text-status-info" fontWeight="bold">${estimate.cost.toFixed(2)}</CSBox> },
-          { label: t('scripts.import.est_time'), value: t('scripts.import.est_time_val', { min: Math.round(estimate.totalSec / 60) }) },
         ]} />
         <CSTable
           variant="embedded"
@@ -269,7 +270,6 @@ function ImportEstimateView({ estimate, rule, onCancel, onConfirm, hideActions =
             { id: 'label', header: t('scripts.import.stage_col'), cell: (s) => <CSBox fontWeight="bold">{s.label}</CSBox> },
             { id: 'hint', header: t('scripts.import.hint_col'), cell: (s) => s.hint },
             { id: 'tok', header: t('scripts.import.est_tokens'), cell: (s) => fmtN(s.tokens_est) },
-            { id: 'time', header: t('scripts.import.est_time'), cell: (s) => s.time_est_sec < 60 ? s.time_est_sec + 's' : Math.round(s.time_est_sec / 60) + 'min' },
           ]}
         />
         {estimate.warnings?.length > 0 && (

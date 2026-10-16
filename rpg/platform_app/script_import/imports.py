@@ -255,6 +255,17 @@ def preview_split(
         source_name=str(file_item and file_item.get("name") or "preview.txt"),
         title="preview",
     )
+    # 返回真实将使用的抽取模型,与导入执行同一解析(extractor.* → agent.* → 全局默认)。
+    # 之前前端写死「GPT-4o · RPG 调优」兜底 —— 那既不是默认值也不是用户所选,纯过时文案,
+    # 预估单显示它纯属歧义(2026-10-17)。解析失败不破预览,置空由前端兜底文案。
+    extractor_model = ""
+    if user_id:
+        try:
+            from platform_app.import_pipeline.stages_llm import _resolve_extractor_llm
+            _api_id, _model = _resolve_extractor_llm(user_id)
+            extractor_model = f"{_api_id} · {_model}" if _api_id else (_model or "")
+        except Exception:
+            extractor_model = ""
     return {
         "ok": True,
         "encoding": encoding,
@@ -262,4 +273,5 @@ def preview_split(
         "total_chapters": len(chapters),
         "total_words": sum(len(c.get("content") or "") for c in chapters),
         "preview": _chapter_preview(chapters, limit=sample_limit),
+        "model": extractor_model,
     }

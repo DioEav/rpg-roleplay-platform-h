@@ -1812,6 +1812,7 @@
       "est_time": "Est. Time",
       "est_time_val": "{{min}} min",
       "est_tokens": "Est. Tokens",
+      "model_unresolved": "Follow global model settings",
       "calculating": "Calculating…",
       "preview_split": "Preview Chapter Split",
       "preview_progress": "Analysis Progress",
@@ -2558,7 +2559,7 @@
     },
     "settings_form": {
       "title": "Game Settings",
-      "description": "Meta-knowledge / guidance / spoiler prevention. Creation-locked fields (worldline / identity) are read-only in-game.",
+      "description": "Foreknowledge mode / steering strength. Changes take effect on the next turn after saving.",
       "btn_save": "Save Settings",
       "load_err": "Failed to load settings",
       "loading": "Loading settings…",
@@ -2566,6 +2567,18 @@
       "save_ok": "Settings saved",
       "save_locked_warn": "Saved, but {{fields}} are creation-locked and were not changed",
       "save_fail": "Save failed"
+    },
+    "settings_opt": {
+      "foreknowledge_mode": {
+        "none": "In sync with characters (no foreknowledge)",
+        "partial": "Vague foreknowledge (knows famous events)",
+        "omniscient": "Omniscient (full source material)"
+      },
+      "steering_strength": {
+        "rail": "On rails (strong convergence)",
+        "guided": "Soft guidance (default · gentle)",
+        "free": "Freeform (no steering injected)"
+      }
     },
     "branches": {
       "title": "Branch Nodes",

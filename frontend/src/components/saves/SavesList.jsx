@@ -96,10 +96,14 @@ function SaveSettingsForm({ saveId, flash }) {
       description={t('saves.settings_form.description')}
       footer={<Btn variant="primary" disabled={!dirty} loading={saving} onClick={save}>{t('saves.settings_form.btn_save')}</Btn>}
     >
+      {/* help 描述不再显示(2026-10-16):枚举选项已本地化为自解释中文标签,后端 schema 的
+          help(逐项解释英文值)纯冗余。字段名 label 仍来自后端 schema(中文)。 */}
       {fields.map((f) => (
-        <UiField key={f.key} label={f.label} hint={f.help}>
+        <UiField key={f.key} label={f.label}>
           {f.options
-            ? <UiSelect value={vals[f.key]} options={f.options.map((o) => ({ value: o, label: o }))}
+            ? <UiSelect value={vals[f.key]}
+                // 枚举选项显示本地化标签(zh: settings_opt.<field>.<value>),存储值仍是原始英文枚举
+                options={f.options.map((o) => ({ value: o, label: t(`saves.settings_opt.${f.key}.${o}`, { defaultValue: o }) }))}
                 onChange={(v) => setVals((p) => ({ ...p, [f.key]: v }))} />
             : <UiInput value={vals[f.key]} onChange={(v) => setVals((p) => ({ ...p, [f.key]: v }))} />}
         </UiField>

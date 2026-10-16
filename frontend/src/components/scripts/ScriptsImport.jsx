@@ -424,7 +424,9 @@ function ScriptsImportView({ embedded = false, onClose } = {}) {
       file: { name: selectedFile.name, size: selectedFile.size, chapters, words },
       chapters, words,
       stages, totalTokens, totalSec, cost,
-      model: result.model || "GPT-4o · RPG 调优",
+      // 模型:后端 preview 现返回与导入执行同一解析的真实抽取模型(extractor.* → agent.* → 默认);
+      // 旧兜底「GPT-4o · RPG 调优」是过时写死文案(既非默认也非用户所选)→ 歧义,改为诚实兜底。
+      model: result.model || t('scripts.import.model_unresolved'),
       preview: result.preview,
       report: result.report,
       warnings,
@@ -1041,14 +1043,17 @@ function ScriptsImportView({ embedded = false, onClose } = {}) {
       <div style={{ width: 320, flexShrink: 0, position: 'sticky', top: 72 }}>
         <CSContainer header={<CSHeader variant="h2">{t('scripts.import.summary_title')}</CSHeader>}>
           <CSSpaceBetween size="m">
-            <CSKeyValuePairs columns={1} items={[
+              {/* 金额已改纯 token 数(2026-10-16):固定 $0.75/M 单价不随实际抽取模型变,金额失真
+                  (同 KbExtractPanel 隐藏成本的理由)。token 系数有真实标定,数量级可信。 */}
+              <CSKeyValuePairs columns={1} items={[
               { label: t('scripts.import.summary_file'), value: fileName || '—' },
               { label: t('scripts.import.field_rule'), value: ruleLabel },
               ...(estimate ? [
                 { label: t('scripts.my.chapters'), value: String(estimate.chapters) },
                 { label: t('scripts.my.words'), value: `${(estimate.words / 10000).toFixed(1)} ${t('scripts.my.wan')}` },
-                { label: t('scripts.import.est_cost'), value: <CSBox color="text-status-info" fontWeight="bold">${estimate.cost.toFixed(2)}</CSBox> },
-                { label: t('scripts.import.est_time'), value: t('scripts.import.est_time_val', { min: Math.round(estimate.totalSec / 60) }) },
+                { label: t('scripts.import.est_tokens'), value: <CSBox color="text-status-info" fontWeight="bold">{estimate.totalTokens.toLocaleString()} tok</CSBox> },
+                // est_time 预计耗时已隐藏(2026-10-17):tokens/800 固定吞吐假设无实测标定,偏差可达数倍,
+                // 展示出来只会误导(与金额隐藏同理)。恢复前先按真实任务耗时标定吞吐系数。
               ] : []),
             ]} />
             <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>

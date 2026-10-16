@@ -70,14 +70,15 @@ function SaveSettingsPane({ saveId, onToast }) {
       {fields.map(f => (
         <div key={f.key} className="pl-field" style={{ marginBottom: 14 }}>
           <label style={{ fontSize: 12.5, color: 'var(--text-quiet)', fontWeight: 500 }}>{f.label}</label>
-          {f.help && <div className="desc" style={{ fontSize: 11.5, color: 'var(--muted-2)', marginBottom: 4, lineHeight: 1.5 }}>{f.help}</div>}
+          {/* help 描述不再显示(2026-10-16):选项已本地化为自解释中文标签,与桌面 SavesList 同步 */}
           {f.options ? (
             <select
               value={vals[f.key] ?? ''}
               onChange={e => setVals(p => ({ ...p, [f.key]: e.target.value }))}
               style={{ width: '100%', height: 46, borderRadius: 12, border: '1px solid var(--line)', background: 'var(--bg-deep)', color: 'var(--text)', fontSize: 16, padding: '0 14px', outline: 'none' }}
             >
-              {f.options.map(o => <option key={o} value={o}>{o}</option>)}
+              {/* 枚举选项显示本地化标签(与桌面 SavesList 同键),存储值仍是原始英文枚举 */}
+              {f.options.map(o => <option key={o} value={o}>{t(`saves.settings_opt.${f.key}.${o}`, { defaultValue: o })}</option>)}
             </select>
           ) : (
             <input
