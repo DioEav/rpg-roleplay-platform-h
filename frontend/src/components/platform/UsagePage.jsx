@@ -196,7 +196,7 @@ function UsagePage() {
             </CSSpaceBetween>
           }
         >
-          用量 <span style={{fontWeight: "normal", fontSize: "0.85em", color: "var(--color-text-body-secondary)"}}>最近 {USAGE_RANGES.find(r => r.id === range)?.label}</span>
+          用量 <span style={{fontWeight: "normal", fontSize: "0.85em", color: "var(--muted)"}}>最近 {USAGE_RANGES.find(r => r.id === range)?.label}</span>
         </CSHeader>
       }>
         <CSColumnLayout columns={SHOW_USAGE_COST ? 5 : 3} variant="text-grid">
@@ -266,13 +266,13 @@ function UsagePage() {
             {hasData ? (
               <div>
                 <div style={{ display: "flex", alignItems: "baseline", gap: 10, flexWrap: "wrap" }}>
-                  <span style={{ fontSize: 32, fontWeight: 700, fontFamily: "var(--font-mono,monospace)", color: "var(--color-text-heading)" }}>
+                  <span style={{ fontSize: 32, fontWeight: 700, fontFamily: "var(--font-mono,monospace)", color: "var(--text)" }}>
                     {"$" + avgCost.toFixed(4)}
-                    <span style={{ fontSize: 16, fontWeight: 400, color: "var(--color-text-body-secondary)", marginLeft: 4 }}>{" / 日"}</span>
+                    <span style={{ fontSize: 16, fontWeight: 400, color: "var(--muted)", marginLeft: 4 }}>{" / 日"}</span>
                   </span>
-                  <span style={{ fontSize: 13, color: "var(--color-text-body-secondary)" }}>
+                  <span style={{ fontSize: 13, color: "var(--muted)" }}>
                     {"预计 30 天 "}
-                    <strong style={{ color: "var(--color-text-heading)" }}>{"$" + proj30.toFixed(2)}</strong>
+                    <strong style={{ color: "var(--text)" }}>{"$" + proj30.toFixed(2)}</strong>
                     {" · "}
                     <span style={{ color: trendColor, fontWeight: 600 }}>{trendSign + trendPct.toFixed(1) + "%"}</span>
                     {" vs 前 7 天"}
@@ -303,17 +303,17 @@ function UsagePage() {
                 return (
                   <div key={key} style={{
                     padding: '12px 14px', borderRadius: 6,
-                    background: 'var(--color-background-container-content, rgba(255,255,255,0.03))',
-                    border: '1px solid var(--color-border-divider-default, rgba(255,255,255,0.08))',
+                    background: 'var(--panel)',
+                    border: '1px solid var(--line-soft)',
                   }}>
                     <div style={{ fontSize: 18, marginBottom: 4 }}>{meta.icon}</div>
-                    <div style={{ fontSize: 12, color: 'var(--color-text-label, #aaa)', marginBottom: 6, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.08em' }}>{meta.label}</div>
+                    <div style={{ fontSize: 12, color: 'var(--text-quiet)', marginBottom: 6, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.08em' }}>{meta.label}</div>
                     <div style={{ fontSize: 20, fontWeight: 700, fontFamily: 'var(--font-mono,monospace)' }}>{fmtN(turns)}</div>
-                    <div style={{ fontSize: 11, color: 'var(--color-text-body-secondary)' }}>${cost.toFixed(3)}</div>
-                    <div style={{ marginTop: 6, height: 3, borderRadius: 999, background: 'var(--color-background-control-default, #333)', overflow: 'hidden' }}>
-                      <div style={{ width: pct + '%', height: '100%', background: 'var(--color-text-accent, #d4a45e)', borderRadius: 999 }} />
+                    <div style={{ fontSize: 11, color: 'var(--muted)' }}>${cost.toFixed(3)}</div>
+                    <div style={{ marginTop: 6, height: 3, borderRadius: 999, background: 'var(--bg-deep)', overflow: 'hidden' }}>
+                      <div style={{ width: pct + '%', height: '100%', background: 'var(--accent)', borderRadius: 999 }} />
                     </div>
-                    <div style={{ fontSize: 10, color: 'var(--color-text-body-secondary)', marginTop: 3 }}>{pct}% 占比</div>
+                    <div style={{ fontSize: 10, color: 'var(--muted)', marginTop: 3 }}>{pct}% 占比</div>
                   </div>
                 );
               })}
@@ -334,7 +334,7 @@ function UsagePage() {
               <div>
                 <div style={{display: "flex", justifyContent: "space-between", marginBottom: 4}}>
                   <CSBox variant="awsui-key-label">请求</CSBox>
-                  <span className="mono" style={{fontSize: 12, color: "var(--color-text-body-secondary)"}}>{fmtN(reqSeriesVals.reduce((a, x) => a + x, 0))}</span>
+                  <span className="mono" style={{fontSize: 12, color: "var(--muted)"}}>{fmtN(reqSeriesVals.reduce((a, x) => a + x, 0))}</span>
                 </div>
                 <Spark values={reqSeriesVals} color="var(--accent)" />
               </div>
@@ -343,7 +343,7 @@ function UsagePage() {
               <div>
                 <div style={{display: "flex", justifyContent: "space-between", marginBottom: 4}}>
                   <CSBox variant="awsui-key-label">成本 $</CSBox>
-                  <span className="mono" style={{fontSize: 12, color: "var(--color-text-body-secondary)"}}>${costSeriesVals.reduce((a, x) => a + x, 0).toFixed(2)}</span>
+                  <span className="mono" style={{fontSize: 12, color: "var(--muted)"}}>${costSeriesVals.reduce((a, x) => a + x, 0).toFixed(2)}</span>
                 </div>
                 <Spark values={costSeriesVals} color="var(--ok)" />
               </div>
@@ -355,15 +355,15 @@ function UsagePage() {
               <CSColumnLayout columns={2} variant="text-grid">
                 <div>
                   <div style={{display: "flex", justifyContent: "space-between", marginBottom: 4}}>
-                    <span style={{fontSize: 12, color: "var(--color-text-body-secondary)"}}>输入 Token</span>
-                    <span className="mono" style={{fontSize: 12, color: "var(--color-text-body-secondary)"}}>{fmtN(tokInSeriesVals.reduce((a, x) => a + x, 0))}</span>
+                    <span style={{fontSize: 12, color: "var(--muted)"}}>输入 Token</span>
+                    <span className="mono" style={{fontSize: 12, color: "var(--muted)"}}>{fmtN(tokInSeriesVals.reduce((a, x) => a + x, 0))}</span>
                   </div>
                   <Spark values={tokInSeriesVals} color="#7c9fce" />
                 </div>
                 <div>
                   <div style={{display: "flex", justifyContent: "space-between", marginBottom: 4}}>
-                    <span style={{fontSize: 12, color: "var(--color-text-body-secondary)"}}>输出 Token</span>
-                    <span className="mono" style={{fontSize: 12, color: "var(--color-text-body-secondary)"}}>{fmtN(tokOutSeriesVals.reduce((a, x) => a + x, 0))}</span>
+                    <span style={{fontSize: 12, color: "var(--muted)"}}>输出 Token</span>
+                    <span className="mono" style={{fontSize: 12, color: "var(--muted)"}}>{fmtN(tokOutSeriesVals.reduce((a, x) => a + x, 0))}</span>
                   </div>
                   <Spark values={tokOutSeriesVals} color="#c49b4e" />
                 </div>
@@ -403,8 +403,8 @@ function UsagePage() {
               header: "占比",
               cell: r => (
                 <div style={{display: "flex", alignItems: "center", gap: 8}}>
-                  <div style={{width: 60, height: 4, borderRadius: 999, background: "var(--color-background-control-default)", overflow: "hidden"}}>
-                    <div style={{width: (totalTurns ? r.requests / totalTurns * 100 : 0) + "%", height: "100%", background: "var(--color-text-accent)"}} />
+                  <div style={{width: 60, height: 4, borderRadius: 999, background: "var(--bg-deep)", overflow: "hidden"}}>
+                    <div style={{width: (totalTurns ? r.requests / totalTurns * 100 : 0) + "%", height: "100%", background: "var(--accent)"}} />
                   </div>
                   <span className="muted-2 mono" style={{fontSize: 11}}>{totalTurns ? Math.round(r.requests / totalTurns * 100) : 0}%</span>
                 </div>
@@ -497,8 +497,8 @@ function UsagePage() {
               header: "占比",
               cell: m => (
                 <div style={{display: "flex", alignItems: "center", gap: 8}}>
-                  <div style={{width: 60, height: 4, borderRadius: 999, background: "var(--color-background-control-default)", overflow: "hidden"}}>
-                    <div style={{width: (totalTurns ? Number(m.turns || 0) / totalTurns * 100 : 0) + "%", height: "100%", background: "var(--color-text-accent)"}} />
+                  <div style={{width: 60, height: 4, borderRadius: 999, background: "var(--bg-deep)", overflow: "hidden"}}>
+                    <div style={{width: (totalTurns ? Number(m.turns || 0) / totalTurns * 100 : 0) + "%", height: "100%", background: "var(--accent)"}} />
                   </div>
                   <span className="muted-2 mono" style={{fontSize: 11}}>{totalTurns ? Math.round(Number(m.turns || 0) / totalTurns * 100) : 0}%</span>
                 </div>
@@ -620,8 +620,8 @@ function UsagePage() {
                 return (
                   <div style={{minWidth: 100}}>
                     <span className="mono" style={{fontSize: 11}}>{fmtN(used)}/{fmtN(max)} ({pct}%)</span>
-                    <div style={{marginTop: 3, height: 3, borderRadius: 999, background: "var(--color-background-control-default)", overflow: "hidden"}}>
-                      <div style={{width: pct + "%", height: "100%", background: danger ? "#d54" : "var(--color-text-accent)", borderRadius: 999}} />
+                    <div style={{marginTop: 3, height: 3, borderRadius: 999, background: "var(--bg-deep)", overflow: "hidden"}}>
+                      <div style={{width: pct + "%", height: "100%", background: danger ? "#d54" : "var(--accent)", borderRadius: 999}} />
                     </div>
                   </div>
                 );
@@ -644,7 +644,7 @@ function UsagePage() {
               disabled={recentPage === 0 || loading}
               onClick={() => setRecentPage(p => Math.max(0, p - 1))}
             >{"< 上一页"}</CSButton>
-            <span style={{ color: "var(--color-text-body-secondary)" }}>
+            <span style={{ color: "var(--muted)" }}>
               {"第 " + (recentPage + 1) + " / " + Math.ceil(recentTotal / RECENT_LIMIT) + " 页"}
             </span>
             <CSButton

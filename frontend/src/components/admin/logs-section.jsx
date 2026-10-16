@@ -117,7 +117,7 @@ export function AdminLogsPage() {
           : filtered.length === 0
             ? <CSBox textAlign="center" color="inherit">{t('admin_page.logs.empty')}</CSBox>
             : (
-              <pre style={{ fontFamily: 'monospace', fontSize: 12, lineHeight: 1.6, height: 500, overflowY: 'auto', margin: 0, padding: 8, background: 'var(--color-background-container-content, #fff)', borderRadius: 4 }}>
+              <pre style={{ fontFamily: 'monospace', fontSize: 12, lineHeight: 1.6, height: 500, overflowY: 'auto', margin: 0, padding: 8, background: 'var(--panel)', borderRadius: 4 }}>
                 {filtered.map((line, i) => {
                   const s = typeof line === 'string' ? line : String(line);
                   const color = lineColor(s);

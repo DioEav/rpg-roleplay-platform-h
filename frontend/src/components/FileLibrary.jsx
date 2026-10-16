@@ -92,12 +92,12 @@ function DocIcon({ name }) {
   return (
     <div style={{
       width: 96, height: 96, borderRadius: 6, flexShrink: 0,
-      background: 'var(--color-background-container-content, rgba(40,38,35,0.9))',
-      border: '1px solid var(--color-border-divider-default, rgba(255,255,255,0.08))',
+      background: 'var(--panel)',
+      border: '1px solid var(--line-soft)',
       display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
       gap: 6,
     }}>
-      <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="var(--color-text-body-secondary,#a8a195)" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+      <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="var(--muted)" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
         <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
         <polyline points="14 2 14 8 20 8" />
         <line x1="16" y1="13" x2="8" y2="13" />
@@ -105,7 +105,7 @@ function DocIcon({ name }) {
         <polyline points="10 9 9 9 8 9" />
       </svg>
       {name && (
-        <span style={{ fontSize: 10, color: 'var(--color-text-body-secondary)', maxWidth: 80, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', textAlign: 'center', padding: '0 4px' }}>
+        <span style={{ fontSize: 10, color: 'var(--muted)', maxWidth: 80, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', textAlign: 'center', padding: '0 4px' }}>
           {name}
         </span>
       )}
@@ -140,8 +140,8 @@ function DeleteConfirmModal({ open, asset, references, onCancel, onConfirm, busy
             <CSButton variant="link" onClick={onCancel} disabled={busy}>{t('common.cancel')}</CSButton>
             <CSButton variant="primary" onClick={onConfirm} disabled={busy}
               style={{ root: {
-                background: { default: '#d63031', hover: '#b02a2a', active: '#8f1f1f' },
-                borderColor: { default: '#d63031', hover: '#b02a2a', active: '#8f1f1f' },
+                background: { default: 'var(--danger)', hover: 'color-mix(in srgb, var(--danger) 85%, black)', active: 'color-mix(in srgb, var(--danger) 75%, black)' },
+                borderColor: { default: 'var(--danger)', hover: 'color-mix(in srgb, var(--danger) 85%, black)', active: 'color-mix(in srgb, var(--danger) 75%, black)' },
               } }}>
               {busy ? t('components.file_library.delete_modal.deleting') : t('components.file_library.delete_modal.confirm_delete')}
             </CSButton>
@@ -247,8 +247,8 @@ function AssetCard({ asset, onDelete, onRename, busy }) {
 
   return (
     <div style={{
-      background: 'var(--color-background-container-content, #1e1c19)',
-      border: '1px solid var(--color-border-container-top, rgba(255,255,255,0.08))',
+      background: 'var(--panel)',
+      border: '1px solid var(--line-soft)',
       borderRadius: 10,
       padding: 14,
       display: 'flex',
@@ -267,7 +267,7 @@ function AssetCard({ asset, onDelete, onRename, busy }) {
       </div>
 
       {/* 文件名 */}
-      <div style={{ fontSize: 12.5, fontWeight: 600, color: 'var(--color-text-heading, #ebe7df)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={name}>
+      <div style={{ fontSize: 12.5, fontWeight: 600, color: 'var(--text)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={name}>
         {name}
       </div>
 
@@ -276,17 +276,17 @@ function AssetCard({ asset, onDelete, onRename, busy }) {
         <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
           <CSBadge color="grey">{meta.label}</CSBadge>
           {asset.source && (
-            <span style={{ fontSize: 11, color: 'var(--color-text-body-secondary, #a8a195)' }}>
+            <span style={{ fontSize: 11, color: 'var(--muted)' }}>
               {SOURCE_LABELS[asset.source] || asset.source}
             </span>
           )}
         </div>
-        <div style={{ fontSize: 11.5, color: 'var(--color-text-body-secondary, #a8a195)' }}>
+        <div style={{ fontSize: 11.5, color: 'var(--muted)' }}>
           {fmtBytes(asset.size)}
           {asset.created_at && <span> · {fmtDate(asset.created_at)}</span>}
         </div>
         {ref && (
-          <div style={{ fontSize: 11.5, color: 'var(--color-charts-blue-1, #6bb5e8)' }}>
+          <div style={{ fontSize: 11.5, color: 'var(--info)' }}>
             {ref}
           </div>
         )}
@@ -300,7 +300,7 @@ function AssetCard({ asset, onDelete, onRename, busy }) {
         gap: 2,
         marginTop: 'auto',
         paddingTop: 10,
-        borderTop: '1px solid var(--color-border-divider-default, rgba(255,255,255,0.08))',
+        borderTop: '1px solid var(--line-soft)',
       }}>
         {/* iconName 必须是 Cloudscape 图标集里的名字(见 icon/generated/icons.d.ts):
             此前写的是 "download-alt" —— 集合里没有这个名字 → 图标整个不渲染,按钮只剩文字。 */}
@@ -319,7 +319,7 @@ function AssetCard({ asset, onDelete, onRename, busy }) {
             此前两处红按钮不生效就是这个原因。default/hover/active 必须都设,
             否则悬停/按下会 fallback 回默认蓝;disabled 不设 → 走灰色(忙碌态合理)。 */}
         <CSButton variant="inline-link" iconName="remove" onClick={(e) => { e.stopPropagation(); onDelete(asset); }} formAction="none" disabled={busy}
-          style={{ root: { color: { default: '#d63031', hover: '#b02a2a', active: '#8f1f1f' } } }}>
+          style={{ root: { color: { default: 'var(--danger)', hover: 'color-mix(in srgb, var(--danger) 85%, black)', active: 'color-mix(in srgb, var(--danger) 75%, black)' } } }}>
           {t('common.delete')}
         </CSButton>
       </div>
@@ -498,7 +498,7 @@ export default function FileLibrary() {
         </CSHeader>
 
         {/* Tab 过滤栏 */}
-        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', borderBottom: '1px solid var(--color-border-divider-default, rgba(255,255,255,0.1))', paddingBottom: 2 }}>
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', borderBottom: '1px solid var(--line-soft)', paddingBottom: 2 }}>
           {TABS.map(tab => {
             const count = tab.id === 'all' ? assets.length : assets.filter(a => a.kind === tab.id).length;
             const active = activeTab === tab.id;
@@ -510,9 +510,9 @@ export default function FileLibrary() {
                   padding: '6px 14px',
                   borderRadius: '6px 6px 0 0',
                   border: 'none',
-                  borderBottom: active ? '2px solid var(--color-border-tabs-underline, #c49b4e)' : '2px solid transparent',
-                  background: active ? 'var(--color-background-tabs-header, rgba(196,155,78,0.08))' : 'transparent',
-                  color: active ? 'var(--color-text-accent, #c8a869)' : 'var(--color-text-body-secondary, #a8a195)',
+                  borderBottom: active ? '2px solid var(--accent)' : '2px solid transparent',
+                  background: active ? 'var(--accent-soft)' : 'transparent',
+                  color: active ? 'var(--accent)' : 'var(--muted)',
                   fontSize: 13,
                   fontWeight: active ? 600 : 400,
                   cursor: 'pointer',
@@ -530,19 +530,19 @@ export default function FileLibrary() {
 
         {/* 内容区 */}
         {loading ? (
-          <div style={{ padding: '48px 20px', textAlign: 'center', color: 'var(--color-text-body-secondary)' }}>
+          <div style={{ padding: '48px 20px', textAlign: 'center', color: 'var(--muted)' }}>
             <CSStatusIndicator type="loading">{t('common.loading')}</CSStatusIndicator>
           </div>
         ) : err ? (
           <CSAlert type="error" header={t('components.file_library.load_error')}>{err}</CSAlert>
         ) : visibleAssets.length === 0 ? (
-          <div style={{ padding: '64px 20px', textAlign: 'center', color: 'var(--color-text-body-secondary)' }}>
+          <div style={{ padding: '64px 20px', textAlign: 'center', color: 'var(--muted)' }}>
             <div style={{ fontSize: 36, marginBottom: 12, opacity: 0.3 }}>
               <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round">
                 <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
               </svg>
             </div>
-            <div style={{ fontSize: 14, fontWeight: 600, color: 'var(--color-text-heading)', marginBottom: 6 }}>
+            <div style={{ fontSize: 14, fontWeight: 600, color: 'var(--text)', marginBottom: 6 }}>
               {activeTab === 'all'
                 ? t('components.file_library.empty.all')
                 : t('components.file_library.empty.filtered', { kind: KIND_META[activeTab]?.label || activeTab })}

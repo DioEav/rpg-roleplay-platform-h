@@ -421,7 +421,7 @@ function ScriptDetailPanel({ script: s, savesCount, scriptSaves = [], embedStatu
           position: sticky !important;
           top: 0 !important;
           z-index: 30 !important;
-          background: var(--color-background-layout-main, #1c1b1a) !important;
+          background: var(--bg) !important;
         }
       `}</style>
       <div data-detail-tabs>

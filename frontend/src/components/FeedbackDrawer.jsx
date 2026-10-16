@@ -249,7 +249,7 @@ export function FeedbackDrawer({ open, onClose }) {
                    r.review_decision === 'nsfw_terminate' ? t('components.feedback_drawer.reviewed_notice.decision_nsfw') :
                    r.review_decision}
                   {' · '}
-                  <span style={{ color: 'var(--color-text-body-secondary)' }}>
+                  <span style={{ color: 'var(--muted)' }}>
                     {(r.free_text_preview || '').slice(0, 60)}{(r.free_text_preview || '').length > 60 ? '…' : ''}
                   </span>
                 </CSBox>

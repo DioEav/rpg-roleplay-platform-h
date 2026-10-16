@@ -248,10 +248,10 @@ function ExportBundleModal({ open, save, onClose }) {
                   gridTemplateColumns: '18px 1fr auto',
                   gap: 12,
                   padding: '12px 14px',
-                  border: selected ? '1px solid var(--color-border-control-default, #7d8998)' : '1px solid var(--color-border-divider-default, #414d5c)',
+                  border: selected ? '1px solid var(--line-strong)' : '1px solid var(--line-soft)',
                   borderRadius: 8,
                   cursor: 'pointer',
-                  background: selected ? 'var(--color-background-item-selected, rgba(0,115,232,.1))' : 'transparent',
+                  background: selected ? 'var(--accent-soft)' : 'transparent',
                   transition: 'border-color .12s, background .12s',
                   alignItems: 'start',
                 }}
@@ -262,7 +262,7 @@ function ExportBundleModal({ open, save, onClose }) {
                   value={key}
                   checked={selected}
                   onChange={() => setTier(key)}
-                  style={{ marginTop: 2, accentColor: 'var(--color-text-accent, #0073e6)' }}
+                  style={{ marginTop: 2, accentColor: 'var(--accent)' }}
                 />
                 <div style={{ display: 'grid', gap: 4 }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontWeight: 600, fontSize: 14 }}>
@@ -270,8 +270,8 @@ function ExportBundleModal({ open, save, onClose }) {
                     {isDefault && (
                       <span style={{
                         fontSize: 11, padding: '1px 7px', borderRadius: 99,
-                        background: 'var(--color-background-badge-green, rgba(30,160,90,.18))',
-                        color: 'var(--color-text-status-success, #29ae7f)',
+                        background: 'var(--ok-soft)',
+                        color: 'var(--ok)',
                         border: '1px solid rgba(30,160,90,.3)',
                         fontWeight: 600,
                       }}>
@@ -279,11 +279,11 @@ function ExportBundleModal({ open, save, onClose }) {
                       </span>
                     )}
                   </div>
-                  <div style={{ fontSize: 12.5, color: 'var(--color-text-body-secondary, #8d9daf)', lineHeight: 1.5 }}>
+                  <div style={{ fontSize: 12.5, color: 'var(--muted)', lineHeight: 1.5 }}>
                     {t(`saves.detail.${descKey}`)}
                   </div>
                 </div>
-                <div style={{ fontSize: 13, color: 'var(--color-text-body-secondary, #8d9daf)', whiteSpace: 'nowrap', fontVariantNumeric: 'tabular-nums', marginTop: 1 }}>
+                <div style={{ fontSize: 13, color: 'var(--muted)', whiteSpace: 'nowrap', fontVariantNumeric: 'tabular-nums', marginTop: 1 }}>
                   {sizeLabel(key)}
                 </div>
               </label>

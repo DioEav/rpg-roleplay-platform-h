@@ -761,7 +761,7 @@ function ExperimentPanel({ expId }) {
         ) : (
           <div style={{ maxHeight: 260, overflowY: 'auto', fontFamily: 'var(--font-family-monospace, monospace)', fontSize: 12, lineHeight: 1.7 }}>
             {trace.map((r) => (
-              <div key={r.id} style={{ borderBottom: '1px solid var(--color-border-divider-default, #e9ebed)', padding: '2px 0' }}>
+              <div key={r.id} style={{ borderBottom: '1px solid var(--line-soft)', padding: '2px 0' }}>
                 <span style={{ opacity: 0.55, marginRight: 8 }}>{r.world_clock_label}</span>
                 {r.summary}
               </div>

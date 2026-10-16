@@ -377,7 +377,7 @@ function ModelsSection() {
           <CSContainer key={i}>
             <CSSpaceBetween size="s">
               {[1, 2].map(j => (
-                <div key={j} style={{ height: 18, borderRadius: 4, background: 'var(--color-background-control-disabled, #3a3a3a)', opacity: 0.5 + j * 0.15, width: j === 1 ? '40%' : '70%' }} />
+                <div key={j} style={{ height: 18, borderRadius: 4, background: 'var(--panel-2)', opacity: 0.5 + j * 0.15, width: j === 1 ? '40%' : '70%' }} />
               ))}
             </CSSpaceBetween>
           </CSContainer>
@@ -454,7 +454,7 @@ function ModelsSection() {
                         长得一模一样,用户只能问「为什么都是不可访问」。这里把它摊开。 */}
                     {c.error ? (
                       <div className="mono" title={c.error}
-                        style={{ fontSize: 11, color: 'var(--color-text-status-error, #d91515)', marginTop: 2, maxWidth: 240, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                        style={{ fontSize: 11, color: 'var(--danger)', marginTop: 2, maxWidth: 240, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                         {c.error}
                       </div>
                     ) : null}

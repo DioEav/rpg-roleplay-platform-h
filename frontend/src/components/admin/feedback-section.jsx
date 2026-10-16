@@ -220,20 +220,20 @@ export function AdminFeedbackPage() {
 
             <CSBox>
               <strong>{t('admin_page.feedback.detail_free_text')}</strong>
-              <pre style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word', background: 'var(--color-background-container-content)', padding: 8, borderRadius: 4 }}>
+              <pre style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word', background: 'var(--panel)', padding: 8, borderRadius: 4 }}>
                 {detailModal.free_text || t('admin_page.feedback.detail_empty')}
               </pre>
             </CSBox>
 
             {/* 反馈回复: 写一条对用户可见的回复(展示在 ta 的「我的反馈历史」),与审核决定互不影响 */}
             <CSBox>
-              <strong>{t('admin_page.more.reply_user_label')}</strong> <span style={{ color: 'var(--color-text-body-secondary)' }}>{t('admin_page.more.reply_user_hint')}</span>
+              <strong>{t('admin_page.more.reply_user_label')}</strong> <span style={{ color: 'var(--muted)' }}>{t('admin_page.more.reply_user_hint')}</span>
               <textarea
                 value={replyText}
                 onChange={(e) => setReplyText(e.target.value)}
                 rows={3}
                 placeholder={t('admin_page.more.reply_placeholder')}
-                style={{ width: '100%', marginTop: 4, padding: 8, borderRadius: 4, fontSize: 13, boxSizing: 'border-box', fontFamily: 'inherit', resize: 'vertical', border: '1px solid var(--color-border-input-default, #888)', background: 'var(--color-background-container-content)', color: 'inherit' }}
+                style={{ width: '100%', marginTop: 4, padding: 8, borderRadius: 4, fontSize: 13, boxSizing: 'border-box', fontFamily: 'inherit', resize: 'vertical', border: '1px solid var(--line-strong)', background: 'var(--panel)', color: 'inherit' }}
               />
               <CSBox padding={{ top: 'xs' }}>
                 <CSButton variant="primary" loading={actionBusy} onClick={() => doReply(detailModal.id, replyText.trim())}>
@@ -257,7 +257,7 @@ export function AdminFeedbackPage() {
                     return (
                       <CSBox>
                         <strong>{t('admin_page.more.runtime_slice_label')}</strong>
-                        <pre style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word', marginTop: 4, background: 'var(--color-background-container-content)', padding: 8, borderRadius: 4, fontSize: 12 }}>
+                        <pre style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word', marginTop: 4, background: 'var(--panel)', padding: 8, borderRadius: 4, fontSize: 12 }}>
 {`URL/Hash:  ${r.url || ''}${r.hash || ''}
 App ver:   ${r.app_version || '—'}
 Viewport:  ${r.viewport || '—'} · ${r.locale || ''} · ${r.tz || ''}
@@ -279,7 +279,7 @@ ${(r.recent_dialog || []).map((m, i) => `  ${i + 1}. [${m.role}@turn ${m.turn ??
                   {modEntry && (
                     <CSBox>
                       <strong>{t('admin_page.more.nsfw_result_label')}</strong>
-                      <pre style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word', marginTop: 4, background: 'var(--color-background-container-content)', padding: 8, borderRadius: 4, fontSize: 12 }}>
+                      <pre style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word', marginTop: 4, background: 'var(--panel)', padding: 8, borderRadius: 4, fontSize: 12 }}>
 {JSON.stringify(modEntry.__moderation__, null, 2)}
                       </pre>
                     </CSBox>
@@ -291,7 +291,7 @@ ${(r.recent_dialog || []).map((m, i) => `  ${i + 1}. [${m.role}@turn ${m.turn ??
                         <CSBox key={i} padding={{ top: 'xs' }}>
                           <CSBadge color="grey">session: {ex.session_id}</CSBadge>
                           {' '}range: {ex.range}
-                          <pre style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word', marginTop: 4, background: 'var(--color-background-container-content)', padding: 8, borderRadius: 4 }}>
+                          <pre style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word', marginTop: 4, background: 'var(--panel)', padding: 8, borderRadius: 4 }}>
                             {ex.plaintext}
                           </pre>
                         </CSBox>

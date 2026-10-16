@@ -192,12 +192,12 @@ function EditApiModal({ open, api, isNew, isAdminUser = false, onClose, onConfir
                   spellCheck={false}
                 />
                 {form.api_key.trim() && !_saJsonValid && (
-                  <div style={{ color: 'var(--color-text-status-error, #d91515)', fontSize: '12px', marginTop: '4px' }}>
+                  <div style={{ color: 'var(--danger)', fontSize: '12px', marginTop: '4px' }}>
                     {t('settings.more.edit_api.sa_json_invalid')}
                   </div>
                 )}
                 {_saJsonValid && (
-                  <div style={{ color: 'var(--color-text-status-success, #1a7e3c)', fontSize: '12px', marginTop: '4px' }}>
+                  <div style={{ color: 'var(--ok)', fontSize: '12px', marginTop: '4px' }}>
                     {t('settings.more.edit_api.sa_json_valid', { project: (() => { try { return JSON.parse(form.api_key).project_id; } catch { return ''; } })() })}
                   </div>
                 )}

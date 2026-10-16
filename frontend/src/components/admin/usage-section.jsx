@@ -106,8 +106,8 @@ export function AdminGlobalUsagePage() {
                 const pct = summary.total_tokens > 0 ? Math.round((u.tokens / summary.total_tokens) * 100) : 0;
                 return (
                   <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                    <div style={{ flex: 1, height: 6, background: 'var(--color-background-status-inactive, #d1d5db)', borderRadius: 3 }}>
-                      <div style={{ width: `${pct}%`, height: '100%', background: 'var(--color-background-status-positive, #037f0c)', borderRadius: 3 }} />
+                    <div style={{ flex: 1, height: 6, background: 'var(--panel-2)', borderRadius: 3 }}>
+                      <div style={{ width: `${pct}%`, height: '100%', background: 'var(--ok-soft)', borderRadius: 3 }} />
                     </div>
                     <span style={{ fontSize: 12, minWidth: 30 }}>{pct}%</span>
                   </div>
@@ -144,9 +144,9 @@ export function AdminGlobalUsagePage() {
                   const barPct = Math.max(2, Math.round((d.tokens || 0) / maxDayTokens * 100));
                   return (
                     <div key={d.date} style={{ display: 'flex', alignItems: 'center', gap: 10, fontSize: 12 }}>
-                      <span style={{ minWidth: 90, color: 'var(--color-text-body-secondary, #5f6b7a)' }}>{d.date}</span>
-                      <div style={{ flex: 1, height: 14, background: 'var(--color-background-status-inactive, #d1d5db)', borderRadius: 3 }}>
-                        <div style={{ width: `${barPct}%`, height: '100%', background: 'var(--color-background-status-info, #0972d3)', borderRadius: 3 }} />
+                      <span style={{ minWidth: 90, color: 'var(--muted)' }}>{d.date}</span>
+                      <div style={{ flex: 1, height: 14, background: 'var(--panel-2)', borderRadius: 3 }}>
+                        <div style={{ width: `${barPct}%`, height: '100%', background: 'var(--info-soft)', borderRadius: 3 }} />
                       </div>
                       <span style={{ minWidth: 80, textAlign: 'right' }}>{(d.tokens || 0).toLocaleString()}</span>
                     </div>

@@ -150,11 +150,11 @@ function MeOverview() {
                   title={t('platform.me.change_avatar', '更换头像')}
                   style={{
                     position: 'absolute', bottom: 0, right: 0,
-                    background: 'var(--color-background-dropdown-item-default, #2a2927)',
-                    border: '1px solid var(--color-border-divider-default, #444)',
+                    background: 'var(--panel)',
+                    border: '1px solid var(--line-soft)',
                     borderRadius: '50%', width: 26, height: 26,
                     cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center',
-                    fontSize: 13, color: 'var(--color-text-interactive-default, #e8c97a)',
+                    fontSize: 13, color: 'var(--text-quiet)',
                     padding: 0,
                   }}
                 >✦</button>

@@ -93,7 +93,7 @@ export function AdminHealthPage() {
                           {db.ok === false ? t('admin_page.health.db_fail') : t('admin_page.health.db_ok')}
                         </CSStatusIndicator>
                         {typeof db.latency_ms === 'number' && (
-                          <span style={{ marginLeft: 8, fontSize: 12, color: 'var(--color-text-body-secondary)' }}>
+                          <span style={{ marginLeft: 8, fontSize: 12, color: 'var(--muted)' }}>
                             {t('admin_page.health.db_latency', { ms: db.latency_ms })}
                           </span>
                         )}

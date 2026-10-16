@@ -65,7 +65,7 @@ export function HelpDrawer({ open, slug, onClose }) {
       size="large"
       header={
         <Box variant="h2">
-          <span style={{ fontSize: '0.8em', color: 'var(--color-text-body-secondary, #687078)', marginRight: 8 }}>
+          <span style={{ fontSize: '0.8em', color: 'var(--muted)', marginRight: 8 }}>
             {t('help_drawer.help')}
           </span>
           {title || (curSlug ? '…' : '')}

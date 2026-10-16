@@ -96,7 +96,7 @@ export default function AvatarImg({
 
   // 加载占位背景色（加载完成或出错后移除）
   const loadingPlaceholder = (!imgLoaded && !imgError)
-    ? { background: 'var(--color-surface-2, rgba(128,128,128,0.15))' }
+    ? { background: 'var(--panel-2)' }
     : {};
 
   // 有 src 且尚未出错 → 渲 img

@@ -357,7 +357,7 @@ export function CanonEntityEditorView({ scriptId, ownerId, currentUserId }) {
         title={entity.name || ''}
         style={{
           cursor: readonly ? 'default' : 'text',
-          borderBottom: readonly ? 'none' : '1px dashed var(--color-border-divider-default, #ccc)',
+          borderBottom: readonly ? 'none' : '1px dashed var(--line-soft)',
           // 名称列收窄:超长单行省略(悬停看全文,点「查看明细」/详情抽屉有完整信息)
           display: 'inline-block', maxWidth: 140, verticalAlign: 'bottom',
           overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
@@ -391,7 +391,7 @@ export function CanonEntityEditorView({ scriptId, ownerId, currentUserId }) {
     }
     return (
       <span
-        style={{ cursor: readonly ? 'default' : 'pointer', borderBottom: readonly ? 'none' : '1px dashed var(--color-border-divider-default, #ccc)' }}
+        style={{ cursor: readonly ? 'default' : 'pointer', borderBottom: readonly ? 'none' : '1px dashed var(--line-soft)' }}
         onClick={() => !readonly && setEditCell({ key: entity.logical_key, field: 'importance', value: String(entity.importance ?? 3) })}
       >
         {entity.importance ?? '—'}
@@ -413,7 +413,7 @@ export function CanonEntityEditorView({ scriptId, ownerId, currentUserId }) {
       return (
         <span
           ref={setAnchorEl}
-          style={{ borderBottom: '1px dashed var(--color-border-divider-default, #ccc)', cursor: 'pointer' }}
+          style={{ borderBottom: '1px dashed var(--line-soft)', cursor: 'pointer' }}
         >
           {parentName}
           {anchorEl && (
@@ -432,7 +432,7 @@ export function CanonEntityEditorView({ scriptId, ownerId, currentUserId }) {
     }
     return (
       <span
-        style={{ cursor: readonly ? 'default' : 'pointer', borderBottom: readonly ? 'none' : '1px dashed var(--color-border-divider-default, #ccc)' }}
+        style={{ cursor: readonly ? 'default' : 'pointer', borderBottom: readonly ? 'none' : '1px dashed var(--line-soft)' }}
         onClick={() => { if (!readonly) { loadParentOptions(); setEditCell({ key: entity.logical_key, field: 'parent_logical_key', value: entity.parent_logical_key || '' }); } }}
       >
         {parentName}
@@ -543,7 +543,7 @@ export function CanonEntityEditorView({ scriptId, ownerId, currentUserId }) {
                 </CSBox>
               </div>
             )}
-            <div style={{ paddingLeft: 16, borderLeft: '2px solid var(--color-border-divider-default, #ccc)' }}>
+            <div style={{ paddingLeft: 16, borderLeft: '2px solid var(--line-soft)' }}>
               <CSBox fontWeight="bold">{entity.name || entity.logical_key}</CSBox>
               <CSBox fontSize="body-s" color="text-body-secondary">
                 {t(`scripts.edit.canon.type_${entity.type}`) || entity.type}
@@ -585,7 +585,7 @@ export function CanonEntityEditorView({ scriptId, ownerId, currentUserId }) {
   /* ---- new entity add row form ---- */
   function AddEntityForm() {
     return (
-      <div style={{ padding: '12px 16px', background: 'var(--color-background-container-content)', border: '1px solid var(--color-border-container-top)', borderRadius: 8, marginBottom: 8 }}>
+      <div style={{ padding: '12px 16px', background: 'var(--panel)', border: '1px solid var(--line-soft)', borderRadius: 8, marginBottom: 8 }}>
         <CSBox variant="h3" padding={{ bottom: 's' }}>{t('scripts.edit.canon.add_title')}</CSBox>
         <CSSpaceBetween direction="horizontal" size="s">
           <CSFormField label={t('scripts.edit.canon.field_logical_key')}>
