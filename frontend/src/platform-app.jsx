@@ -51,7 +51,8 @@ import CSTopNavigation from '@cloudscape-design/components/top-navigation';
 import CSAppLayout from '@cloudscape-design/components/app-layout';
 import CSSideNavigation from '@cloudscape-design/components/side-navigation';
 import CSInput from '@cloudscape-design/components/input';
-import CSButtonDropdown from '@cloudscape-design/components/button-dropdown';
+// CSButtonDropdown 导入已移除(2026-10):顶栏「全部功能」下拉改为分组导航(见 PlatformShellCS)。
+// 恢复旧下拉时需一并加回:import CSButtonDropdown from '@cloudscape-design/components/button-dropdown';
 // Cloudscape 内容迁移(me/profile/library/modules/extensions 等页)
 import CSContainer from '@cloudscape-design/components/container';
 import CSIcon from '@cloudscape-design/components/icon';
@@ -166,7 +167,7 @@ window.__checkAchievements = async function () {
    与旧 PlatformShell 同 props 接口,entry 直接替换。复用 ToastStack /
    ContinuePicker / UnifiedSearch / useReactiveUser / usePlatformData。 */
 /* AWS 式 IA:模块(=服务)注册表。左侧栏只显示「当前模块」的子页;
-   全局模块切换走顶部「全部功能」菜单(类似 AWS 的服务列表)。 */
+   全局模块切换走顶部「创作/游玩/系统/管理」分组导航(2026-10,原「全部功能」下拉)。 */
 const getCSModules = (t) => [
   { id: 'scripts', label: t('platform.nav.scripts'), group: t('platform.nav.group_create'),
     // iter#41: 删 scripts-editor / scripts-settings 占位 nav — 编辑入口已在剧本详情 tab
@@ -182,7 +183,9 @@ const getCSModules = (t) => [
     sub: [
       { text: t('platform.nav.md_editor', { defaultValue: '剧本编辑器' }), href: '#md-editor' },
     ] },
-  { id: 'play', label: t('platform.nav.saves'), group: t('platform.nav.group_play'),
+  // 2026-10:「游玩」面板子项改名 开始游戏→剧本游玩、酒馆→酒馆游玩。
+  // 模块 label 同时用作左栏标题(保持一致);UnifiedSearch / 旧 PL_NAV 的「开始游戏」文案不受影响。
+  { id: 'play', label: t('platform.nav.play_script', { defaultValue: '剧本游玩' }), group: t('platform.nav.group_play'),
     // NPC 角色卡已移入「剧本」详情面板(NPC 卡属于具体剧本),不再在开始游戏出现。
     // 「冒险模组」(modules)与「游戏设置」(play-settings)两个子页已隐藏:
     // 从左栏导航与合法 page 集合中移除,直链会回落主页(见 entries/platform.jsx PL_IDS)。
@@ -199,10 +202,10 @@ const getCSModules = (t) => [
     ] },
   // 酒馆模式:与「开始游戏」(play)**平级**、同在「游玩/Play」分类下的独立模块
   // (不再是开始游戏的子项)。页面是 Platform 内嵌子页 #tavern(见 entries/platform.jsx)。
-  { id: 'tavern', label: t('platform.nav.tavern', { defaultValue: '酒馆' }), group: t('platform.nav.group_play'),
+  { id: 'tavern', label: t('platform.nav.tavern_play', { defaultValue: '酒馆游玩' }), group: t('platform.nav.group_play'),
     pages: ['tavern'],
     sub: [
-      { text: t('platform.nav.tavern', { defaultValue: '酒馆' }), href: '#tavern' },
+      { text: t('platform.nav.tavern_play', { defaultValue: '酒馆游玩' }), href: '#tavern' },
     ] },
   // RATH:离线活世界实验,与「酒馆」平级、同在「游玩/Play」分类下
   // (docs/design/rath_observation_deck_v0.md)。页面是 Platform 内嵌子页 #rath。
@@ -290,7 +293,8 @@ function _csActiveModule(page, modules) {
   return mods.find((m) => m.pages.includes(page)) || mods[0];
 }
 
-// 顶部「全部功能」菜单(按 group 分组)。adminOnly 模块仅 admin 角色可见。
+// 顶部分组导航(创作/游玩/系统/管理,按 group 分组)的数据源。
+// adminOnly 模块仅 admin 角色可见。
 function _csSwitcherItems(isAdmin, modules) {
   const mods = modules || CS_MODULES;
   const groups = [];
@@ -370,6 +374,8 @@ function PlatformShellCS({ page, setPage, children, assistant, assistantOpen, on
   const [navOpen, setNavOpen] = useStatePL(true);
   const [chrome, setChromeState] = useStatePL({});
   const [feedbackOpen, setFeedbackOpen] = useStatePL(false);
+  // 顶栏分组导航:当前展开的分组名(创作/游玩/系统/管理),null = 全部收起。
+  const [openGroup, setOpenGroup] = useStatePL(null);
   const [welcomeOpen, setWelcomeOpen] = useStatePL(false);
   const [welcomeFirstTime, setWelcomeFirstTime] = useStatePL(false);
   // 「使用须知」欢迎弹窗总开关(2026-10 隐藏):顶栏按钮 + 进站自动弹出 + 渲染,
@@ -378,6 +384,14 @@ function PlatformShellCS({ page, setPage, children, assistant, assistantOpen, on
   const chromeApi = React.useMemo(() => ({ set: (c) => setChromeState(c || {}), clear: () => setChromeState({}) }), []);
   void chrome;
   useEffectPL(() => { setChromeState({}); }, [page]);
+
+  // 顶栏分组导航:Esc 关闭展开的分组面板(点击面板外/导航后收起在 JSX 遮罩与 onClick 内处理)。
+  useEffectPL(() => {
+    if (!openGroup) return;
+    const onKey = (e) => { if (e.key === 'Escape') setOpenGroup(null); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [openGroup]);
 
   // 反馈已改为独立页 /feedback(参考 AWS 支持中心)。__openFeedback 改为导航到该页,
   // 不再开抽屉(平台内)。游戏台(独立文档)的 FeedbackDrawerRoot 仍用抽屉,不受影响。
@@ -605,7 +619,7 @@ function PlatformShellCS({ page, setPage, children, assistant, assistantOpen, on
       <HelpDrawerRoot />
       <div id="pl-cs-topnav" className="pl-cs-topbar"
         style={{ position: 'sticky', top: 0, zIndex: 1002, display: 'flex', alignItems: 'center', background: 'var(--bg-deep)' }}>
-        {/* 左:折叠按钮 + logo + 全部功能(AWS 把服务菜单放左侧) */}
+        {/* 左:折叠按钮 + logo + 分组导航(创作/游玩/系统/管理;AWS 把服务菜单放左侧) */}
         <div style={{ display: 'flex', alignItems: 'center', flexShrink: 0, paddingLeft: 14, paddingRight: 6, gap: 12, height: 40 }}>
           {!standalone && (
           <button
@@ -625,6 +639,10 @@ function PlatformShellCS({ page, setPage, children, assistant, assistantOpen, on
             style={{ fontFamily: "'Noto Serif SC', serif", fontSize: 16, fontWeight: 600, color: 'var(--text)', textDecoration: 'none', whiteSpace: 'nowrap' }}>
             蜜酒厅
           </a>
+          {/* 顶栏分组导航(2026-10):创作/游玩/系统/管理 一级分组按钮,点击在下方展开
+              该组模块面板;当前模块所属分组高亮(文字 accent + 底部 2px 指示条)。
+              数据仍走 getCSModules → _csSwitcherItems(adminOnly 过滤内置)。
+              恢复旧「全部功能」下拉 = 解注释下方块 + 加回文件头的 CSButtonDropdown 导入。
           <CSButtonDropdown
             items={_csSwitcherItems(reactiveUser.role === 'admin', csModules)}
             expandToViewport
@@ -640,22 +658,81 @@ function PlatformShellCS({ page, setPage, children, assistant, assistantOpen, on
               </svg>
               {t('platform.menu.all_modules')}
             </span>
-          </CSButtonDropdown>
+          </CSButtonDropdown> */}
+          <nav aria-label={t('platform.menu.all_modules')} style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
+            {_csSwitcherItems(reactiveUser.role === 'admin', csModules).map((g) => {
+              const active = g.text === _csActiveModule(page, csModules).group;
+              const open = openGroup === g.text;
+              // 方框颜色全走主题令牌:静止 --line、展开 --line-strong、激活 --accent;
+              // hover 底色 --accent-soft(与「反馈」按钮同一套淡色 hover 语言),三主题自动适配。
+              const boxBorder = active ? 'var(--accent)' : open ? 'var(--line-strong)' : 'var(--line)';
+              const idleBg = open ? 'var(--accent-soft)' : 'transparent';
+              const idleColor = active || open ? 'var(--accent)' : 'var(--text-quiet)';
+              return (
+                <div key={g.text} style={{ position: 'relative', display: 'flex', alignItems: 'center' }}>
+                  <button
+                    onClick={() => setOpenGroup(open ? null : g.text)}
+                    aria-haspopup="menu"
+                    aria-expanded={open}
+                    style={{ display: 'inline-flex', alignItems: 'center', gap: 6, height: 30, padding: '0 16px', border: `1px solid ${boxBorder}`, borderRadius: 8, background: idleBg, cursor: 'pointer', fontFamily: 'inherit', fontSize: 14, fontWeight: active ? 600 : 500, color: idleColor, boxShadow: active ? 'inset 0 -2px 0 var(--accent)' : 'none', whiteSpace: 'nowrap', transition: 'background 0.15s, border-color 0.15s, color 0.15s' }}
+                    onMouseEnter={(e) => {
+                      e.currentTarget.style.background = 'var(--accent-soft)';
+                      e.currentTarget.style.borderColor = active ? 'var(--accent)' : 'var(--line-strong)';
+                      e.currentTarget.style.color = active || open ? 'var(--accent)' : 'var(--text)';
+                    }}
+                    onMouseLeave={(e) => {
+                      e.currentTarget.style.background = idleBg;
+                      e.currentTarget.style.borderColor = boxBorder;
+                      e.currentTarget.style.color = idleColor;
+                    }}
+                  >
+                    {g.text}
+                    <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" style={{ display: 'block', transform: open ? 'rotate(180deg)' : 'none', transition: 'transform 0.15s' }}>
+                      <path d="M1.5 3.5 5 7l3.5-3.5" />
+                    </svg>
+                  </button>
+                  {open && (
+                    <div role="menu" style={{ position: 'absolute', top: '100%', left: 0, minWidth: 176, background: 'var(--panel)', border: '1px solid var(--line)', borderRadius: 10, padding: 6, zIndex: 20, boxShadow: '0 10px 28px rgba(0,0,0,0.18)' }}>
+                      {g.items.map((it) => {
+                        const m = csModules.find((x) => x.id === it.id);
+                        if (!m) return null;
+                        const itemActive = m.pages.includes(page);
+                        return (
+                          <button
+                            key={it.id}
+                            role="menuitem"
+                            onClick={() => { setPage(m.pages[0]); setOpenGroup(null); }}
+                            style={{ display: 'block', width: '100%', textAlign: 'left', padding: '7px 12px', borderRadius: 7, border: 0, background: 'transparent', cursor: 'pointer', fontFamily: 'inherit', fontSize: 13, fontWeight: itemActive ? 600 : 500, color: itemActive ? 'var(--accent)' : 'var(--text)', whiteSpace: 'nowrap' }}
+                            onMouseEnter={(e) => { e.currentTarget.style.background = 'var(--panel-2)'; }}
+                            onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; }}
+                          >
+                            {it.text}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </nav>
         </div>
         {/* 中右:全局工具 + 账号(搜索统一走命令面板,不再放内联搜索框,避免重复) */}
         <div style={{ flex: 1, minWidth: 0, display: 'flex', alignItems: 'center' }}>
           {/* 反馈快捷按钮(使用须知按钮已隐藏,2026-10:SHOW_WELCOME_GUIDE 开关控制) */}
           <div style={{ display: 'flex', alignItems: 'center', gap: 4, paddingRight: 4, flexShrink: 0 }}>
+            {/* 顶栏「反馈」按钮已隐藏(2026-10):反馈入口仍保留在右上角用户菜单(提交反馈)。
+                恢复 = 解注释下方块。
             <button
               onClick={() => setFeedbackOpen(true)}
               title={t('platform.menu.feedback')}
-              style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '3px 10px', borderRadius: 6, border: '1px solid var(--fb-line)', background: 'transparent', color: 'var(--text-quiet)', cursor: 'pointer', fontSize: 12.5, fontWeight: 500, whiteSpace: 'nowrap' }}
+              style={{ display: 'inline-flex', alignItems: 'center', gap: 6, height: 30, padding: '0 14px', borderRadius: 8, border: '1px solid var(--fb-line)', background: 'transparent', color: 'var(--text-quiet)', cursor: 'pointer', fontSize: 14, fontWeight: 500, whiteSpace: 'nowrap' }}
               onMouseEnter={(e) => { e.currentTarget.style.background = 'var(--fb-hover-bg)'; e.currentTarget.style.borderColor = 'var(--fb-line-hover)'; }}
               onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.borderColor = 'var(--fb-line)'; }}
             >
-              <CSIcon name="contact" size="small" />
+              <CSIcon name="contact" size="medium" />
               {t('platform.menu.feedback_btn')}
-            </button>
+            </button> */}
             {SHOW_WELCOME_GUIDE && (
               <button
                 onClick={() => { setWelcomeFirstTime(false); setWelcomeOpen(true); }}
@@ -677,7 +754,9 @@ function PlatformShellCS({ page, setPage, children, assistant, assistantOpen, on
           <CSTopNavigation
             identity={{ href: '#profile', title: '', onFollow: (e) => { e.preventDefault(); setPage('profile'); } }}
             utilities={[
-              { type: 'button', iconName: 'search', title: t('platform.menu.search_title'), ariaLabel: t('platform.menu.search_title'), disableUtilityCollapse: true, onClick: () => setSearchOpen(true) },
+              // 「搜索」按钮已隐藏(2026-10):searchOpen 状态与 UnifiedSearch 挂载均保留,
+              // 恢复 = 解注释本行(命令面板随即恢复可用)。
+              // { type: 'button', iconName: 'search', title: t('platform.menu.search_title'), ariaLabel: t('platform.menu.search_title'), disableUtilityCollapse: true, onClick: () => setSearchOpen(true) },
               { type: 'button', iconName: 'settings', title: t('platform.nav.settings'), ariaLabel: t('platform.nav.settings'), disableUtilityCollapse: true, onClick: () => { setPage('settings'); } },
               // 「帮助」按钮已隐藏(弹框内容来自外部文档站 docs.stellatrix.icu)。恢复:解注释此行。
               // { type: 'button', iconName: 'status-info', title: helpSlugForPage ? `${t('platform.menu.help_current')} (${helpSlugForPage})` : t('platform.menu.help'), ariaLabel: t('platform.menu.help'), disableUtilityCollapse: true, onClick: () => { if (window.__openHelp) window.__openHelp(helpSlugForPage || 'intro'); } },
@@ -702,6 +781,12 @@ function PlatformShellCS({ page, setPage, children, assistant, assistantOpen, on
           </div>
         </div>
       </div>
+      {/* 分组导航:点击面板外收起。透明遮罩垫在顶栏(z 1002)之下,顶栏与面板仍可交互,
+          点页面任意区域即关闭(Esc 关闭见上方 keydown 监听)。 */}
+      {openGroup && (
+        <div aria-hidden="true" onClick={() => setOpenGroup(null)}
+          style={{ position: 'fixed', inset: 0, zIndex: 1001, background: 'transparent' }} />
+      )}
 
       <CSAppLayout
         headerSelector="#pl-cs-topnav"

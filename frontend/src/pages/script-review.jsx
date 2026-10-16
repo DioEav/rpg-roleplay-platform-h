@@ -206,17 +206,24 @@ export function ScriptReview({ scriptId, initialStatus, onReviewedChange }) {
         </tbody>
       </table>
 
-      <h3>{t('scripts.review.worldlines_heading', { count: wls.length })}</h3>
-      <ul>
-        {wls.map((w) => (
-          <li key={w.wl_key}>
-            {w.is_primary ? '★ ' : ''}{w.label} ({w.wl_key})
-            {(data.nodes || []).filter((n) => n.wl_key === w.wl_key).map((n) => (
-              <span key={n.node_key} className="sr-node"> · {n.seq}.{n.label}</span>
+      {/* 规范世界线:为空时整块隐藏(2026-10-16)。script_worldlines 的生成环节从未接线
+          (upsert_worldline 零调用点,见 gm_serving/settings.py 下架注)—— 现状所有剧本恒为 0,
+          恒零区块只添困惑。世界线提炼(pass 2 DAG)落地后自然恢复显示,无需改这里。 */}
+      {wls.length > 0 && (
+        <>
+          <h3>{t('scripts.review.worldlines_heading', { count: wls.length })}</h3>
+          <ul>
+            {wls.map((w) => (
+              <li key={w.wl_key}>
+                {w.is_primary ? '★ ' : ''}{w.label} ({w.wl_key})
+                {(data.nodes || []).filter((n) => n.wl_key === w.wl_key).map((n) => (
+                  <span key={n.node_key} className="sr-node"> · {n.seq}.{n.label}</span>
+                ))}
+              </li>
             ))}
-          </li>
-        ))}
-      </ul>
+          </ul>
+        </>
+      )}
     </div>
   );
 }

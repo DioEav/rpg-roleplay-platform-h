@@ -9,9 +9,12 @@ from typing import Any
 
 # 设置 schema:locked_after_create=True 的项建档后锁死(改了会损坏世界树)。
 SETTINGS_SCHEMA: list[dict] = [
-    {"key": "starting_worldline", "label": "起始世界线", "type": "string", "default": "main",
-     "locked_after_create": True, "step": 1,
-     "help": "从哪条规范世界线开局。建档后锁死(改动破坏已积累世界树)。"},
+    # 注:starting_worldline(起始世界线)已下架(2026-10-16)—— 全库零运行时读取点:schema/
+    # 持久化(save_io / _session_repo)俱全,但 steering 取世界线写死 is_primary(steering.py:48)、
+    # 防剧透锚点链写死 worldline_key='main'(kb/reveal.py),选什么都只走主线,属「UI 存在≠生效」
+    # 的死设置。与 npc_awareness 同款处理:从 schema/表单下架;持久化白名单保留不动库,存量值
+    # 静默失效。恢复前必须先接线:steering 按存档值选链 + reveal 的 frontier 按 worldline_key 分链,
+    # 否则解注释只是把谎言挂回 UI。
     {"key": "foreknowledge_mode", "label": "穿越者先知程度", "type": "enum", "default": "none",
      "options": ["none", "partial", "omniscient"], "locked_after_create": False, "step": 3,
      "help": "none=与角色同步无先知;partial=模糊知道著名未来大事;omniscient=全知原著。调节防剧透集合宽度。"},
