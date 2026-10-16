@@ -58,7 +58,7 @@ enum AppSection: Int, CaseIterable, Identifiable {
 struct LargeScreenShell: View {
     @EnvironmentObject var store: AppStore
     @State private var selection: AppSection? =
-        AppSection(rawValue: Int(ProcessInfo.processInfo.environment["STELLATRIX_TAB"] ?? "0") ?? 0) ?? .home
+        AppSection(rawValue: Int(ProcessInfo.processInfo.environment["MEADHALL_TAB"] ?? "0") ?? 0) ?? .home
     @State private var columnVisibility: NavigationSplitViewVisibility = .all
 
     var body: some View {
@@ -86,7 +86,7 @@ struct LargeScreenShell: View {
                 Image(systemName: "sparkles")
                     .font(.system(size: 16, weight: .semibold))
                     .foregroundStyle(Theme.accent)
-                Text("Stellatrix")
+                Text("Meadhall")
                     .font(.system(size: 17, weight: .bold))
                     .foregroundStyle(.primary)
             }

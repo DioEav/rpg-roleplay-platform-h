@@ -623,7 +623,7 @@ function PlatformShellCS({ page, setPage, children, assistant, assistantOpen, on
           )}
           <a href="/profile" onClick={(e) => { e.preventDefault(); plNavigate('profile'); }}
             style={{ fontFamily: "'Noto Serif SC', serif", fontSize: 16, fontWeight: 600, color: 'var(--text)', textDecoration: 'none', whiteSpace: 'nowrap' }}>
-            RPG Roleplay
+            蜜酒厅
           </a>
           <CSButtonDropdown
             items={_csSwitcherItems(reactiveUser.role === 'admin', csModules)}

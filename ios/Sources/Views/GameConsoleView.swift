@@ -96,7 +96,7 @@ struct GameConsoleView: View {
             // 大屏默认展开世界面板(常驻列);只在首次进入设一次,不覆盖用户后续手动收起。
             if hsc == .regular && !didInitLargePanels { didInitLargePanels = true; showPanels = true }
             await load()
-            switch ProcessInfo.processInfo.environment["STELLATRIX_GAMESHEET"] {
+            switch ProcessInfo.processInfo.environment["MEADHALL_GAMESHEET"] {
             case "menu": sheet = .menu
             case "gen": showGenImage = true
             case "drawer": await loadSaves(); showLeftDrawer = true

@@ -4,8 +4,8 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 TEAM_ID="${TEAM_ID:-CHANGEME_TEAMID}"
-SCHEME="Stellatrix"
-ARCHIVE="build/Stellatrix.xcarchive"
+SCHEME="Meadhall"
+ARCHIVE="build/Meadhall.xcarchive"
 EXPORT_DIR="build/export"
 
 if [ "$TEAM_ID" = "CHANGEME_TEAMID" ]; then
@@ -14,7 +14,7 @@ fi
 
 command -v xcodegen >/dev/null && xcodegen generate
 
-xcodebuild -project Stellatrix.xcodeproj -scheme "$SCHEME" \
+xcodebuild -project Meadhall.xcodeproj -scheme "$SCHEME" \
   -sdk iphoneos -configuration Release \
   -archivePath "$ARCHIVE" \
   DEVELOPMENT_TEAM="$TEAM_ID" \

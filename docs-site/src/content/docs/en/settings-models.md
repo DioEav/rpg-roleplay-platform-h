@@ -1,9 +1,9 @@
 ---
 title: "Model Configuration"
-description: "Add your own API keys for each AI provider so RPG Roleplay can use your account's models for gameplay, extraction, image generation, and more. Only providers with a configured key appear in the list. Keys are encrypted at rest and never shown in plaintext."
+description: "Add your own API keys for each AI provider so Meadhall can use your account's models for gameplay, extraction, image generation, and more. Only providers with a configured key appear in the list. Keys are encrypted at rest and never shown in plaintext."
 ---
 
-Add your own API keys for each AI provider so RPG Roleplay can use your account's models for gameplay, extraction, image generation, and more. Only providers with a configured key appear in the list. Keys are encrypted at rest and never shown in plaintext.
+Add your own API keys for each AI provider so Meadhall can use your account's models for gameplay, extraction, image generation, and more. Only providers with a configured key appear in the list. Keys are encrypted at rest and never shown in plaintext.
 
 Navigation: top bar **Settings** → **Model Configuration**.
 
@@ -11,7 +11,7 @@ Navigation: top bar **Settings** → **Model Configuration**.
 
 ## Key Concepts
 
-- **BYOK (Bring Your Own Key)**: RPG Roleplay does not bundle shared API keys. You obtain keys directly from each provider and enter them here. Once saved, a key is encrypted and only its last few characters are displayed — it is never echoed back.
+- **BYOK (Bring Your Own Key)**: Meadhall does not bundle shared API keys. You obtain keys directly from each provider and enter them here. Once saved, a key is encrypted and only its last few characters are displayed — it is never echoed back.
 - **Provider**: A vendor that supplies AI models, such as OpenAI, Anthropic, or Google AI Studio.
 - **Provider toggle**: The switch on the far right of each row controls whether that provider's models appear in the global model selector. When disabled, all of that provider's models are hidden from in-game and in-chat selectors.
 - **Per-model visibility**: The **Manage Visible Models** dialog lets you show or hide individual models within a provider. Hidden models are excluded from dropdowns but are not deleted and can be re-enabled at any time.

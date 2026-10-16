@@ -4,7 +4,7 @@ import SwiftUI
 // 「游戏」= 存档列表(进入游戏台);游戏台本身是全屏呈现(fullScreenCover),无 Tab 栏。
 struct MainTabView: View {
     @EnvironmentObject var store: AppStore
-    @State private var tab = Int(ProcessInfo.processInfo.environment["STELLATRIX_TAB"] ?? "0") ?? 0
+    @State private var tab = Int(ProcessInfo.processInfo.environment["MEADHALL_TAB"] ?? "0") ?? 0
 
     init() {
         let a = UITabBarAppearance()

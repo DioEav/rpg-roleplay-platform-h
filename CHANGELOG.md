@@ -1,6 +1,6 @@
 # Changelog
 
-All notable changes to RPG Roleplay are documented here.
+All notable changes to Meadhall are documented here.
 
 Format adapted from [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Version scheme: **SemVer** `MAJOR.MINOR.PATCH[-channel.N][+build]` since `v0.5.0` (single source of truth: root `VERSION` file; bump via `scripts/bump_version.sh`). A new DB migration bumps at least MINOR. Historical `0.x-waveN` entries below are kept as-is.
@@ -1263,7 +1263,7 @@ GM 每回合流水线系统性审计(43 原始发现 → 30 对抗验证确认)�
 - **开场把结构化 ops JSON 漏给玩家**:开场流程(`routes/game.py`)只抽走尾部 markdown 选项,**没有**走 chat 路径落库前那套清洗 → GM 的 ```json `[{"op":...}]` 围栏(及工具元叙述 / 泄漏脚手架)被原样存进历史 blob + messages,显示给玩家(基准测出多档开场命中,save 8 开场 841 字里 454 字是 JSON)。修:开场复用 chat 同一套 `strip_json_state_ops` → `strip_meta_tool_preamble` → `strip_leaked_scaffold`(结构化解析仍用含 ops 原文,只清洗"给玩家看 + 落历史"的版本)。真实泄漏开场上验证 ops 围栏被剥净。
 
 ### Added
-- **RPG Roleplay 专属 harness 基准框架(`rpg/bench/`)**:可插拔指标注册表(`@metric`)+ 真实存档回合 case 提取(从 commit blob,分支正确)+ scorecard 聚合(坏指标命中率 / 观测率 / 连续分位 / worst offenders,纯 JSON 可跨 run 比较)。首版确定性指标:退化复读 / 语言降级 / 出戏自曝 / 协议泄漏 / 长度健康 / canon 接地。用真实用户交互数据评估当前 harness 基线、回归对照,后续接 replay(候选 harness 现生成再打分)做 A/B。**离线工具,零运行时影响。** 首跑即测出上面的开场 ops 泄漏 bug。
+- **Meadhall 专属 harness 基准框架(`rpg/bench/`)**:可插拔指标注册表(`@metric`)+ 真实存档回合 case 提取(从 commit blob,分支正确)+ scorecard 聚合(坏指标命中率 / 观测率 / 连续分位 / worst offenders,纯 JSON 可跨 run 比较)。首版确定性指标:退化复读 / 语言降级 / 出戏自曝 / 协议泄漏 / 长度健康 / canon 接地。用真实用户交互数据评估当前 harness 基线、回归对照,后续接 replay(候选 harness 现生成再打分)做 A/B。**离线工具,零运行时影响。** 首跑即测出上面的开场 ops 泄漏 bug。
 
 ## [1.28.1] - 2026-06-28 (@ 7fa4ca6d4)
 

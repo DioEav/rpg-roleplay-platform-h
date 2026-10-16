@@ -21,7 +21,7 @@ struct ServerSettingsView: View {
                             .onChange(of: mode) { _, m in if m == 0 { draft = AppStore.defaultServer } else if draft == AppStore.defaultServer { draft = "" } }
                             .listRowBackground(Theme.bg)
                     } footer: {
-                        Text(mode == 0 ? "连接 Stellatrix 官方在线服务。" : "连接你自建/他人自建的服务器(同一套后端)。切换服务器会退出当前登录,数据互不相通。")
+                        Text(mode == 0 ? "连接 Meadhall 官方在线服务。" : "连接你自建/他人自建的服务器(同一套后端)。切换服务器会退出当前登录,数据互不相通。")
                             .foregroundStyle(Theme.muted2)
                     }
 
@@ -83,7 +83,7 @@ struct ServerSettingsView: View {
             .onAppear {
                 if draft.isEmpty { draft = store.serverURL }
                 mode = (store.serverURL == AppStore.defaultServer) ? 0 : 1
-                if ProcessInfo.processInfo.environment["STELLATRIX_SCAN"] == "1" { showScan = true }
+                if ProcessInfo.processInfo.environment["MEADHALL_SCAN"] == "1" { showScan = true }
             }
             .fullScreenCover(isPresented: $showScan) {
                 QRConnectView { url in

@@ -53,7 +53,7 @@ struct NewGameView: View {
             .toolbar { ToolbarItem(placement: .cancellationAction) { Button("取消") { dismiss() }.foregroundStyle(Theme.textQuiet) } }
             .task {
                 await load()
-                if let s = ProcessInfo.processInfo.environment["STELLATRIX_WIZSTEP"], let n = Int(s) { step = n }
+                if let s = ProcessInfo.processInfo.environment["MEADHALL_WIZSTEP"], let n = Int(s) { step = n }
             }
         }
     }

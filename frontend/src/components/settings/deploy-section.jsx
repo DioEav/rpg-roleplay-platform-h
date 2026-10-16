@@ -40,8 +40,8 @@ function DeploySection() {
   const [smtpTls, setSmtpTls] = useStatePL("starttls");
   const [smtpUser, setSmtpUser] = useStatePL("noreply@example.com");
   const [smtpPass, setSmtpPass] = useStatePL("");
-  const [smtpFromName, setSmtpFromName] = useStatePL("RPG Roleplay");
-  const [smtpFromEmail, setSmtpFromEmail] = useStatePL("noreply@rpgroleplay.app");
+  const [smtpFromName, setSmtpFromName] = useStatePL("Meadhall");
+  const [smtpFromEmail, setSmtpFromEmail] = useStatePL("noreply@meadhall.app");
   const [smtpTesting, setSmtpTesting] = useStatePL(false);
   // task 49：原"最近测试：12 分钟前"是硬编码。改成本地状态：只有用户实际
   // 点过"发送测试邮件"按钮后才记录时间戳并显示，否则显示"尚未测试"。

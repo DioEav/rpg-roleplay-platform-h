@@ -46,7 +46,7 @@ export function MobileHome({ nav }) {
       <div className="pl-head">
         <div className="save-thumb" style={{ width: 36, height: 36, borderRadius: 11 }}><Icon name="logo" size={17} /></div>
         <div className="pl-head-title">
-          <strong style={{ fontSize: 15 }}>RPG Roleplay</strong>
+          <strong style={{ fontSize: 15 }}>蜜酒厅</strong>
           <span className="sub">{t('mobile.home.greet_line', { greet, name })}</span>
         </div>
         <div className="pl-head-actions">

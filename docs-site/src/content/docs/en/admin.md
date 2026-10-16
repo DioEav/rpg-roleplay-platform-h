@@ -3,7 +3,7 @@ title: "Admin Console"
 description: "The Admin Console is the operations dashboard for platform administrators, covering user management, usage analytics, security settings, compliance handling, and achievement catalog editing. Only accounts with the admin role can access it; other users are redirected to a permission-denied page."
 ---
 
-The Admin Console is the operations dashboard for RPG Roleplay platform administrators, covering user management, usage analytics, security settings, compliance handling, and achievement catalog editing. **Only accounts with the admin role can access it.** All other users are redirected to a permission-denied page.
+The Admin Console is the operations dashboard for Meadhall platform administrators, covering user management, usage analytics, security settings, compliance handling, and achievement catalog editing. **Only accounts with the admin role can access it.** All other users are redirected to a permission-denied page.
 
 Entry point: the "System Administration" group in the top navigation, or type a sub-feature name directly in the search box to jump to it.
 

@@ -75,7 +75,7 @@ function SectionDeploy({ nav }) {
               <div className="pl-sec">
                 <div className="pl-sec-head"><h2>{t('mobile.admin.deploy.basic_heading')}</h2></div>
                 <div style={{ display: 'grid', gap: 12 }}>
-                  {textField(t('mobile.admin.deploy.site_name'), 'site_name', 'RPG Roleplay')}
+                  {textField(t('mobile.admin.deploy.site_name'), 'site_name', 'Meadhall')}
                   {textField(t('mobile.admin.deploy.site_url'), 'site_url', 'https://example.com')}
                   {textField(t('mobile.admin.deploy.contact_email'), 'contact_email', 'admin@example.com', 'email')}
                 </div>

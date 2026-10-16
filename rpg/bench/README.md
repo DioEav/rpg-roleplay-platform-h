@@ -1,4 +1,4 @@
-# rpg/bench — RPG Roleplay 专属 harness 基准框架
+# rpg/bench — Meadhall 专属 harness 基准框架
 
 用真实用户交互数据,量化迭代 harness(模型 / 提示词 / 管线开关)。离线工具,零运行时影响。
 

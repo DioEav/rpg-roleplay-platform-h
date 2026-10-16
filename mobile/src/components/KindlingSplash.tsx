@@ -87,7 +87,7 @@ export function KindlingSplash({ tagline }: { tagline?: string }) {
 
       <View style={styles.brand}>
         <Text style={styles.kicker}>Candlelit Grimoire</Text>
-        <Text style={styles.title}>RPG Roleplay</Text>
+        <Text style={styles.title}>蜜酒厅</Text>
         {tagline ? <Text style={styles.tagline}>{tagline}</Text> : <Text style={styles.tagline}>正在点燃…</Text>}
       </View>
     </View>

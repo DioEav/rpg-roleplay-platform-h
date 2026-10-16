@@ -1,6 +1,6 @@
 <div align="center">
 
-# RPG Roleplay
+# 蜜酒厅 Meadhall
 
 **把一本小说装进可玩世界的自托管 LLM 角色扮演引擎.**
 
@@ -13,7 +13,7 @@
 
 </div>
 
-![RPG Roleplay — 实时游戏控制台](./docs/assets/hero.png)
+![蜜酒厅 Meadhall — 实时游戏控制台](./docs/assets/hero.png)
 
 ---
 
@@ -21,7 +21,7 @@
 
 **千人千面的剧本，从你自己的故事开始。**
 
-RPG Roleplay 把一本长篇小说扔进一个自托管的 LLM 驱动的 RPG 运行时: 分支存档、原文检索、agent 驱动的场景, 以及骰子、provider 路由、token 账单、角色卡、世界书 — 这些无聊的脚手架全部就位. 最初为了把一本 485 万字小说做成可玩的世界, 现在任何作者或 GM 都能塞进自己的故事.
+蜜酒厅（Meadhall）把一本长篇小说扔进一个自托管的 LLM 驱动的 RPG 运行时: 分支存档、原文检索、agent 驱动的场景, 以及骰子、provider 路由、token 账单、角色卡、世界书 — 这些无聊的脚手架全部就位. 最初为了把一本 485 万字小说做成可玩的世界, 现在任何作者或 GM 都能塞进自己的故事.
 
 ## 当前实际可用程度
 
@@ -222,9 +222,9 @@ FastAPI 后端，~30+ 个路由模块 / agents / state mixin，~2700 pytest 用�
 我们很喜欢 SillyTavern. 它是一个出色的角色卡聊天工具. 但它和我们解决的是不同问题:
 
 - **SillyTavern** = *"我有一张角色卡,让我跟它聊天."*
-- **RPG Roleplay** = *"我有一本百万字小说,让我**走进里面玩一遍**."*
+- **蜜酒厅（Meadhall）** = *"我有一本百万字小说,让我**走进里面玩一遍**."*
 
-| 关注点 | SillyTavern / Risu | RPG Roleplay |
+| 关注点 | SillyTavern / Risu | 蜜酒厅 Meadhall |
 |---|---|---|
 | 基本单位 | 角色卡 | 小说 + 设定集 |
 | 长文检索 | 要扩展才有 | 内置 BM25 + pgvector 跑原文 |
@@ -235,7 +235,7 @@ FastAPI 后端，~30+ 个路由模块 / agents / state mixin，~2700 pytest 用�
 | 技术栈 | Node + 原生 HTML/CSS | Python + FastAPI + pgvector + React |
 | 测试 | 多为临时 | ~2700 pytest 用例 |
 
-故事是一个角色 → 用 SillyTavern。故事是一整个**世界** → 用 RPG Roleplay。两边都吃同一份 V2 卡格式,横移成本几乎为零.
+故事是一个角色 → 用 SillyTavern。故事是一整个**世界** → 用蜜酒厅（Meadhall）。两边都吃同一份 V2 卡格式,横移成本几乎为零.
 
 ## 配置
 
@@ -285,7 +285,7 @@ FastAPI 后端，~30+ 个路由模块 / agents / state mixin，~2700 pytest 用�
 │   └── src/                   # pages/ · components/ · i18n/（zh-CN + en）· api-client.js
 │
 ├── ios/                       # 原生 SwiftUI 客户端（BYO-server, XcodeGen）—— 见 ios/README.md
-├── mobile/                    # Expo / React Native app（rpg-roleplay-mobile）
+├── mobile/                    # Expo / React Native app（meadhall-mobile）
 ├── desktop/                   # Electron 桌面壳（自更新,渠道 B）
 ├── docs-site/                 # Starlight 文档站（Astro）
 ├── scripts/                   # dev.sh / setup.sh / bump_version.sh
@@ -309,7 +309,7 @@ FastAPI 后端，~30+ 个路由模块 / agents / state mixin，~2700 pytest 用�
 
 本项目采用 **GNU Affero General Public License v3.0 或更新版本**(AGPL-3.0-or-later)。详见 [LICENSE](./LICENSE) 和 [NOTICE](./NOTICE)。许可覆盖**整个**仓库 —— 服务器、网页前端、桌面壳,以及 `ios/` 下的原生 iOS 客户端。
 
-**为什么 AGPL?** RPG Roleplay 是服务端应用。AGPL 确保任何把它作为公开服务运营的人,必须开放其修改后的源代码给用户 — 即使作为 SaaS 使用,引擎也保持开放。
+**为什么 AGPL?** 蜜酒厅（Meadhall）是服务端应用。AGPL 确保任何把它作为公开服务运营的人,必须开放其修改后的源代码给用户 — 即使作为 SaaS 使用,引擎也保持开放。
 
 **商用 / 闭源** 可通过单独的双授权协议获取。联系 <chaosai31@gmail.com>。
 

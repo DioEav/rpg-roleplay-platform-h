@@ -74,8 +74,8 @@ struct ModelsView: View {
             .toolbar { ToolbarItem(placement: .confirmationAction) { Button("完成") { dismiss() }.foregroundStyle(Theme.accent) } }
             .task {
                 await reload()
-                if ProcessInfo.processInfo.environment["STELLATRIX_OPEN_PROVIDER"] == "1" { detail = rows.first }
-                if ProcessInfo.processInfo.environment["STELLATRIX_OPEN_ADD"] == "1" { showAdd = true }
+                if ProcessInfo.processInfo.environment["MEADHALL_OPEN_PROVIDER"] == "1" { detail = rows.first }
+                if ProcessInfo.processInfo.environment["MEADHALL_OPEN_ADD"] == "1" { showAdd = true }
             }
             .sheet(item: $detail) { p in
                 ProviderDetailView(provider: p, cred: creds[p.id]) { Task { await reload() } }

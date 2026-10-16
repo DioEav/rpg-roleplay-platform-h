@@ -133,7 +133,7 @@ The "History" section of the left panel lists all active conversations. Archived
 Extended thinking requires a model that supports it. Tool call blocks only appear when the AI actually calls a tool (such as importing a character card or setting character info).
 
 **Can I use the exported JSONL in SillyTavern?**
-Yes, the export format is SillyTavern chat-compatible. The reverse also works: JSONL exported from SillyTavern can be imported back into RPG Roleplay via the import dialog.
+Yes, the export format is SillyTavern chat-compatible. The reverse also works: JSONL exported from SillyTavern can be imported back into Meadhall via the import dialog.
 
 ---
 

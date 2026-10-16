@@ -96,9 +96,9 @@ struct SavesView: View {
                 Button("好") {}
             } message: { Text(importMsg ?? "") }
             .task {
-                if ProcessInfo.processInfo.environment["STELLATRIX_GSEG"] == "1" { seg = 1 }
+                if ProcessInfo.processInfo.environment["MEADHALL_GSEG"] == "1" { seg = 1 }
                 await reload()
-                if let raw = ProcessInfo.processInfo.environment["STELLATRIX_OPEN_CHAT"], let id = Int(raw), path.isEmpty {
+                if let raw = ProcessInfo.processInfo.environment["MEADHALL_OPEN_CHAT"], let id = Int(raw), path.isEmpty {
                     seg = 1; path.append(id)
                 }
             }

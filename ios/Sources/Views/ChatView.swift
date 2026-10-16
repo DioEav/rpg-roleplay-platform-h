@@ -56,7 +56,7 @@ struct ChatView: View {
         .toolbar(.hidden, for: .tabBar)
         .task {
             await load()
-            if ProcessInfo.processInfo.environment["STELLATRIX_TDRAWER"] == "1" { showDrawer = true }
+            if ProcessInfo.processInfo.environment["MEADHALL_TDRAWER"] == "1" { showDrawer = true }
         }
         .onDisappear { streamTask?.cancel() }
         .sheet(isPresented: $showMenu) { menuSheet }

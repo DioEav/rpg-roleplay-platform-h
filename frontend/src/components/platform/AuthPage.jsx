@@ -78,7 +78,7 @@ function AuthPage() {
         <div style={{display: "flex", alignItems: "center", gap: 12}}>
           <div className="pl-auth-mark"><Icon name="logo" size={16} /></div>
           <div>
-            <h1>RPG Roleplay</h1>
+            <h1>蜜酒厅</h1>
             <div className="pl-auth-sub">长篇小说拆书 · RPG 续写 · 多用户创作平台</div>
           </div>
         </div>

@@ -1,4 +1,4 @@
-# RPG Roleplay 测试服 — ECS06 部署 Runbook
+# Meadhall 测试服 — ECS06 部署 Runbook
 
 > **仅限测试服（Docker on ECS06）。**
 > 寻找裸机生产部署指引？见 [../bare-metal/README.md](../bare-metal/README.md)。
@@ -18,7 +18,7 @@
 | L2 网络 | **ECS06 iptables/ufw** | 443/80 INPUT 只 ACCEPT CF IP 段 | 防"绕过 CF 直打源站 IP" |
 | L3 应用 | **nginx `if ($remote_addr != "154.29.152.100") return 451`** | 兜底返 451 | 防 CF WAF 配错 |
 
-L3 已在 `nginx-rpg-roleplay.conf` 配死;L1/L2 需要在 ECS06 + Cloudflare dashboard 配。
+L3 已在 `nginx-meadhall.conf` 配死;L1/L2 需要在 ECS06 + Cloudflare dashboard 配。
 
 ---
 

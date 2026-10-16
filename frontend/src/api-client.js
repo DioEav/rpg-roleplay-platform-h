@@ -1,5 +1,5 @@
 /* ============================================================
- *  RPG Roleplay · Frontend API Client
+ *  Meadhall · Frontend API Client
  *  -----------------------------------------------------------
  *  Browser-side wrapper around the FastAPI backend.
  *  - Cookie-based session (rpg_session) via credentials: "include"

@@ -3,13 +3,13 @@ title: Getting started
 description: End-to-end first-play walkthrough — account creation, LLM API key setup, importing a novel, and starting your first game.
 ---
 
-This guide walks you through your first complete session in RPG Roleplay: registering an account, adding an LLM API key, importing a novel, creating a save, and playing your first round. Allow 10–15 minutes, not counting script extraction time.
+This guide walks you through your first complete session in Meadhall: registering an account, adding an LLM API key, importing a novel, creating a save, and playing your first round. Allow 10–15 minutes, not counting script extraction time.
 
 ---
 
 ## Step 1: Create an account / sign in
 
-If you are not already signed in, RPG Roleplay redirects you to the login page automatically.
+If you are not already signed in, Meadhall redirects you to the login page automatically.
 
 **Register a new account**
 
@@ -28,7 +28,7 @@ Enter your username and password on the login page and click "Sign in". You are 
 
 ## Step 2: Add an LLM API key
 
-RPG Roleplay is BYOK (Bring Your Own Key) — the platform has no shared keys built in. You must supply an API key from at least one AI provider before the game GM, extraction, and image generation features will work. **Until a key is added, the model selector is empty and starting a game is not possible.**
+Meadhall is BYOK (Bring Your Own Key) — the platform has no shared keys built in. You must supply an API key from at least one AI provider before the game GM, extraction, and image generation features will work. **Until a key is added, the model selector is empty and starting a game is not possible.**
 
 Navigate to: top bar "Settings" → "Model setup" (see [Model setup](/en/settings-models) for full details).
 
@@ -53,7 +53,7 @@ Common providers and where to obtain keys:
 
 ## Step 3: Import a novel script
 
-Every game in RPG Roleplay is built on an imported script (a novel uploaded as a `.txt` file).
+Every game in Meadhall is built on an imported script (a novel uploaded as a `.txt` file).
 
 Navigate to: top navigation bar "Scripts" → "Import script" in the upper-right corner (see [Scripts](/en/scripts) for full details).
 

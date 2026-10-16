@@ -1,7 +1,7 @@
 import SwiftUI
 
 @main
-struct StellatrixApp: App {
+struct MeadhallApp: App {
     @StateObject private var store = AppStore()
 
     var body: some Scene {

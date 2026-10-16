@@ -780,7 +780,7 @@
         "provider_title": "在线剧本库 · 提供方",
         "provider_desc": "本实例作为在线剧本库提供方，允许其他实例通过 Device Flow 或 PAT 连接并浏览/导入你的剧本。",
         "client_title": "在线剧本库（连接在线服务）",
-        "client_desc": "连接到另一个 Stellatrix 实例，浏览并导入其公开剧本库。",
+        "client_desc": "连接到另一个蜜酒厅实例，浏览并导入其公开剧本库。",
         "paste_token_warn": "请粘贴 Token",
         "connected_ok": "已连接",
         "connect_fail": "连接失败",

@@ -16,7 +16,7 @@
 | `frontend/` | React 前端(Vite + Cloudscape)。源码在 `frontend/src/` |
 | `desktop/` | Electron 桌面壳(渠道 B,electron-updater 自更新),独立 `package.json` 版本号 |
 | `ios/` | 原生 SwiftUI 客户端(BYO-server),XcodeGen 工程 |
-| `mobile/` | 独立 Expo / React Native app(`rpg-roleplay-mobile`),**与 `frontend/src/mobile/` 不是一回事** |
+| `mobile/` | 独立 Expo / React Native app(`meadhall-mobile`),**与 `frontend/src/mobile/` 不是一回事** |
 | `docs/` | 设计文档(`docs/design/`)、审计、runbook;本知识目录在 `docs/knowledge/` |
 | `scripts/` | 顶层开发脚本:`dev.sh`(起 PG+后端7860+前端5173)、`setup.sh`、`bump_version.sh` |
 

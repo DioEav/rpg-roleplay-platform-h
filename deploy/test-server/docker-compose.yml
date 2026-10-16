@@ -1,6 +1,6 @@
 version: "3.9"
 
-# RPG Roleplay 测试服 — ECS06
+# Meadhall 测试服 — ECS06
 # 域名:rpg-roleplay.stellatrix.icu
 # 访问控制:CF orange-cloud + IP 白名单(154.29.152.100)
 #
@@ -120,7 +120,7 @@ services:
 
       # 邮件(B12 注册验证码)— 测试服阶段 Resend 同 landing 复用
       RESEND_API_KEY: ${RESEND_API_KEY}
-      RESEND_FROM: ${RESEND_FROM:-Stellatrix Labs <noreply@stellatrix.icu>}
+      RESEND_FROM: ${RESEND_FROM:-Meadhall Labs <noreply@stellatrix.icu>}
 
       # 反馈 NSFW 预审(T8)— 可选
       OPENAI_MODERATION_API_KEY: ${OPENAI_MODERATION_API_KEY}
@@ -176,7 +176,7 @@ services:
       - "80:80"
     volumes:
       - ./nginx.conf:/etc/nginx/nginx.conf:ro
-      - ./nginx-rpg-roleplay.conf:/etc/nginx/conf.d/rpg-roleplay.conf:ro
+      - ./nginx-meadhall.conf:/etc/nginx/conf.d/meadhall.conf:ro
       - ./certs:/etc/nginx/certs:ro  # 挂 CF Origin cert
     networks:
       - rpg-net

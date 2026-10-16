@@ -1,5 +1,5 @@
 # ============================================================
-# RPG Roleplay — Python (FastAPI/uvicorn) 生产镜像
+# Meadhall — Python (FastAPI/uvicorn) 生产镜像
 # Stage 1 (frontend): node:20 — vite build → frontend/dist
 # Stage 2 (runtime):  python:3.14-slim — pip install + uvicorn
 #

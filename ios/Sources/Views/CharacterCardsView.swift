@@ -88,7 +88,7 @@ struct CharacterCardsView: View {
             .toolbar(.hidden, for: .navigationBar)
             .task {
                 await reload()
-                if ProcessInfo.processInfo.environment["STELLATRIX_CARD"] == "1", let c = cards.first { detail = c }   // e2e 截图
+                if ProcessInfo.processInfo.environment["MEADHALL_CARD"] == "1", let c = cards.first { detail = c }   // e2e 截图
             }
             // 我的
             .sheet(item: $detail) { c in CardDetailView(card: c) { Task { await reload() } }.environmentObject(store) }

@@ -44,7 +44,7 @@ struct QRConnectView: View {
             }
         }
         .task {
-            switch ProcessInfo.processInfo.environment["STELLATRIX_SCAN_DEMO"] {   // 截图用
+            switch ProcessInfo.processInfo.environment["MEADHALL_SCAN_DEMO"] {   // 截图用
             case "connecting": phase = .connecting("http://192.168.x.x:7860"); return
             case "success": phase = .success("http://192.168.x.x:7860"); return
             case "failed": phase = .failed("无法连接,请检查地址与网络"); return
@@ -75,7 +75,7 @@ struct QRConnectView: View {
         VStack(spacing: 14) {
             Image(systemName: "camera.fill").font(.system(size: 40)).foregroundStyle(.white.opacity(0.7))
             Text(loc: "需要相机权限才能扫码").font(Theme.ui(15, .medium)).foregroundStyle(.white)
-            Text(loc: "请在「设置 → Stellatrix → 相机」开启,或手动输入服务器地址。")
+            Text(loc: "请在「设置 → Meadhall → 相机」开启,或手动输入服务器地址。")
                 .font(Theme.ui(12.5)).foregroundStyle(.white.opacity(0.6)).multilineTextAlignment(.center).padding(.horizontal, 40)
             Button { UIApplication.shared.open(URL(string: UIApplication.openSettingsURLString)!) } label: {
                 Text(loc: "打开设置").font(Theme.ui(15, .semibold)).foregroundStyle(Theme.onAccent)
@@ -233,7 +233,7 @@ private struct ConnectingAnimation: View {
         }
     }
 
-    private var isDemo: Bool { ProcessInfo.processInfo.environment["STELLATRIX_SCAN_DEMO"] != nil }
+    private var isDemo: Bool { ProcessInfo.processInfo.environment["MEADHALL_SCAN_DEMO"] != nil }
     private var isConnecting: Bool { if case .connecting = phase { return true }; return false }
     private var isSuccess: Bool { if case .success = phase { return true }; return false }
     private var centerColor: Color { if case .failed = phase { return Theme.danger }; if case .success = phase { return Theme.accent }; return Theme.accent }

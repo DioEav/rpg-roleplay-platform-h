@@ -557,7 +557,7 @@ function LoginApp() {
             </svg>
           </div>
           <div>
-            <h1>RPG Roleplay</h1>
+            <h1>蜜酒厅</h1>
             <div className="pl-auth-sub">{t('auth.subtitle')}</div>
           </div>
         </div>

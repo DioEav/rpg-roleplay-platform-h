@@ -57,12 +57,12 @@ struct ScriptEditorView: View {
         .task {
             if coverURL == nil { coverURL = script.cover_image_url }
             await reload()
-            applyTestSelection()   // STELLATRIX_EDITOR_SEL=card|worldbook|canon|new(e2e 截图)
+            applyTestSelection()   // MEADHALL_EDITOR_SEL=card|worldbook|canon|new(e2e 截图)
         }
     }
 
     private func applyTestSelection() {
-        guard let sel = ProcessInfo.processInfo.environment["STELLATRIX_EDITOR_SEL"] else { return }
+        guard let sel = ProcessInfo.processInfo.environment["MEADHALL_EDITOR_SEL"] else { return }
         switch sel {
         case "new": kind = .cards; selection = .newCard
         case "card": kind = .cards; if let c = cards.first { selection = .card(c.id) }

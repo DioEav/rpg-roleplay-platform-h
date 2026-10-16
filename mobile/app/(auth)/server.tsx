@@ -66,7 +66,7 @@ export default function ServerScreen() {
           <Text style={styles.kicker}>Bring Your Own Server</Text>
           <Text style={styles.title}>开启传送门</Text>
           <Text style={styles.sub}>
-            连接你自部署的 RPG Roleplay 服务器。{"\n"}你的故事，运行在你自己的机器上。
+            连接你自部署的蜜酒厅服务器。{"\n"}你的故事，运行在你自己的机器上。
           </Text>
 
           <View style={styles.card}>

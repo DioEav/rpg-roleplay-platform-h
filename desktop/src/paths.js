@@ -35,7 +35,7 @@ function resourcesRoot() {
 function userDataRoot() {
   if (_app) return _app.getPath('userData');
   // 测试回退
-  return path.join(os.homedir(), '.stellatrix-desktop');
+  return path.join(os.homedir(), '.meadhall-desktop');
 }
 
 function pyExeName() {

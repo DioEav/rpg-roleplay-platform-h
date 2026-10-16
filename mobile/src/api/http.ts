@@ -1,5 +1,5 @@
 /**
- * cookie-aware HTTP client for the RPG Roleplay FastAPI backend.
+ * cookie-aware HTTP client for the Meadhall FastAPI backend.
  *
  * The backend authenticates with an HTTP-only `rpg_session` cookie (no bearer token).
  * RN's implicit cookie jar is unreliable across app restarts and arbitrary self-hosted

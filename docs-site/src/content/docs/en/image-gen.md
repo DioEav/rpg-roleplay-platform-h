@@ -1,9 +1,9 @@
 ---
 title: "AI Image Generation"
-description: "RPG Roleplay supports AI image generation across multiple contexts: character card avatars, reference sheets, script covers, in-chat illustrations, and game scene images. All image generation requires your own API Key (BYOK); no shared quota is provided by the platform."
+description: "Meadhall supports AI image generation across multiple contexts: character card avatars, reference sheets, script covers, in-chat illustrations, and game scene images. All image generation requires your own API Key (BYOK); no shared quota is provided by the platform."
 ---
 
-RPG Roleplay supports AI image generation across multiple contexts: character card avatars, reference sheets, script covers, in-chat illustrations, and game scene images. All image generation requires your own API Key (BYOK); no shared quota is provided by the platform.
+Meadhall supports AI image generation across multiple contexts: character card avatars, reference sheets, script covers, in-chat illustrations, and game scene images. All image generation requires your own API Key (BYOK); no shared quota is provided by the platform.
 
 Entry points vary by context: the character card edit page, the script edit page, the game/tavern chat toolbar, and Settings → Module Models.
 

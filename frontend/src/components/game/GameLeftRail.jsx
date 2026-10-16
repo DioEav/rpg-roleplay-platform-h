@@ -27,9 +27,9 @@ function LeftRail({ collapsed, onToggle, state, runState, onNew, onSave, onSwitc
             <strong>{(() => {
               const realTitle = state && (state._raw?.save_title || state.app?.title);
               const allowMockTitle = !(window.RPG_AUTH && window.RPG_AUTH.authed);
-              return realTitle || (allowMockTitle && window.MOCK_NOVEL && window.MOCK_NOVEL.script_title) || "RPG Roleplay";
+              return realTitle || (allowMockTitle && window.MOCK_NOVEL && window.MOCK_NOVEL.script_title) || "蜜酒厅";
             })()}</strong>
-            <span className="muted-2" style={{ fontSize: 11 }}>RPG Roleplay · {(state && state.world && state.world.timeline && state.world.timeline.current_phase) || "—"}</span>
+            <span className="muted-2" style={{ fontSize: 11 }}>Meadhall · {(state && state.world && state.world.timeline && state.world.timeline.current_phase) || "—"}</span>
           </div>
         </div>
         <button className="iconbtn" onClick={onToggle} data-tip={t('game.app.rail.collapse_tip')} data-tip-pos="below" aria-label={t('game.app.rail.collapse_tip')}>

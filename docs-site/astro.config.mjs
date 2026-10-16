@@ -2,7 +2,7 @@
 import { defineConfig } from 'astro/config';
 import starlight from '@astrojs/starlight';
 
-// RPG Roleplay 使用文档站(品牌 Stellatrix,应用名 RPG Roleplay)。
+// 蜜酒厅（Meadhall）使用文档站(品牌 Meadhall,应用名 蜜酒厅/Meadhall)。
 // 单一 Markdown 源 = src/content/docs/(zh 根)+ src/content/docs/en/(英文)。
 // 产物同时:① 部署 CF Pages → docs.stellatrix.icu(全站导航 / 搜索 / 语言切换 / SEO);
 //          ② /embed/<slug> 去框架壳的嵌入视图,供 app 内 HelpDrawer 以 iframe 同控件打开。
@@ -10,8 +10,8 @@ export default defineConfig({
   site: 'https://docs.stellatrix.icu',
   integrations: [
     starlight({
-      title: 'RPG Roleplay',
-      description: 'RPG Roleplay 使用文档 —— 剧本、卡牌、记忆、世界书、酒馆、剧本编辑器、自部署。',
+      title: '蜜酒厅 Meadhall',
+      description: '蜜酒厅（Meadhall）使用文档 —— 剧本、卡牌、记忆、世界书、酒馆、剧本编辑器、自部署。',
       defaultLocale: 'root',
       // i18n 与应用一致:简体中文(默认)+ English;右上角自动出现语言切换。
       locales: {

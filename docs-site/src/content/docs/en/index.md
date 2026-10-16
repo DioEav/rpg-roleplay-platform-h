@@ -1,9 +1,9 @@
 ---
-title: RPG Roleplay Documentation
-description: Complete documentation for RPG Roleplay — scripts, character cards, memory, worldbook, Tavern Mode, the script editor, and self-hosting.
+title: Meadhall Documentation
+description: Complete documentation for Meadhall — scripts, character cards, memory, worldbook, Tavern Mode, the script editor, and self-hosting.
 ---
 
-**RPG Roleplay** turns any novel into a playable, open-ended roleplay world. Browse by section in the sidebar, or jump in here:
+**Meadhall** turns any novel into a playable, open-ended roleplay world. Browse by section in the sidebar, or jump in here:
 
 ## Getting started
 [New wizard](/en/wizard/) · [New game wizard](/en/new-game-wizard/) · [Input panel](/en/input/) · [Background tasks](/en/tasks/)

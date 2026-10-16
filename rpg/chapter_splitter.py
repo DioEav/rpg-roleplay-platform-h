@@ -1,7 +1,7 @@
 """Chapter recognition and TXT splitting rules shared by script imports.
 
 This module merges the rule sets previously used in MuMuAINovel and
-Stellatrix/books.  It deliberately stays dependency-free so it can be reused
+Meadhall/books.  It deliberately stays dependency-free so it can be reused
 by platform imports, background indexing, and future worker deployments.
 """
 from __future__ import annotations

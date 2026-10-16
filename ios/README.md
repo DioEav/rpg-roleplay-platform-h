@@ -1,6 +1,6 @@
-# Stellatrix — 原生 iOS 客户端(SwiftUI)
+# Meadhall — 原生 iOS 客户端(SwiftUI)
 
-一个**通用对话客户端**:连接官方服务器或用户自建/他人自建的同款后端(`rpg-roleplay` 平台)。
+一个**通用对话客户端**:连接官方服务器或用户自建/他人自建的同款后端（Meadhall）平台。
 登录后用酒馆(Tavern)对话接口:对话列表 / 新建 / 打开历史 / 流式收发 / 沉浸式拟人开关。
 
 > 定位是「BYO-server 工具」——内容由所连服务器/LLM 负责,客户端只是管道。这点对 App Store
@@ -14,7 +14,7 @@
 ios/
   project.yml              # XcodeGen 工程定义(不手维护 .xcodeproj)
   Sources/
-    StellatrixApp.swift    # @main + RootView(登录/主界面切换)
+    MeadhallApp.swift    # @main + RootView(登录/主界面切换)
     AppStore.swift         # 全局状态(服务器地址 / 登录态 / API)
     API.swift              # 网络层(cookie 会话 + SSE 流式)
     Models.swift           # 后端 DTO + 本地模型
@@ -28,7 +28,7 @@ ios/
   scripts/archive.sh       # 一键 archive + 导出 ipa(供上传)
 ```
 
-后端契约(已对齐线上 `rpg-roleplay`):
+后端契约(已对齐线上 Meadhall):
 - `POST /api/auth/login {username,password}` → 写 `rpg_session` cookie
 - `GET  /api/auth/me` → 启动探活(已登录则跳过登录页)
 - `GET  /api/tavern/chats` / `POST /api/tavern/chats` / `POST /api/tavern/chats/{id}/activate`
@@ -44,18 +44,18 @@ ios/
 
 ```bash
 cd ios
-xcodegen generate                 # 生成 Stellatrix.xcodeproj
-open Stellatrix.xcodeproj          # 或用下面的命令行
+xcodegen generate                 # 生成 Meadhall.xcodeproj
+open Meadhall.xcodeproj          # 或用下面的命令行
 
 # 命令行构建到模拟器
-xcodebuild -project Stellatrix.xcodeproj -scheme Stellatrix \
+xcodebuild -project Meadhall.xcodeproj -scheme Meadhall \
   -sdk iphonesimulator -destination 'platform=iOS Simulator,name=iPhone 17 Pro' \
   -configuration Debug build CODE_SIGNING_ALLOWED=NO
 ```
 
 调试用环境变量(simctl 加 `SIMCTL_CHILD_` 前缀):
-- `STELLATRIX_SERVER=http://localhost:7860` 覆盖默认服务器(本地后端=免登录 admin 时可直接进)
-- `STELLATRIX_OPEN_CHAT=<id>` 启动后自动进入某对话(验证聊天页)
+- `MEADHALL_SERVER=http://localhost:7860` 覆盖默认服务器(本地后端=免登录 admin 时可直接进)
+- `MEADHALL_OPEN_CHAT=<id>` 启动后自动进入某对话(验证聊天页)
 
 默认服务器:`https://rpg-roleplay.stellatrix.icu`(用户可在登录页右上角「服务器」里改成自建地址)。
 
@@ -68,7 +68,7 @@ xcodebuild -project Stellatrix.xcodeproj -scheme Stellatrix \
 ### 3.1 一次性配置
 1. **Bundle ID**:`icu.stellatrix.chat`(可改)。到 [developer.apple.com](https://developer.apple.com) →
    Certificates, Identifiers & Profiles → Identifiers → 注册这个 App ID。
-2. **签名团队**:`open Stellatrix.xcodeproj` → 选中 Stellatrix target → Signing & Capabilities →
+2. **签名团队**:`open Meadhall.xcodeproj` → 选中 Meadhall target → Signing & Capabilities →
    勾 *Automatically manage signing* → 选你的 Team。(或在 `project.yml` 里填 `DEVELOPMENT_TEAM`
    再 `xcodegen generate`。)
 3. **App 记录**:[App Store Connect](https://appstoreconnect.apple.com) → 我的 App → 新建 App,

@@ -23,7 +23,7 @@ from datetime import UTC, date, datetime, timedelta
 
 import pytest
 
-os.environ.setdefault("DATABASE_URL", "postgresql://postgres:postgres@localhost:5432/stellatrix_test")
+os.environ.setdefault("DATABASE_URL", "postgresql://postgres:postgres@localhost:5432/meadhall_test")
 os.environ.setdefault("EMAIL_CODE_SECRET", "test-secret-key-for-pytest")
 
 # ── 延迟 import 以便 mock 生效 ─────────────────────────────────────────────────

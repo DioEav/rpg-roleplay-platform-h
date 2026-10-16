@@ -1,10 +1,10 @@
 {
   "expo": {
-    "name": "RPG Roleplay",
-    "slug": "rpg-roleplay-mobile",
+    "name": "Meadhall",
+    "slug": "meadhall-mobile",
     "version": "1.0.0",
     "orientation": "portrait",
-    "scheme": "rpgroleplay",
+    "scheme": "meadhall",
     "userInterfaceStyle": "dark",
     "newArchEnabled": true,
     "icon": "./assets/icon.png",

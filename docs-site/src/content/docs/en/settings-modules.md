@@ -1,9 +1,9 @@
 ---
 title: "Settings: Modules"
-description: "RPG Roleplay uses several internal AI sub-modules, each responsible for a distinct task — primary narration, intent parsing, vector embedding, image generation, and more. Assign a specific model to any module, or set your personal default GM model. Modules without an explicit override inherit from the primary GM."
+description: "Meadhall uses several internal AI sub-modules, each responsible for a distinct task — primary narration, intent parsing, vector embedding, image generation, and more. Assign a specific model to any module, or set your personal default GM model. Modules without an explicit override inherit from the primary GM."
 ---
 
-RPG Roleplay uses several internal AI sub-modules, each responsible for a distinct task — primary narration, intent parsing, vector embedding, image generation, and more. Assign a specific model to any module, or set your personal default GM model. Modules without an explicit override inherit from the primary GM.
+Meadhall uses several internal AI sub-modules, each responsible for a distinct task — primary narration, intent parsing, vector embedding, image generation, and more. Assign a specific model to any module, or set your personal default GM model. Modules without an explicit override inherit from the primary GM.
 
 Navigation: top bar **Settings** → **Module Models** (left sidebar).
 
@@ -79,7 +79,7 @@ Users without an embedding key will see RAG retrieval fall back to a degraded mo
 
 1. In **API Keys**, add a key for a provider that supports image generation (e.g. Vertex AI, Doubao, Tongyi).
 2. In the **Image Generation** row, select the target model. This selection is synchronized with the model picker in the image generation dialog.
-3. If no image generation key is configured, RPG Roleplay prompts you to add one when you attempt to generate an image — it does not fail silently.
+3. If no image generation key is configured, Meadhall prompts you to add one when you attempt to generate an image — it does not fail silently.
 
 ---
 

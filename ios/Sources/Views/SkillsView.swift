@@ -50,7 +50,7 @@ struct SkillsView: View {
             .navigationTitle("技能").navigationBarTitleDisplayMode(.inline)
             .toolbarBackground(Theme.bg, for: .navigationBar).toolbarBackground(.visible, for: .navigationBar)
             .toolbar { ToolbarItem(placement: .cancellationAction) { Button("完成") { dismiss() }.foregroundStyle(Theme.accent) } }
-            .task { await load(); if ProcessInfo.processInfo.environment["STELLATRIX_SKILL_IMPORT"] == "1" { showImport = true } }
+            .task { await load(); if ProcessInfo.processInfo.environment["MEADHALL_SKILL_IMPORT"] == "1" { showImport = true } }
             .sheet(isPresented: $showImport) { importSheet }
             .fileImporter(isPresented: $showFile,
                           allowedContentTypes: [UTType(filenameExtension: "md") ?? .plainText, .plainText, .text],

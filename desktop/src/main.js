@@ -25,7 +25,7 @@ function createTray() {
     let img = nativeImage.createFromPath(path.join(__dirname, 'tray.png'));
     if (!img.isEmpty()) img = img.resize({ width: 18, height: 18 });
     tray = new Tray(img.isEmpty() ? nativeImage.createEmpty() : img);
-    tray.setToolTip('RPG Roleplay 控制台');
+    tray.setToolTip('蜜酒厅控制台');
     const menu = Menu.buildFromTemplate([
       { label: '打开控制台', click: showPanel },
       { label: '打开应用', click: () => openAppWindow() },
@@ -50,7 +50,7 @@ if (!app.requestSingleInstanceLock()) {
 function createPanel() {
   panelWin = new BrowserWindow({
     width: 820, height: 640, minWidth: 600, minHeight: 480,
-    title: 'RPG Roleplay 控制台',
+    title: '蜜酒厅控制台',
     icon: path.join(__dirname, 'tray.png'),
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
@@ -83,8 +83,8 @@ async function openAppWindow() {
   if (appWin && !appWin.isDestroyed()) { appWin.loadURL(url); appWin.focus(); return url; }
   appWin = new BrowserWindow({
     width: 1280, height: 860, minWidth: 900, minHeight: 600,
-    title: 'RPG Roleplay',
-    webPreferences: { partition: 'persist:stellatrix', contextIsolation: true, nodeIntegration: false },
+    title: 'Meadhall',
+    webPreferences: { partition: 'persist:meadhall', contextIsolation: true, nodeIntegration: false },
   });
   appWin.loadURL(url);
   appWin.on('closed', () => { appWin = null; });
@@ -184,7 +184,7 @@ function _cloudSession() {
 // 应用窗口的持久化 session(与 appWin partition 一致):本地后端鉴权 cookie 走这个分区。
 function _appSession() {
   const { session } = require('electron');
-  return session.fromPartition('persist:stellatrix');
+  return session.fromPartition('persist:meadhall');
 }
 
 // 统一重启前置:查本地后端有无正在运行的导入任务(防中断用户长任务)。
@@ -474,7 +474,7 @@ function wireIpc() {
     const c = cfg.load();
     const recent = supervisor.recentLogs().slice(-50).map((l) => `${new Date(l.ts).toISOString()} [${l.src}] ${l.line}`).join('\n');
     clipboard.writeText([
-      `RPG Roleplay ${app.getVersion()}`,
+      `Meadhall ${app.getVersion()}`,
       `platform: ${process.platform} ${process.arch} / os ${require('os').release()}`,
       `electron: ${process.versions.electron} / node ${process.versions.node}`,
       `mode: ${c.mode} / state: ${supervisor.state} / backend: ${supervisor.backendPort} / pg: ${supervisor.pgPort}`,
@@ -493,7 +493,7 @@ function wireIpc() {
     let firewallCmd;
     if (process.platform === 'win32') {
       firewallCmd = port
-        ? `netsh advfirewall firewall add rule name="RPG Roleplay ${port}" dir=in action=allow protocol=TCP localport=${port}`
+        ? `netsh advfirewall firewall add rule name="Meadhall ${port}" dir=in action=allow protocol=TCP localport=${port}`
         : '启动服务后显示(需要端口)';
     } else if (process.platform === 'darwin') {
       // macOS 自带防火墙是「按程序」而非「按端口」,且默认多为关闭。无需端口命令。

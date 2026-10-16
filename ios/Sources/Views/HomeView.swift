@@ -47,7 +47,7 @@ struct HomeView: View {
                 .frame(width: 38, height: 38)
                 .overlay(Text("S").font(Theme.serif(20, .semibold)).foregroundStyle(Theme.accent))
             VStack(alignment: .leading, spacing: 2) {
-                Text("RPG Roleplay").font(Theme.ui(18, .semibold)).foregroundStyle(Theme.text)
+                Text("Meadhall").font(Theme.ui(18, .semibold)).foregroundStyle(Theme.text)
                 Text(verbatim: "\(tr(greeting)), \(store.user?.displayName ?? store.user?.username ?? tr("旅人"))")
                     .font(Theme.ui(12)).foregroundStyle(Theme.muted)
             }

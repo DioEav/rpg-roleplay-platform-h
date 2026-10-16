@@ -56,7 +56,7 @@ struct MeView: View {
             .toolbar(.hidden, for: .navigationBar)
             .task {
                 await load()
-                switch ProcessInfo.processInfo.environment["STELLATRIX_SHEET"] {
+                switch ProcessInfo.processInfo.environment["MEADHALL_SHEET"] {
                 case "params": sheet = .params
                 case "models": sheet = .models
                 case "memory": sheet = .memory
@@ -162,7 +162,7 @@ struct MeView: View {
     private var aboutGroup: some View {
         VStack(spacing: 0) {
             infoRow("版本", "1.0.0")
-            rowDivider; infoRow("应用", "RPG Roleplay")
+            rowDivider; infoRow("应用", "Meadhall")
         }
         .background(RoundedRectangle(cornerRadius: 14).fill(Theme.panel))
         .overlay(RoundedRectangle(cornerRadius: 14).stroke(Theme.line, lineWidth: 1))

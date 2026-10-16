@@ -1,6 +1,6 @@
 <div align="center">
 
-# RPG Roleplay
+# Meadhall
 
 **Self-hostable LLM RPG engine that turns a novel into a playable world.**
 
@@ -13,7 +13,7 @@
 
 </div>
 
-![RPG Roleplay — live game console](./docs/assets/hero.png)
+![Meadhall — live game console](./docs/assets/hero.png)
 
 ---
 
@@ -21,7 +21,7 @@
 
 **Every reader who plays your story plays a different one.**
 
-RPG Roleplay drops a long-form novel into a self-hosted, LLM-driven RPG runtime: branching saves, retrieval over the original text, agent-driven scenes, and all the boring scaffolding — dice, provider routing, token accounting, cards, worldbook — is already wired up. Originally written to host one 4.85-million-character novel as a playable world; now any author or GM can point it at their own.
+Meadhall drops a long-form novel into a self-hosted, LLM-driven RPG runtime: branching saves, retrieval over the original text, agent-driven scenes, and all the boring scaffolding — dice, provider routing, token accounting, cards, worldbook — is already wired up. Originally written to host one 4.85-million-character novel as a playable world; now any author or GM can point it at their own.
 
 ## What works today
 
@@ -222,9 +222,9 @@ Seven reusable pieces were extracted from this repo and published standalone und
 We love SillyTavern. It's an incredible character-card playground. But it answers a different question:
 
 - **SillyTavern** = *"I have a character card. Let me chat with it."*
-- **RPG Roleplay** = *"I have a million-character novel. Let me play **inside** it."*
+- **Meadhall** = *"I have a million-character novel. Let me play **inside** it."*
 
-| Concern | SillyTavern / Risu | RPG Roleplay |
+| Concern | SillyTavern / Risu | Meadhall |
 |---|---|---|
 | Primary unit | Character card | Novel + setting bible |
 | Long-form retrieval | Extension required | Built-in: BM25 + pgvector over the original text |
@@ -235,7 +235,7 @@ We love SillyTavern. It's an incredible character-card playground. But it answer
 | Stack | Node, plain HTML/CSS | Python + FastAPI + pgvector + React |
 | Tests | Mostly ad-hoc | ~2700 pytest cases |
 
-Use SillyTavern when your story is a character. Use RPG Roleplay when your story is a *world*. The two import the same V2 card format, so moving sideways is trivial.
+Use SillyTavern when your story is a character. Use Meadhall when your story is a *world*. The two import the same V2 card format, so moving sideways is trivial.
 
 ## Configuration
 
@@ -285,7 +285,7 @@ A full annotated example lives in [`rpg/.env.example`](./rpg/.env.example).
 │   └── src/                   # pages/ · components/ · i18n/ (zh-CN + en) · api-client.js
 │
 ├── ios/                       # Native SwiftUI client (BYO-server, XcodeGen) — see ios/README.md
-├── mobile/                    # Expo / React Native app (rpg-roleplay-mobile)
+├── mobile/                    # Expo / React Native app (meadhall-mobile)
 ├── desktop/                   # Electron desktop shell (self-updating, channel B)
 ├── docs-site/                 # Starlight documentation site (Astro)
 ├── scripts/                   # dev.sh / setup.sh / bump_version.sh
@@ -309,7 +309,7 @@ This is an open-source project — contributions welcome. For now, please file i
 
 Licensed under the **GNU Affero General Public License v3.0 or later** (AGPL-3.0-or-later). See [LICENSE](./LICENSE) and [NOTICE](./NOTICE). The license covers the **entire** repository — server, web frontend, desktop shell, and the native iOS client under `ios/`.
 
-**Why AGPL?** RPG Roleplay is a server-side application. AGPL ensures any operator running it as a public service must also make their modified source available to users — keeping the engine open even when used as a SaaS.
+**Why AGPL?** Meadhall is a server-side application. AGPL ensures any operator running it as a public service must also make their modified source available to users — keeping the engine open even when used as a SaaS.
 
 **Commercial / closed-source use** is available under a separate dual-license. Contact <chaosai31@gmail.com>.
 

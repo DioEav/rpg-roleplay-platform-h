@@ -676,7 +676,7 @@
         "provider_title": "Online Script Library · Provider",
         "provider_desc": "This instance acts as an online script library provider, allowing other instances to connect via Device Flow or PAT to browse and import your scripts.",
         "client_title": "Online Script Library (Connect to a service)",
-        "client_desc": "Connect to another Stellatrix instance to browse and import its public script library.",
+        "client_desc": "Connect to another Meadhall instance to browse and import its public script library.",
         "paste_token_warn": "Please paste a token",
         "connected_ok": "Connected",
         "connect_fail": "Connection failed",

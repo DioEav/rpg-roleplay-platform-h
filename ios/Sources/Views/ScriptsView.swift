@@ -37,9 +37,9 @@ struct ScriptsView: View {
             .toolbar(.hidden, for: .navigationBar)
             .task {
                 await reload()
-                if ProcessInfo.processInfo.environment["STELLATRIX_WIZARD"] == "1", let s = scripts.first { wizardScript = s }
-                if ProcessInfo.processInfo.environment["STELLATRIX_EDITOR"] == "1", let s = scripts.first { editorScript = s }
-                if ProcessInfo.processInfo.environment["STELLATRIX_GEN"] == "1" { previewGen = true }
+                if ProcessInfo.processInfo.environment["MEADHALL_WIZARD"] == "1", let s = scripts.first { wizardScript = s }
+                if ProcessInfo.processInfo.environment["MEADHALL_EDITOR"] == "1", let s = scripts.first { editorScript = s }
+                if ProcessInfo.processInfo.environment["MEADHALL_GEN"] == "1" { previewGen = true }
             }
             .sheet(item: $detail) { s in
                 ScriptDetailSheet(script: s, onSubscriptionChanged: { await reload() })
@@ -50,12 +50,12 @@ struct ScriptsView: View {
             }
             .fullScreenCover(item: $wizardScript) { s in NewGameView(scriptId: s.id, scriptTitle: s.display).environmentObject(store) }
             .fullScreenCover(item: $editorScript) { s in ScriptEditorView(script: s).environmentObject(store) }
-            .sheet(isPresented: $previewGen) { GenImageSheet(suggestedStyle: "cover") { _, _ in } }   // STELLATRIX_GEN=1 截图
+            .sheet(isPresented: $previewGen) { GenImageSheet(suggestedStyle: "cover") { _, _ in } }   // MEADHALL_GEN=1 截图
         }
     }
     @State private var wizardScript: ScriptItem?
-    @State private var editorScript: ScriptItem?   // STELLATRIX_EDITOR=1 自动打开剧本编辑器(e2e)
-    @State private var previewGen = false          // STELLATRIX_GEN=1 预览生成单(截图)
+    @State private var editorScript: ScriptItem?   // MEADHALL_EDITOR=1 自动打开剧本编辑器(e2e)
+    @State private var previewGen = false          // MEADHALL_GEN=1 预览生成单(截图)
 
     private var header: some View {
         HStack(alignment: .firstTextBaseline) {

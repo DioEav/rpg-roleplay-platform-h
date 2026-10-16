@@ -1,6 +1,6 @@
 ---
 title: Troubleshooting
-description: Step-by-step guidance for the most common setup blockers in RPG Roleplay, including BYOK model configuration failures, credentials_required errors, and local model timeouts.
+description: Step-by-step guidance for the most common setup blockers in Meadhall, including BYOK model configuration failures, credentials_required errors, and local model timeouts.
 ---
 
 This page covers the setup issues new users encounter most often. If you have not yet completed key configuration, start with [Getting Started](/en/getting-started) and [Model Setup](/en/settings-models). This guide assumes you have registered an account and attempted to add a key.

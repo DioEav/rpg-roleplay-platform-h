@@ -1,8 +1,8 @@
-# Stellatrix iOS — App Store 提审 Runbook
+# Meadhall iOS — App Store 提审 Runbook
 
 Bundle ID: `icu.stellatrix.chat` · Team: `YOUR_TEAM_ID` · 版本: `1.0.0 (1)` · 最低 iOS 17.0 · iPhone + iPad
 
-工程是 XcodeGen 生成的:**改了 `project.yml` 后先 `xcodegen generate`**,再用 Xcode 打开 `Stellatrix.xcodeproj`。
+工程是 XcodeGen 生成的:**改了 `project.yml` 后先 `xcodegen generate`**,再用 Xcode 打开 `Meadhall.xcodeproj`。
 
 ---
 
@@ -11,7 +11,7 @@ Bundle ID: `icu.stellatrix.chat` · Team: `YOUR_TEAM_ID` · 版本: `1.0.0 (1)` 
 - [x] 真机架构 Release 编译通过(`xcodebuild -destination 'generic/platform=iOS' -configuration Release CODE_SIGNING_ALLOWED=NO build`)
 - [x] `DEVELOPMENT_TEAM = YOUR_TEAM_ID`、自动签名
 - [x] `ITSAppUsesNonExemptEncryption = false`(免出口合规弹窗)
-- [x] AppIcon 1024 集 + 显示名 Stellatrix
+- [x] AppIcon 1024 集 + 显示名 Meadhall
 - [x] iPad 大屏适配(NavigationSplitView)+ 全方向;iPhone 竖屏
 - [x] PhotosPicker 用 PHPicker(进程外),**无需** NSPhotoLibraryUsageDescription
 
@@ -38,12 +38,12 @@ Bundle ID: `icu.stellatrix.chat` · Team: `YOUR_TEAM_ID` · 版本: `1.0.0 (1)` 
 **或命令行**(需先建好分发证书/描述文件):
 ```bash
 cd ios && xcodegen generate
-xcodebuild -scheme Stellatrix -configuration Release \
-  -archivePath build/Stellatrix.xcarchive -destination 'generic/platform=iOS' archive
-xcodebuild -exportArchive -archivePath build/Stellatrix.xcarchive \
+xcodebuild -scheme Meadhall -configuration Release \
+  -archivePath build/Meadhall.xcarchive -destination 'generic/platform=iOS' archive
+xcodebuild -exportArchive -archivePath build/Meadhall.xcarchive \
   -exportOptionsPlist ExportOptions.plist -exportPath build/export
 # 上传(需 App Store Connect API Key:Issuer ID + Key ID + .p8):
-xcrun altool --upload-app -f build/export/Stellatrix.ipa -t ios \
+xcrun altool --upload-app -f build/export/Meadhall.ipa -t ios \
   --apiKey <KEY_ID> --apiIssuer <ISSUER_ID>
 # 或:xcrun notarytool 不适用上架;用 Transporter.app 拖 .ipa 上传亦可。
 ```

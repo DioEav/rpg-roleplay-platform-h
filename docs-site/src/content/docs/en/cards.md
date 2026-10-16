@@ -144,7 +144,7 @@ Some PNG cards have non-standard metadata formats. The system will attempt to pa
 NPC cards belong to their script. Besides the NPC Cards sub-page here, you can also access them via Scripts → select a script → NPC Cards tab in the detail panel.
 
 **The avatar disappeared after saving the card — what happened?**
-RPG Roleplay has fixed the bug where saving a character card could clear the avatar path (the backend upsert now preserves the avatar field if it is not included in the update). If avatar loss still occurs, re-set the avatar from the detail panel.
+Meadhall has fixed the bug where saving a character card could clear the avatar path (the backend upsert now preserves the avatar field if it is not included in the update). If avatar loss still occurs, re-set the avatar from the detail panel.
 
 **Can an NPC card be shared across multiple scripts?**
 Not directly — NPC cards are bound to a single script. To reuse one across scripts, convert it to a user card and select it in the new game wizard, or create a card with the same name under the target script.

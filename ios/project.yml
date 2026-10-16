@@ -1,6 +1,6 @@
-# XcodeGen 工程定义 —— `xcodegen generate` 生成 Stellatrix.xcodeproj。
+# XcodeGen 工程定义 —— `xcodegen generate` 生成 Meadhall.xcodeproj。
 # 原生 SwiftUI 对话客户端:连官方服务器或用户自建服务器(BYO-server 工具型)。
-name: Stellatrix
+name: Meadhall
 options:
   bundleIdPrefix: icu.stellatrix
   deploymentTarget:
@@ -18,7 +18,7 @@ settings:
     ENABLE_USER_SCRIPT_SANDBOXING: YES
 
 targets:
-  Stellatrix:
+  Meadhall:
     type: application
     platform: iOS
     sources:
@@ -27,7 +27,7 @@ targets:
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: icu.stellatrix.chat
-        PRODUCT_NAME: Stellatrix
+        PRODUCT_NAME: Meadhall
         GENERATE_INFOPLIST_FILE: NO
         INFOPLIST_FILE: Sources/Info.plist
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon

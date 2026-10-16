@@ -28,13 +28,13 @@ final class AppStore: ObservableObject {
     let api = API()
 
     init() {
-        // 开发/测试可用环境变量 STELLATRIX_SERVER 覆盖默认服务器(simctl 用 SIMCTL_CHILD_ 前缀传入)。
-        let envOverride = ProcessInfo.processInfo.environment["STELLATRIX_SERVER"]
+        // 开发/测试可用环境变量 MEADHALL_SERVER 覆盖默认服务器(simctl 用 SIMCTL_CHILD_ 前缀传入)。
+        let envOverride = ProcessInfo.processInfo.environment["MEADHALL_SERVER"]
         self.serverURL = envOverride
             ?? UserDefaults.standard.string(forKey: "server_url")
             ?? AppStore.defaultServer
-        // 测试可用 STELLATRIX_LANG 覆盖(simctl 用 SIMCTL_CHILD_ 前缀)。
-        let lang = ProcessInfo.processInfo.environment["STELLATRIX_LANG"] ?? AppLanguage.resolveInitial()
+        // 测试可用 MEADHALL_LANG 覆盖(simctl 用 SIMCTL_CHILD_ 前缀)。
+        let lang = ProcessInfo.processInfo.environment["MEADHALL_LANG"] ?? AppLanguage.resolveInitial()
         self.language = lang
         AppLanguage.apply(lang)   // init 内 didSet 不触发,手动应用一次
     }
@@ -53,14 +53,14 @@ final class AppStore: ObservableObject {
         booting = true
         defer { booting = false }
         // 开发/测试:注入已有会话 cookie 直接登录(不输密码),用于对生产做真机 e2e。生产构建无此 env。
-        if let ck = ProcessInfo.processInfo.environment["STELLATRIX_COOKIE"], !ck.isEmpty,
+        if let ck = ProcessInfo.processInfo.environment["MEADHALL_COOKIE"], !ck.isEmpty,
            let host = URL(string: serverURL)?.host,
            let c = HTTPCookie(properties: [.domain: host, .path: "/", .name: "rpg_session", .value: ck, .secure: true, .init(rawValue: "HttpOnly"): true]) {
             HTTPCookieStorage.shared.setCookie(c)
         }
-        if ProcessInfo.processInfo.environment["STELLATRIX_DEMO"] == "1" {
+        if ProcessInfo.processInfo.environment["MEADHALL_DEMO"] == "1" {
             enterDemo()
-            if ProcessInfo.processInfo.environment["STELLATRIX_OPEN_GAME"] == "1", let s = DemoData.saves.first {
+            if ProcessInfo.processInfo.environment["MEADHALL_OPEN_GAME"] == "1", let s = DemoData.saves.first {
                 activeGame = GameLaunch(id: s.id, title: s.display, scriptTitle: s.scriptTitle)
             }
             return

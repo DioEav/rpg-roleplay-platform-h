@@ -30,7 +30,7 @@ MAX_SKILL_FILES = 80
 MAX_SKILL_UNPACKED_BYTES = 4 * 1024 * 1024
 
 # 无预置插件 — 旧列表是早期 demo 数据（Documents/Spreadsheets/Chrome 等 Claude connector
-# 风格名称），与 RPG Roleplay 实际功能无关，上线前清空。
+# 风格名称），与 Meadhall 实际功能无关，上线前清空。
 # 若将来接入真实插件市场，在此追加或从 DB/config 动态加载。
 DEFAULT_PLUGIN_TOOLS: list[dict] = []
 
