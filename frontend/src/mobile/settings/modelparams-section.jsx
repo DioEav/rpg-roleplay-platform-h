@@ -101,7 +101,7 @@ function ModelParamsSection() {
         />
       </MField>
 
-      <MSlider label="Temperature" desc={t('mobile.settings.modelparams.temperature_desc')}
+      <MSlider label={t('mobile.settings.modelparams.temperature')} desc={t('mobile.settings.modelparams.temperature_desc')}
         value={params.temperature} min={0} max={2} step={0.05}
         onChange={(v) => { setPreset('custom'); u('temperature', v); }} />
 
@@ -116,11 +116,11 @@ function ModelParamsSection() {
         </MField>
       )}
 
-      <MSlider label="Top-p" desc={t('mobile.settings.modelparams.top_p_desc')}
+      <MSlider label={t('mobile.settings.modelparams.top_p')} desc={t('mobile.settings.modelparams.top_p_desc')}
         value={params.top_p} min={0} max={1} step={0.01}
         onChange={(v) => { setPreset('custom'); u('top_p', v); }} />
 
-      <MSlider label="Top-k" desc={t('mobile.settings.modelparams.top_k_desc')}
+      <MSlider label={t('mobile.settings.modelparams.top_k')} desc={t('mobile.settings.modelparams.top_k_desc')}
         value={params.top_k} min={0} max={200} step={1}
         onChange={(v) => { setPreset('custom'); u('top_k', v); }} />
 
@@ -128,11 +128,11 @@ function ModelParamsSection() {
         value={params.repetition_penalty} min={1} max={2} step={0.01}
         onChange={(v) => { setPreset('custom'); u('repetition_penalty', v); }} />
 
-      <MSlider label="Frequency Penalty" desc={t('mobile.settings.modelparams.freq_penalty_desc')}
+      <MSlider label={t('mobile.settings.modelparams.freq_penalty')} desc={t('mobile.settings.modelparams.freq_penalty_desc')}
         value={params.frequency_penalty} min={-2} max={2} step={0.05}
         onChange={(v) => { setPreset('custom'); u('frequency_penalty', v); }} />
 
-      <MSlider label="Presence Penalty" desc={t('mobile.settings.modelparams.presence_penalty_desc')}
+      <MSlider label={t('mobile.settings.modelparams.presence_penalty')} desc={t('mobile.settings.modelparams.presence_penalty_desc')}
         value={params.presence_penalty} min={-2} max={2} step={0.05}
         onChange={(v) => { setPreset('custom'); u('presence_penalty', v); }} />
 

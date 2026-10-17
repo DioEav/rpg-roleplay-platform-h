@@ -8,6 +8,7 @@ import i18n from './i18n/index.js';
 import { Icon } from './game-icons.jsx';
 import { useResizable, ResizeHandle } from './responsive.jsx';
 import { plNavigate } from './router.js';
+import { brandNameForLang } from './lib/brand.js';
 import { MODELS_DATA } from './pages/settings.jsx';
 // ESM 重构遗漏修复:ContinuePicker / NewGameModal 的真实现在 pages/saves.jsx,
 // platform-app 之前留了返回 null 的 stub 遮蔽它们 → "继续游戏"/"新建存档" 全失效。
@@ -363,7 +364,7 @@ async function _csRefresh() {
 }
 
 function PlatformShellCS({ page, setPage, children, assistant, assistantOpen, onToggleAssistant }) {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const csModules = React.useMemo(() => getCSModules(t), [t]);
   // 暴露页面 id→中文标题映射给运行环境快照(反馈采集把裸路径渲染成可读页面名)。
   React.useEffect(() => { try { window.__PL_TITLES__ = getPLTitles(t); } catch (_) {} }, [t]);
@@ -637,7 +638,7 @@ function PlatformShellCS({ page, setPage, children, assistant, assistantOpen, on
           )}
           <a href="/profile" onClick={(e) => { e.preventDefault(); plNavigate('profile'); }}
             style={{ fontFamily: "'Noto Serif SC', serif", fontSize: 16, fontWeight: 600, color: 'var(--text)', textDecoration: 'none', whiteSpace: 'nowrap' }}>
-            蜜酒厅
+            {brandNameForLang(i18n.language)}
           </a>
           {/* 顶栏分组导航(2026-10):创作/游玩/系统/管理 一级分组按钮,点击在下方展开
               该组模块面板;当前模块所属分组高亮(文字 accent + 底部 2px 指示条)。

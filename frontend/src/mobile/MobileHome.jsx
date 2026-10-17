@@ -4,6 +4,7 @@
 import React from 'react';
 import { useTranslation } from 'react-i18next';
 import i18n from '../i18n';
+import { brandNameForLang } from '../lib/brand.js';
 import { Icon } from './icons.jsx';
 import { launchSave } from './launch.js';
 import { usePlatformData, useReactiveUser } from '../platform-app.jsx';
@@ -46,7 +47,7 @@ export function MobileHome({ nav }) {
       <div className="pl-head">
         <div className="save-thumb" style={{ width: 36, height: 36, borderRadius: 11 }}><Icon name="logo" size={17} /></div>
         <div className="pl-head-title">
-          <strong style={{ fontSize: 15 }}>蜜酒厅</strong>
+          <strong style={{ fontSize: 15 }}>{brandNameForLang(i18n.language)}</strong>
           <span className="sub">{t('mobile.home.greet_line', { greet, name })}</span>
         </div>
         <div className="pl-head-actions">

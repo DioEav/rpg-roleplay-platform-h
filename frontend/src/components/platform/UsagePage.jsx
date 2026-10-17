@@ -5,6 +5,7 @@ import {
   fmtN,
 } from './shared.jsx';
 import { downloadBlob } from '../../lib/download.js';
+import { useTranslation } from 'react-i18next';
 import CSAlert from '@cloudscape-design/components/alert';
 import CSBox from '@cloudscape-design/components/box';
 import CSButton from '@cloudscape-design/components/button';
@@ -15,11 +16,12 @@ import CSSpaceBetween from '@cloudscape-design/components/space-between';
 import CSTable from '@cloudscape-design/components/table';
 
 /* ---------------------------- USAGE ---------------------------- */
+// labelKey: 文案走 i18n(platform.usage.*);组件渲染处 t(labelKey)。
 const USAGE_RANGES = [
-  { id: "24h", label: "24 小时", days: 1 },
-  { id: "7d",  label: "7 天",   days: 7 },
-  { id: "30d", label: "30 天",  days: 30 },
-  { id: "90d", label: "90 天",  days: 90 },
+  { id: "24h", labelKey: "platform.usage.range_24h", days: 1 },
+  { id: "7d",  labelKey: "platform.usage.range_7d",  days: 7 },
+  { id: "30d", labelKey: "platform.usage.range_30d", days: 30 },
+  { id: "90d", labelKey: "platform.usage.range_90d", days: 90 },
 ];
 
 // task 49：原 USAGE_BY_API / USAGE_BY_MODEL / USAGE_RECENT 是凭空捏的假调用日志
@@ -74,6 +76,7 @@ async function _fetchUsage(days, recentOffset) {
 }
 
 function UsagePage() {
+  const { t } = useTranslation();
   // task 49：整页重写。原 UsagePage 用 USAGE_BY_API / USAGE_BY_MODEL / USAGE_RECENT
   // + genSeries(Math.sin/cos) 凭空伪造所有数据，整页零 API 调用。现接 /api/me/usage
   // 与 /api/me/usage/timeline，没真实数据的字段（延迟 / 错误率 / 月预算 / 同比 ↑12%
@@ -102,7 +105,7 @@ function UsagePage() {
         setData(u || null);
         setSeries(t || null);
       } catch (e) {
-        if (!cancelled) setErr(e?.message || "拉取用量失败");
+        if (!cancelled) setErr(e?.message || t('platform.usage.load_error'));
       } finally {
         if (!cancelled) setLoading(false);
       }
@@ -143,12 +146,12 @@ function UsagePage() {
     ? byScenarioRaw.reduce((acc, it) => { if (it && it.scenario) acc[it.scenario] = it; return acc; }, {})
     : byScenarioRaw; // null = 旧 API，不渲染
   const SCENARIO_META = {
-    chat:      { label: "对话", icon: "💬" },
-    opening:   { label: "开场", icon: "🎬" },
-    extract:   { label: "提取", icon: "🔍" },
-    embedding: { label: "向量化", icon: "📐" },
-    assistant: { label: "助手", icon: "🤖" },
-    tool:      { label: "工具", icon: "🔧" },
+    chat:      { labelKey: "platform.usage.scenario_chat", icon: "💬" },
+    opening:   { labelKey: "platform.usage.scenario_opening", icon: "🎬" },
+    extract:   { labelKey: "platform.usage.scenario_extract", icon: "🔍" },
+    embedding: { labelKey: "platform.usage.scenario_embedding", icon: "📐" },
+    assistant: { labelKey: "platform.usage.scenario_assistant", icon: "🤖" },
+    tool:      { labelKey: "platform.usage.scenario_tool", icon: "🔧" },
   };
 
   // 按 API 聚合（后端只提供 by_model，自己按 api_id 汇总）
@@ -180,7 +183,7 @@ function UsagePage() {
       <CSContainer header={
         <CSHeader
           variant="h2"
-          description={loading ? "加载中…" : undefined}
+          description={loading ? t('platform.usage.loading') : undefined}
           actions={
             <CSSpaceBetween size="xs" direction="horizontal">
               {USAGE_RANGES.map(r => (
@@ -189,47 +192,47 @@ function UsagePage() {
                   variant={range === r.id ? "primary" : "normal"}
                   onClick={() => handleSetRange(r.id)}
                 >
-                  {r.label}
+                  {t(r.labelKey)}
                 </CSButton>
               ))}
-              <CSButton iconName="refresh" variant="icon" onClick={() => setTick(t => t + 1)} ariaLabel="刷新" />
+              <CSButton iconName="refresh" variant="icon" onClick={() => setTick(prev => prev + 1)} ariaLabel={t('platform.usage.refresh')} />
             </CSSpaceBetween>
           }
         >
-          用量 <span style={{fontWeight: "normal", fontSize: "0.85em", color: "var(--muted)"}}>最近 {USAGE_RANGES.find(r => r.id === range)?.label}</span>
+          {t('platform.usage.title')} <span style={{fontWeight: "normal", fontSize: "0.85em", color: "var(--muted)"}}>{t('platform.usage.title_recent', { range: t(USAGE_RANGES.find(r => r.id === range)?.labelKey || "") })}</span>
         </CSHeader>
       }>
         <CSColumnLayout columns={SHOW_USAGE_COST ? 5 : 3} variant="text-grid">
           <div>
-            <CSBox variant="awsui-key-label">请求数</CSBox>
+            <CSBox variant="awsui-key-label">{t('platform.usage.stat_requests')}</CSBox>
             <CSBox fontSize="display-l" fontWeight="bold">{fmtN(totalTurns)}</CSBox>
-            <CSBox color="text-body-secondary" fontSize="body-s">{totalTurns ? `日均 ${Math.round(totalTurns / days)}` : "—"}</CSBox>
+            <CSBox color="text-body-secondary" fontSize="body-s">{totalTurns ? t('platform.usage.stat_requests_daily', { n: Math.round(totalTurns / days) }) : "—"}</CSBox>
           </div>
           <div>
-            <CSBox variant="awsui-key-label">Token 输入</CSBox>
+            <CSBox variant="awsui-key-label">{t('platform.usage.stat_tok_in')}</CSBox>
             <CSBox fontSize="display-l" fontWeight="bold">{fmtN(totalTokIn)}</CSBox>
-            <CSBox color="text-body-secondary" fontSize="body-s">{totalTokOut ? `输出 ${fmtN(totalTokOut)} · 比 1 : ${(totalTokIn / Math.max(1, totalTokOut)).toFixed(1)}` : "输出 —"}</CSBox>
+            <CSBox color="text-body-secondary" fontSize="body-s">{totalTokOut ? t('platform.usage.stat_tok_ratio', { out: fmtN(totalTokOut), ratio: (totalTokIn / Math.max(1, totalTokOut)).toFixed(1) }) : t('platform.usage.stat_tok_out_none')}</CSBox>
           </div>
           {/* 成本卡已隐藏(2026-10):SHOW_USAGE_COST 开关控制 */}
           {SHOW_USAGE_COST && (
           <div>
-            <CSBox variant="awsui-key-label">成本</CSBox>
+            <CSBox variant="awsui-key-label">{t('platform.usage.stat_cost')}</CSBox>
             <CSBox fontSize="display-l" fontWeight="bold">${totalCost.toFixed(2)}</CSBox>
-            <CSBox color="text-body-secondary" fontSize="body-s">本窗口累计</CSBox>
+            <CSBox color="text-body-secondary" fontSize="body-s">{t('platform.usage.stat_cost_note')}</CSBox>
           </div>
           )}
           {/* U1: 缓存输入 token */}
           <div>
-            <CSBox variant="awsui-key-label">缓存输入 Token</CSBox>
+            <CSBox variant="awsui-key-label">{t('platform.usage.stat_cached')}</CSBox>
             <CSBox fontSize="display-l" fontWeight="bold">{totalCachedIn ? fmtN(totalCachedIn) : "—"}</CSBox>
             <CSBox color="text-body-secondary" fontSize="body-s">
-              {totalTokIn > 0 ? `占输入 ${Math.round(totalCachedIn / totalTokIn * 100)}%` : "—"}
+              {totalTokIn > 0 ? t('platform.usage.stat_cached_pct', { pct: Math.round(totalCachedIn / totalTokIn * 100) }) : "—"}
             </CSBox>
           </div>
           {/* U1: 缓存节省估算 (cached_input_tokens × pricing.input × 75%) — 已隐藏(2026-10),金额类显示 */}
           {SHOW_USAGE_COST && (
           <div>
-            <CSBox variant="awsui-key-label">缓存节省估算</CSBox>
+            <CSBox variant="awsui-key-label">{t('platform.usage.stat_cached_save')}</CSBox>
             <CSBox fontSize="display-l" fontWeight="bold">
               {totalCachedIn > 0 && totalTokIn > 0
                 ? `$${(totalCost > 0
@@ -238,7 +241,7 @@ function UsagePage() {
                   ).toFixed(3)}`
                 : "—"}
             </CSBox>
-            <CSBox color="text-body-secondary" fontSize="body-s">75% 折扣估算</CSBox>
+            <CSBox color="text-body-secondary" fontSize="body-s">{t('platform.usage.stat_cached_save_note')}</CSBox>
           </div>
           )}
         </CSColumnLayout>
@@ -254,34 +257,35 @@ function UsagePage() {
         const trendSign = trendPct > 0 ? "+" : "";
         const alertBanner = proj30 > 200 ? (
           <div style={{ marginTop: 12, padding: "8px 12px", borderRadius: 6, background: "rgba(229,57,53,0.12)", border: "1px solid rgba(229,57,53,0.35)", color: "#e53935", fontSize: 13 }}>
-            {"🔴 显著超出常规消费速率（30 天投影 $" + proj30.toFixed(2) + "）"}
+            {t('platform.usage.forecast_alert_high', { amount: proj30.toFixed(2) })}
           </div>
         ) : proj30 > 50 ? (
           <div style={{ marginTop: 12, padding: "8px 12px", borderRadius: 6, background: "rgba(245,124,0,0.10)", border: "1px solid rgba(245,124,0,0.30)", color: "#f57c00", fontSize: 13 }}>
-            {"⚠️ 较高消费速率（30 天投影 $" + proj30.toFixed(2) + "）"}
+            {t('platform.usage.forecast_alert_mid', { amount: proj30.toFixed(2) })}
           </div>
         ) : null;
         return (
-          <CSContainer header={<CSHeader variant="h2" description="基于过去 7 天平均日消耗（固定窗口，不随时间范围切换器变化）">消费预测</CSHeader>}>
+          <CSContainer header={<CSHeader variant="h2" description={t('platform.usage.forecast_desc')}>{t('platform.usage.forecast_title')}</CSHeader>}>
             {hasData ? (
               <div>
                 <div style={{ display: "flex", alignItems: "baseline", gap: 10, flexWrap: "wrap" }}>
                   <span style={{ fontSize: 32, fontWeight: 700, fontFamily: "var(--font-mono,monospace)", color: "var(--text)" }}>
                     {"$" + avgCost.toFixed(4)}
-                    <span style={{ fontSize: 16, fontWeight: 400, color: "var(--muted)", marginLeft: 4 }}>{" / 日"}</span>
+                    <span style={{ fontSize: 16, fontWeight: 400, color: "var(--muted)", marginLeft: 4 }}>{t('platform.usage.forecast_per_day')}</span>
                   </span>
                   <span style={{ fontSize: 13, color: "var(--muted)" }}>
-                    {"预计 30 天 "}
+                    {t('platform.usage.forecast_proj_prefix')}
                     <strong style={{ color: "var(--text)" }}>{"$" + proj30.toFixed(2)}</strong>
                     {" · "}
                     <span style={{ color: trendColor, fontWeight: 600 }}>{trendSign + trendPct.toFixed(1) + "%"}</span>
-                    {" vs 前 7 天"}
+                    {" "}
+                    {t('platform.usage.forecast_vs_prev')}
                   </span>
                 </div>
                 {alertBanner}
               </div>
             ) : (
-              <CSBox color="text-body-secondary" padding="s">暂无足够数据（需至少 1 天用量记录）</CSBox>
+              <CSBox color="text-body-secondary" padding="s">{t('platform.usage.forecast_empty')}</CSBox>
             )}
           </CSContainer>
         );
@@ -292,10 +296,10 @@ function UsagePage() {
         const scenarioKeys = Object.keys(byScenario);
         const scenarioTotalTurns = scenarioKeys.reduce((s, k) => s + Number(byScenario[k]?.turns || 0), 0) || 1;
         return (
-          <CSContainer header={<CSHeader variant="h2" description="按场景统计本窗口请求分布">按场景拆分</CSHeader>}>
+          <CSContainer header={<CSHeader variant="h2" description={t('platform.usage.scenario_desc')}>{t('platform.usage.scenario_title')}</CSHeader>}>
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(140px, 1fr))', gap: 12 }}>
               {scenarioKeys.map(key => {
-                const meta = SCENARIO_META[key] || { label: key, icon: "📊" };
+                const meta = SCENARIO_META[key] || { labelKey: null, icon: "📊" };
                 const sc = byScenario[key] || {};
                 const turns = Number(sc.turns || 0);
                 const cost = Number(sc.cost_usd || 0);
@@ -307,13 +311,13 @@ function UsagePage() {
                     border: '1px solid var(--line-soft)',
                   }}>
                     <div style={{ fontSize: 18, marginBottom: 4 }}>{meta.icon}</div>
-                    <div style={{ fontSize: 12, color: 'var(--text-quiet)', marginBottom: 6, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.08em' }}>{meta.label}</div>
+                    <div style={{ fontSize: 12, color: 'var(--text-quiet)', marginBottom: 6, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.08em' }}>{meta.labelKey ? t(meta.labelKey) : key}</div>
                     <div style={{ fontSize: 20, fontWeight: 700, fontFamily: 'var(--font-mono,monospace)' }}>{fmtN(turns)}</div>
                     <div style={{ fontSize: 11, color: 'var(--muted)' }}>${cost.toFixed(3)}</div>
                     <div style={{ marginTop: 6, height: 3, borderRadius: 999, background: 'var(--bg-deep)', overflow: 'hidden' }}>
                       <div style={{ width: pct + '%', height: '100%', background: 'var(--accent)', borderRadius: 999 }} />
                     </div>
-                    <div style={{ fontSize: 10, color: 'var(--muted)', marginTop: 3 }}>{pct}% 占比</div>
+                    <div style={{ fontSize: 10, color: 'var(--muted)', marginTop: 3 }}>{t('platform.usage.scenario_pct', { pct })}</div>
                   </div>
                 );
               })}
@@ -323,17 +327,17 @@ function UsagePage() {
       })()}
 
       {/* 趋势图（保留原生 SVG Spark 自绘） */}
-      <CSContainer header={<CSHeader variant="h2" description="每日聚合">趋势</CSHeader>}>
+      <CSContainer header={<CSHeader variant="h2" description={t('platform.usage.trend_desc')}>{t('platform.usage.trend_title')}</CSHeader>}>
         {bucketSeries.length === 0 ? (
           <CSBox textAlign="center" color="text-body-secondary" padding="l">
-            {loading ? "加载中…" : "近期没有用量记录"}
+            {loading ? t('platform.usage.loading') : t('platform.usage.trend_empty')}
           </CSBox>
         ) : (
           <CSSpaceBetween size="m">
             <CSColumnLayout columns={SHOW_USAGE_COST ? 2 : 1} variant="text-grid">
               <div>
                 <div style={{display: "flex", justifyContent: "space-between", marginBottom: 4}}>
-                  <CSBox variant="awsui-key-label">请求</CSBox>
+                  <CSBox variant="awsui-key-label">{t('platform.usage.trend_requests')}</CSBox>
                   <span className="mono" style={{fontSize: 12, color: "var(--muted)"}}>{fmtN(reqSeriesVals.reduce((a, x) => a + x, 0))}</span>
                 </div>
                 <Spark values={reqSeriesVals} color="var(--accent)" />
@@ -342,7 +346,7 @@ function UsagePage() {
               {SHOW_USAGE_COST && (
               <div>
                 <div style={{display: "flex", justifyContent: "space-between", marginBottom: 4}}>
-                  <CSBox variant="awsui-key-label">成本 $</CSBox>
+                  <CSBox variant="awsui-key-label">{t('platform.usage.trend_cost')}</CSBox>
                   <span className="mono" style={{fontSize: 12, color: "var(--muted)"}}>${costSeriesVals.reduce((a, x) => a + x, 0).toFixed(2)}</span>
                 </div>
                 <Spark values={costSeriesVals} color="var(--ok)" />
@@ -351,18 +355,18 @@ function UsagePage() {
             </CSColumnLayout>
             {/* U2: token 趋势 */}
             <div>
-              <CSBox variant="awsui-key-label" style={{marginBottom: 6}}>Token 趋势</CSBox>
+              <CSBox variant="awsui-key-label" style={{marginBottom: 6}}>{t('platform.usage.trend_tokens')}</CSBox>
               <CSColumnLayout columns={2} variant="text-grid">
                 <div>
                   <div style={{display: "flex", justifyContent: "space-between", marginBottom: 4}}>
-                    <span style={{fontSize: 12, color: "var(--muted)"}}>输入 Token</span>
+                    <span style={{fontSize: 12, color: "var(--muted)"}}>{t('platform.usage.trend_tok_in')}</span>
                     <span className="mono" style={{fontSize: 12, color: "var(--muted)"}}>{fmtN(tokInSeriesVals.reduce((a, x) => a + x, 0))}</span>
                   </div>
                   <Spark values={tokInSeriesVals} color="#7c9fce" />
                 </div>
                 <div>
                   <div style={{display: "flex", justifyContent: "space-between", marginBottom: 4}}>
-                    <span style={{fontSize: 12, color: "var(--muted)"}}>输出 Token</span>
+                    <span style={{fontSize: 12, color: "var(--muted)"}}>{t('platform.usage.trend_tok_out')}</span>
                     <span className="mono" style={{fontSize: 12, color: "var(--muted)"}}>{fmtN(tokOutSeriesVals.reduce((a, x) => a + x, 0))}</span>
                   </div>
                   <Spark values={tokOutSeriesVals} color="#c49b4e" />
@@ -374,33 +378,33 @@ function UsagePage() {
       </CSContainer>
 
       {/* 按 API 拆分 */}
-      <CSContainer header={<CSHeader variant="h2">按 API 拆分</CSHeader>}>
+      <CSContainer header={<CSHeader variant="h2">{t('platform.usage.by_api_title')}</CSHeader>}>
         <CSTable
           columnDefinitions={[
             {
               id: "api",
-              header: "API",
+              header: t('platform.usage.col_api'),
               cell: r => <strong style={{fontFamily: "var(--font-serif)", fontSize: 13.5}}>{r.id}</strong>,
             },
             {
               id: "requests",
-              header: "请求",
+              header: t('platform.usage.col_requests'),
               cell: r => <span className="mono">{fmtN(r.requests)}</span>,
             },
             {
               id: "tokens",
-              header: "Token (入 / 出)",
+              header: t('platform.usage.col_tokens'),
               cell: r => <span className="mono"><span className="muted">{fmtN(r.tokens_in)}</span> <span className="muted-2">/</span> {fmtN(r.tokens_out)}</span>,
             },
             /* 成本列已隐藏(2026-10):SHOW_USAGE_COST 开关控制 */
             ...(SHOW_USAGE_COST ? [{
               id: "cost",
-              header: "成本",
+              header: t('platform.usage.col_cost'),
               cell: r => <span className="mono">${r.cost.toFixed(2)}</span>,
             }] : []),
             {
               id: "pct",
-              header: "占比",
+              header: t('platform.usage.col_pct'),
               cell: r => (
                 <div style={{display: "flex", alignItems: "center", gap: 8}}>
                   <div style={{width: 60, height: 4, borderRadius: 999, background: "var(--bg-deep)", overflow: "hidden"}}>
@@ -415,7 +419,7 @@ function UsagePage() {
           trackBy="id"
           empty={
             <CSBox textAlign="center" color="text-body-secondary" padding="l">
-              {loading ? "加载中…" : "暂无调用记录"}
+              {loading ? t('platform.usage.loading') : t('platform.usage.empty_records')}
             </CSBox>
           }
         />
@@ -425,7 +429,7 @@ function UsagePage() {
       <CSContainer header={
         <CSHeader
           variant="h2"
-          description="按请求数"
+          description={t('platform.usage.top_desc')}
           /* 导出 CSV 按钮已隐藏(2026-10):SHOW_USAGE_CSV_EXPORT 开关控制 */
           actions={SHOW_USAGE_CSV_EXPORT && (
             /* U7: 导出 CSV */
@@ -435,7 +439,8 @@ function UsagePage() {
               disabled={byModel.length === 0}
               onClick={() => {
                 const sorted = [...byModel].sort((a, b) => Number(b.turns || 0) - Number(a.turns || 0));
-                const headers = ["排名", "模型", "API", "请求数", "输入Token", "输出Token", "成本"];
+                const headers = [t('platform.usage.csv_rank'), t('platform.usage.csv_model'), t('platform.usage.csv_api'),
+                  t('platform.usage.csv_requests'), t('platform.usage.csv_tok_in'), t('platform.usage.csv_tok_out'), t('platform.usage.csv_cost')];
                 const rows = sorted.map((m, i) => [
                   i + 1,
                   m.model || "",
@@ -451,11 +456,11 @@ function UsagePage() {
                 downloadBlob(csv, `usage_by_model_${new Date().toISOString().slice(0,10)}.csv`, "text/csv;charset=utf-8;");
               }}
             >
-              导出 CSV
+              {t('platform.usage.btn_export_csv')}
             </CSButton>
           )}
         >
-          Top 模型
+          {t('platform.usage.top_title')}
         </CSHeader>
       }>
         <CSTable
@@ -468,33 +473,33 @@ function UsagePage() {
             },
             {
               id: "model",
-              header: "模型",
+              header: t('platform.usage.col_model'),
               cell: m => <strong style={{fontSize: 13.5}}>{m.model}</strong>,
             },
             {
               id: "api",
-              header: "API",
+              header: t('platform.usage.col_api'),
               cell: m => <span className="muted">{m.api_id}</span>,
             },
             {
               id: "requests",
-              header: "请求",
+              header: t('platform.usage.col_requests'),
               cell: m => <span className="mono">{fmtN(Number(m.turns || 0))}</span>,
             },
             {
               id: "tokens",
-              header: "Token (入 / 出)",
+              header: t('platform.usage.col_tokens'),
               cell: m => <span className="mono"><span className="muted">{fmtN(Number(m.input_tokens || 0))}</span> <span className="muted-2">/</span> {fmtN(Number(m.output_tokens || 0))}</span>,
             },
             /* 成本列已隐藏(2026-10):SHOW_USAGE_COST 开关控制 */
             ...(SHOW_USAGE_COST ? [{
               id: "cost",
-              header: "成本",
+              header: t('platform.usage.col_cost'),
               cell: m => <span className="mono">${Number(m.cost_usd || 0).toFixed(2)}</span>,
             }] : []),
             {
               id: "pct",
-              header: "占比",
+              header: t('platform.usage.col_pct'),
               cell: m => (
                 <div style={{display: "flex", alignItems: "center", gap: 8}}>
                   <div style={{width: 60, height: 4, borderRadius: 999, background: "var(--bg-deep)", overflow: "hidden"}}>
@@ -509,7 +514,7 @@ function UsagePage() {
           trackBy={m => `${m.api_id}/${m.model}`}
           empty={
             <CSBox textAlign="center" color="text-body-secondary" padding="l">
-              {loading ? "加载中…" : "暂无调用记录"}
+              {loading ? t('platform.usage.loading') : t('platform.usage.empty_records')}
             </CSBox>
           }
         />
@@ -519,7 +524,11 @@ function UsagePage() {
       <CSContainer header={
         <CSHeader
           variant="h2"
-          description={`显示第 ${recentPage * RECENT_LIMIT + 1}–${recentPage * RECENT_LIMIT + Math.min(RECENT_LIMIT, recent.length)} 条（共 ${recentTotal} 条）`}
+          description={t('platform.usage.recent_desc', {
+            from: recentPage * RECENT_LIMIT + 1,
+            to: recentPage * RECENT_LIMIT + Math.min(RECENT_LIMIT, recent.length),
+            total: recentTotal,
+          })}
           /* 导出 CSV 按钮已隐藏(2026-10):SHOW_USAGE_CSV_EXPORT 开关控制 */
           actions={SHOW_USAGE_CSV_EXPORT && (
             /* U7: 导出 CSV */
@@ -528,7 +537,9 @@ function UsagePage() {
               variant="normal"
               disabled={recent.length === 0}
               onClick={() => {
-                const headers = ["时间", "API", "模型", "输入Token", "输出Token", "缓存输入", "成本", "上下文used", "上下文max", "存档ID"];
+                const headers = [t('platform.usage.csv_time'), t('platform.usage.csv_api'), t('platform.usage.csv_model'),
+                  t('platform.usage.csv_tok_in'), t('platform.usage.csv_tok_out'), t('platform.usage.csv_cached_in'),
+                  t('platform.usage.csv_cost'), t('platform.usage.csv_ctx_used'), t('platform.usage.csv_ctx_max'), t('platform.usage.csv_save_id')];
                 const rows = recent.map(r => [
                   r.at || "",
                   r.api_id || "",
@@ -547,18 +558,18 @@ function UsagePage() {
                 downloadBlob(csv, `usage_recent_${new Date().toISOString().slice(0,10)}.csv`, "text/csv;charset=utf-8;");
               }}
             >
-              导出 CSV
+              {t('platform.usage.btn_export_csv')}
             </CSButton>
           )}
         >
-          最近请求
+          {t('platform.usage.recent_title')}
         </CSHeader>
       }>
         <CSTable
           columnDefinitions={[
             {
               id: "at",
-              header: "时间",
+              header: t('platform.usage.col_time'),
               /* U8: 行可点击跳存档 */
               cell: r => {
                 const saveId = r.save_id || r.context_run_id;
@@ -568,51 +579,51 @@ function UsagePage() {
                       href={`#play?save=${saveId}`}
                       className="mono"
                       style={{color: "var(--accent)", textDecoration: "none", cursor: "pointer"}}
-                      title="点击跳转至存档"
+                      title={t('platform.usage.col_time_tip')}
                     >{timeStr}</a>
                   : <span className="mono">{timeStr}</span>;
               },
             },
             {
               id: "api",
-              header: "API",
+              header: t('platform.usage.col_api'),
               cell: r => <span className="muted">{r.api_id}</span>,
             },
             {
               id: "model",
-              header: "模型",
+              header: t('platform.usage.col_model'),
               cell: r => <span className="mono" style={{fontSize: 11.5}}>{r.model}</span>,
             },
             {
               id: "tokens",
-              header: "Token in / out",
+              header: t('platform.usage.col_tok_inout'),
               cell: r => <span className="mono"><span className="muted">{fmtN(Number(r.input_tokens || 0))}</span> <span className="muted-2">/</span> {fmtN(Number(r.output_tokens || 0))}</span>,
             },
             {
               /* U1: 缓存输入列 */
               id: "cached_in",
-              header: "缓存 in",
+              header: t('platform.usage.col_cached_in'),
               cell: r => <span className="mono muted">{r.cached_input_tokens ? fmtN(Number(r.cached_input_tokens)) : "—"}</span>,
             },
             /* 成本列已隐藏(2026-10):SHOW_USAGE_COST 开关控制 */
             ...(SHOW_USAGE_COST ? [{
               id: "cost",
-              header: "成本",
+              header: t('platform.usage.col_cost'),
               cell: r => <span className="mono">${Number(r.cost_usd || 0).toFixed(3)}</span>,
             }] : []),
             /* 上下文进度条列已隐藏(2026-10):SHOW_USAGE_CONTEXT_COLUMN 开关控制 */
             ...(SHOW_USAGE_CONTEXT_COLUMN ? [{
               /* U4: context 进度条 */
               id: "ctx",
-              header: "上下文",
+              header: t('platform.usage.col_ctx'),
               cell: r => {
                 const used = Number(r.context_used || 0);
                 const max = Number(r.context_max || 0);
                 if (!max) {
                   // 空值可解释:子代理/内部任务没有"上下文窗口"概念;主聊天行为 0 则是未记录
                   const tip = r.scenario === "chat"
-                    ? "本轮未记录上下文窗口"
-                    : "子代理调用（提取/工具类内部任务，无上下文窗口）";
+                    ? t('platform.usage.ctx_tip_unrecorded')
+                    : t('platform.usage.ctx_tip_subagent');
                   return <span className="mono muted" title={tip}>—</span>;
                 }
                 const pct = Math.min(100, Math.round(used / max * 100));
@@ -632,7 +643,7 @@ function UsagePage() {
           trackBy={r => `${r.at || ""}/${r.api_id || ""}/${r.model || ""}/${r.input_tokens || ""}`}
           empty={
             <CSBox textAlign="center" color="text-body-secondary" padding="l">
-              {loading ? "加载中…" : "暂无最近调用"}
+              {loading ? t('platform.usage.loading') : t('platform.usage.empty_recent')}
             </CSBox>
           }
         />
@@ -643,15 +654,15 @@ function UsagePage() {
               variant="normal"
               disabled={recentPage === 0 || loading}
               onClick={() => setRecentPage(p => Math.max(0, p - 1))}
-            >{"< 上一页"}</CSButton>
+            >{t('platform.usage.page_prev')}</CSButton>
             <span style={{ color: "var(--muted)" }}>
-              {"第 " + (recentPage + 1) + " / " + Math.ceil(recentTotal / RECENT_LIMIT) + " 页"}
+              {t('platform.usage.page_status', { cur: recentPage + 1, total: Math.ceil(recentTotal / RECENT_LIMIT) })}
             </span>
             <CSButton
               variant="normal"
               disabled={(recentPage + 1) * RECENT_LIMIT >= recentTotal || loading}
               onClick={() => setRecentPage(p => p + 1)}
-            >{"下一页 >"}</CSButton>
+            >{t('platform.usage.page_next')}</CSButton>
           </div>
         )}
       </CSContainer>

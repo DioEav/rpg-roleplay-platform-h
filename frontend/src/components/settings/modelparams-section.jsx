@@ -200,7 +200,7 @@ function ModelParamsSection() {
         </CSSpaceBetween>
       </SetRow>
 
-      <ParamSlider label="Temperature" desc="Higher = more random; 0 = most deterministic; recommended 0.4–1.0"
+      <ParamSlider label={t('settings.modelparams.temperature')} desc={t('settings.modelparams.temperature_desc')}
         value={params.temperature} min={0} max={2} step={0.05} unit=""
         onChange={(v) => { setPreset("custom"); u("temperature", v); }} />
 
@@ -232,23 +232,23 @@ function ModelParamsSection() {
         </SetRow>
       )}
 
-      <ParamSlider label="Top-p" desc="Cumulative probability cutoff; 0.9–0.95 is typical"
+      <ParamSlider label={t('settings.modelparams.top_p')} desc={t('settings.modelparams.top_p_desc')}
         value={params.top_p} min={0} max={1} step={0.01} unit=""
         onChange={(v) => { setPreset("custom"); u("top_p", v); }} />
 
-      <ParamSlider label="Top-k" desc="Sample only from the top K tokens; 0 = disabled"
+      <ParamSlider label={t('settings.modelparams.top_k')} desc={t('settings.modelparams.top_k_desc')}
         value={params.top_k} min={0} max={200} step={1} unit=""
         onChange={(v) => { setPreset("custom"); u("top_k", v); }} />
 
-      <ParamSlider label="Repetition Penalty" desc="Suppresses recently used tokens; 1.0 = no effect; 1.15–1.2 typical"
+      <ParamSlider label={t('settings.modelparams.repetition_penalty')} desc={t('settings.modelparams.repetition_penalty_desc')}
         value={params.repetition_penalty} min={1} max={2} step={0.01} unit=""
         onChange={(v) => { setPreset("custom"); u("repetition_penalty", v); }} />
 
-      <ParamSlider label="Frequency Penalty" desc="OpenAI-style: adjusts based on token frequency so far"
+      <ParamSlider label={t('settings.modelparams.frequency_penalty')} desc={t('settings.modelparams.frequency_penalty_desc')}
         value={params.frequency_penalty} min={-2} max={2} step={0.05} unit=""
         onChange={(v) => { setPreset("custom"); u("frequency_penalty", v); }} />
 
-      <ParamSlider label="Presence Penalty" desc="OpenAI-style: adjusts based on whether token has appeared"
+      <ParamSlider label={t('settings.modelparams.presence_penalty')} desc={t('settings.modelparams.presence_penalty_desc')}
         value={params.presence_penalty} min={-2} max={2} step={0.05} unit=""
         onChange={(v) => { setPreset("custom"); u("presence_penalty", v); }} />
 

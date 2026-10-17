@@ -12,6 +12,13 @@ export const BRAND_EN = 'Meadhall';
 export const BRAND_ZH = '蜜酒厅';
 export const BRAND_LABS = 'Meadhall Labs';
 
+// 按界面语言取品牌名(zh 系语言 → 中文,其余 → 英文)。
+// 品牌字符串不进 i18n 语言包 —— 仍以本文件为唯一出口(见文件头注释),
+// 组件侧用 brandNameForLang(i18n.language) 取用。
+export function brandNameForLang(lang) {
+  return /^zh([-_]|$)/i.test(String(lang || '')) ? BRAND_ZH : BRAND_EN;
+}
+
 // 落地页(公测预约 + /legal 法律文档正本)
 export const LANDING_BASE = import.meta.env.VITE_LANDING_BASE || 'https://play.stellatrix.icu';
 // 开源文档站(站内帮助抽屉以 iframe 打开其 /embed/<slug>)

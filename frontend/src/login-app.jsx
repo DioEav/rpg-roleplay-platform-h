@@ -15,11 +15,12 @@
 import React from 'react';
 import { useState, useEffect, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
+import { brandNameForLang } from './lib/brand.js';
 import { __resolveNextOrDefault } from './components/login/nextTarget.js';
 import { InviteScreen } from './components/login/InviteScreen.jsx';
 import { VerifyForm, MagicOtpForm, NeedsProfileForm, ForgotForm, ResetForm, MainAuthForm } from './components/login/AuthForms.jsx';
 function LoginApp() {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   // 「邮箱验证码登录」(code-login)已下线(2026-10):登录只保留密码登录 + 注册 + 找回密码。
   const [mode, setMode] = useState('login');     // 'login' | 'register' | 'verify' | 'forgot' | 'reset' | 'magic-otp' | 'needs-profile'
   const [schema, setSchema] = useState(null);    // { login: [...], register: [...], notes: {...} }
@@ -557,7 +558,7 @@ function LoginApp() {
             </svg>
           </div>
           <div>
-            <h1>蜜酒厅</h1>
+            <h1>{brandNameForLang(i18n.language)}</h1>
             <div className="pl-auth-sub">{t('auth.subtitle')}</div>
           </div>
         </div>
