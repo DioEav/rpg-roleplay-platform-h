@@ -68,21 +68,28 @@ function SectionAupActions({ nav }) {
                   <div style={{ padding: '11px 13px' }}>
                     <div style={{ fontSize: 13.5, fontWeight: 600 }}>@{u.username}</div>
                     <div style={{ fontSize: 11.5, color: 'var(--muted-2)', marginTop: 2 }}>
-                      {u.deactivated_at ? <span style={{ color: 'var(--danger)' }}>{t('mobile.admin.users.status_deactivated')}</span> : <span style={{ color: 'var(--ok)' }}>{t('mobile.admin.users.status_active')}</span>}
+                      {u.pending_deletion
+                        ? <span style={{ color: 'var(--danger)' }}>{t('mobile.admin.aup.status_terminated')}</span>
+                        : u.deactivated_at
+                          ? <span style={{ color: 'var(--danger)' }}>{t('mobile.admin.users.status_deactivated')}</span>
+                          : <span style={{ color: 'var(--ok)' }}>{t('mobile.admin.users.status_active')}</span>}
                       {u.ban_reason && <span> · {u.ban_reason}</span>}
                     </div>
                   </div>
-                  <div style={{ display: 'flex', borderTop: '1px solid var(--line-soft)' }}>
-                    {!u.deactivated_at ? (
-                      <button style={{ flex: 1, padding: '9px 4px', fontSize: 12, color: 'var(--warn)', borderRight: '1px solid var(--line-soft)' }}
-                        onClick={() => setSheet({ action: 'suspend', user: u })}>{t('mobile.admin.aup.suspend_btn')}</button>
-                    ) : (
-                      <button style={{ flex: 1, padding: '9px 4px', fontSize: 12, color: 'var(--ok)', borderRight: '1px solid var(--line-soft)' }}
-                        onClick={() => setSheet({ action: 'unsuspend', user: u })}>{t('mobile.admin.aup.unsuspend_btn')}</button>
-                    )}
-                    <button style={{ flex: 1, padding: '9px 4px', fontSize: 12, color: 'var(--danger)' }}
-                      onClick={() => setSheet({ action: 'terminate', user: u })}>{t('mobile.admin.aup.terminate_btn')}</button>
-                  </div>
+                  {!u.pending_deletion && (
+                    <div style={{ display: 'flex', borderTop: '1px solid var(--line-soft)' }}>
+                      {!u.deactivated_at && (
+                        <button style={{ flex: 1, padding: '9px 4px', fontSize: 12, color: 'var(--warn)', borderRight: '1px solid var(--line-soft)' }}
+                          onClick={() => setSheet({ action: 'suspend', user: u })}>{t('mobile.admin.aup.suspend_btn')}</button>
+                      )}
+                      {u.deactivated_at && (
+                        <button style={{ flex: 1, padding: '9px 4px', fontSize: 12, color: 'var(--ok)', borderRight: '1px solid var(--line-soft)' }}
+                          onClick={() => setSheet({ action: 'unsuspend', user: u })}>{t('mobile.admin.aup.unsuspend_btn')}</button>
+                      )}
+                      <button style={{ flex: 1, padding: '9px 4px', fontSize: 12, color: 'var(--danger)' }}
+                        onClick={() => setSheet({ action: 'terminate', user: u })}>{t('mobile.admin.aup.terminate_btn')}</button>
+                    </div>
+                  )}
                 </div>
               ))}
             </div>

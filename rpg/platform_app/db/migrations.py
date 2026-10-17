@@ -2404,6 +2404,13 @@ MIGRATIONS: list[tuple[int, str, list[str]]] = [
         # 本表此前无任何写入方,不存在存量数据)。v57 的注释不再改,以本迁移为准。
         "alter table csam_reports alter column status set default 'pending'",
     ]),
+    (106, "users_suspended_until", [
+        # 定时暂停落地:api/admin/aup.py 的 suspend(duration_days)/unsuspend 一直引用
+        # users.suspended_until,但该列从未被任何迁移/init 建过 → 填天数的暂停与
+        # 【全部】解封调用必 500(column does not exist)。补列让既有 SQL 直接生效;
+        # 到期自动解封由 cron.suspend_expiry(挂进 run_cron all)负责。
+        "alter table users add column if not exists suspended_until timestamptz",
+    ]),
 
 ]
 

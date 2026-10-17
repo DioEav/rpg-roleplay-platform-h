@@ -50,7 +50,9 @@ async def admin_list_users(
                where s.user_id = u.id and s.expires_at > now()) as session_count,
               coalesce((select sum(tu.total_tokens) from token_usage tu
                where tu.user_id = u.id
-                 and tu.created_at > now() - interval '30 days'), 0) as usage_tokens_30d
+                 and tu.created_at > now() - interval '30 days'), 0) as usage_tokens_30d,
+              exists(select 1 from account_delete_queue q
+               where q.user_id = u.id and q.completed_at is null) as pending_deletion
             from users u
             where (%s = '' or u.username ilike %s or u.display_name ilike %s)
               and (%s = 'all' or u.role = %s)

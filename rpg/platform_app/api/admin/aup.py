@@ -23,12 +23,17 @@ async def admin_suspend_user(
     if not reason:
         raise HTTPException(status_code=400, detail="reason 不能为空")
 
-    suspend_until = None
+    # 管理员不能暂停自己(与 terminate 的 self-guard 对齐;否则唯一管理员自停后无法自救)
+    if admin.get("id") == user_id:
+        raise HTTPException(status_code=400, detail="不允许暂停自己的账户")
+
     if duration_days is not None:
         try:
             duration_days = int(duration_days)
         except (TypeError, ValueError):
             raise HTTPException(status_code=400, detail="duration_days 须为整数")
+        if duration_days < 1:
+            raise HTTPException(status_code=400, detail="duration_days 须为正整数")
 
     with connect() as db:
         if duration_days is not None:
@@ -69,6 +74,14 @@ async def admin_unsuspend_user(
 ):
     ip = _client_ip(request)
     with connect() as db:
+        # 已终止(进入硬删队列)的账户不可解封:否则会在删除日之前复活一个
+        # 邮箱已被封禁、30 天后仍会被物理删除的账户,用户侧表现为"回来了又凭空消失"。
+        queued = db.execute(
+            "select 1 from account_delete_queue where user_id = %s and completed_at is null",
+            (user_id,),
+        ).fetchone()
+        if queued:
+            raise HTTPException(status_code=409, detail="该账户已终止并进入删除队列，不能解封")
         db.execute(
             """
             update users

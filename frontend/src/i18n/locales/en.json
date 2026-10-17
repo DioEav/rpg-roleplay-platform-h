@@ -1661,6 +1661,7 @@
       "col_status": "Status",
       "col_ban_reason": "Ban Reason",
       "status_suspended": "Suspended/Deactivated",
+      "status_terminated": "Terminated",
       "status_active": "Active",
       "btn_suspend": "Suspend",
       "btn_unsuspend": "Reinstate",
@@ -5967,6 +5968,7 @@
       "aup": {
         "notice": "AUP = Acceptable Use Policy. Suspend/terminate are serious actions — terminate permanently bans the account.",
         "suspend_btn": "Suspend",
+        "status_terminated": "Terminated (pending deletion)",
         "unsuspend_btn": "Unsuspend",
         "terminate_btn": "Terminate account",
         "suspend_sheet_title": "Suspend @{{username}}",

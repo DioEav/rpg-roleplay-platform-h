@@ -131,16 +131,18 @@ export function AdminAupActionsPage() {
                 { id: 'display_name', header: t('admin_page.aup.col_display_name'), cell: (u) => u.display_name || '—' },
                 {
                   id: 'status', header: t('admin_page.aup.col_status'),
-                  cell: (u) => u.deactivated_at
-                    ? <CSStatusIndicator type="stopped">{t('admin_page.aup.status_suspended')}</CSStatusIndicator>
-                    : <CSStatusIndicator type="success">{t('admin_page.aup.status_active')}</CSStatusIndicator>,
+                  cell: (u) => u.pending_deletion
+                    ? <CSStatusIndicator type="error">{t('admin_page.aup.status_terminated')}</CSStatusIndicator>
+                    : u.deactivated_at
+                      ? <CSStatusIndicator type="stopped">{t('admin_page.aup.status_suspended')}</CSStatusIndicator>
+                      : <CSStatusIndicator type="success">{t('admin_page.aup.status_active')}</CSStatusIndicator>,
                 },
                 { id: 'ban_reason', header: t('admin_page.aup.col_ban_reason'), cell: (u) => u.ban_reason || '—' },
                 {
                   id: 'actions', header: t('admin_page.common.actions'),
                   cell: (u) => (
                     <CSSpaceBetween direction="horizontal" size="xs">
-                      {!u.deactivated_at && (
+                      {!u.deactivated_at && !u.pending_deletion && (
                         <CSButton
                           variant="inline-link"
                           onClick={() => { setSuspendModal(u); setSuspendForm({ reason: '', duration_days: '' }); }}
@@ -148,15 +150,17 @@ export function AdminAupActionsPage() {
                           {t('admin_page.aup.btn_suspend')}
                         </CSButton>
                       )}
-                      {u.deactivated_at && (
+                      {u.deactivated_at && !u.pending_deletion && (
                         <CSButton variant="inline-link" onClick={() => setUnsuspendModal(u)}>{t('admin_page.aup.btn_unsuspend')}</CSButton>
                       )}
-                      <CSButton
-                        variant="inline-link"
-                        onClick={() => { setTerminateModal(u); setTerminateReason(''); }}
-                      >
-                        {t('admin_page.aup.btn_terminate')}
-                      </CSButton>
+                      {!u.pending_deletion && (
+                        <CSButton
+                          variant="inline-link"
+                          onClick={() => { setTerminateModal(u); setTerminateReason(''); }}
+                        >
+                          {t('admin_page.aup.btn_terminate')}
+                        </CSButton>
+                      )}
                     </CSSpaceBetween>
                   ),
                 },

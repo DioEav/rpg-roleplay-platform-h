@@ -1765,6 +1765,7 @@
       "col_status": "状态",
       "col_ban_reason": "封禁原因",
       "status_suspended": "已暂停/停用",
+      "status_terminated": "已终止",
       "status_active": "正常",
       "btn_suspend": "暂停",
       "btn_unsuspend": "解封",
@@ -5964,6 +5965,7 @@
       "aup": {
         "notice": "AUP = 可接受使用政策。暂停/终止为严肃操作，terminate 会封号，请谨慎。",
         "suspend_btn": "暂停",
+        "status_terminated": "已终止（待删除）",
         "unsuspend_btn": "解封",
         "terminate_btn": "终止账户",
         "suspend_sheet_title": "暂停 @{{username}}",

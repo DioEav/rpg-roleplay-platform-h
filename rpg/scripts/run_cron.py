@@ -197,6 +197,18 @@ def cmd_phase_digest_backfill(db) -> dict:
     return result
 
 
+def cmd_suspend_expiry(db) -> dict:
+    """定时暂停到期自动解封 (users.suspended_until,见 cron.suspend_expiry)."""
+    try:
+        from rpg.cron.suspend_expiry import run_suspend_expiry
+    except ModuleNotFoundError:
+        from cron.suspend_expiry import run_suspend_expiry
+    result = run_suspend_expiry(db)
+    logger.info("suspend_expiry: %s", result)
+    _write_audit(db, "cron.suspend_expiry", result)
+    return result
+
+
 COMMANDS = {
     "hard_delete": cmd_hard_delete,
     "prune_audit": cmd_prune_audit,
@@ -205,6 +217,7 @@ COMMANDS = {
     "prune_feedback": cmd_prune_feedback,
     "phase_digest_backfill": cmd_phase_digest_backfill,
     "prune_retention": cmd_prune_retention,
+    "suspend_expiry": cmd_suspend_expiry,
 }
 
 _ALL_COMMAND_NAMES = "|".join(COMMANDS.keys())
