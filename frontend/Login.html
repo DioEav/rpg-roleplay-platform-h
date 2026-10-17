@@ -10,6 +10,24 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;500;600;700&family=Noto+Serif+SC:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" />
+  <!-- 主题防闪:CSS 生效前把已存主题落到 <html>;未存储过 → 默认亮色·暖纸。
+       键名/合法值/默认值与 src/lib/theme.js 保持同步。登录页无 JS 主题模块,
+       这里同时监听 storage,其他标签页切主题时本页实时跟随。 -->
+  <script>
+    try {
+      var _t = localStorage.getItem('rpg.theme');
+      if (_t !== 'dark' && _t !== 'light-a' && _t !== 'light-b') _t = 'light-a';
+      document.documentElement.setAttribute('data-theme', _t);
+    } catch (e) { document.documentElement.setAttribute('data-theme', 'light-a'); }
+    window.addEventListener('storage', function (e) {
+      if (e.key !== 'rpg.theme' && e.key !== null) return;
+      try {
+        var v = localStorage.getItem('rpg.theme');
+        if (v !== 'dark' && v !== 'light-a' && v !== 'light-b') v = 'light-a';
+        document.documentElement.setAttribute('data-theme', v);
+      } catch (err) {}
+    });
+  </script>
   <link rel="stylesheet" href="src/tokens.css" />
   <link rel="stylesheet" href="src/platform.css" />
   <link rel="stylesheet" href="src/motion.css" />
