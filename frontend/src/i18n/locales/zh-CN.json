@@ -1960,6 +1960,7 @@
       "empty_search": "没有匹配的公开剧本",
       "load_fail": "加载公开剧本失败",
       "clone_ok": "已导入到我的剧本",
+      "already_imported": "该剧本已在你的剧本库中",
       "mine_badge": "我的",
       "imported_badge": "已导入",
       "is_mine": "我的剧本",
@@ -4116,7 +4117,11 @@
         "btn_import": "导入",
         "import_ok": "已导入到「我的角色卡」",
         "import_ok_detail": "「{{name}}」已复制为你自己的卡，可在「我的角色卡」编辑使用。",
-        "import_fail": "导入失败"
+        "import_fail": "导入失败",
+        "mine_badge": "我的",
+        "imported_badge": "已导入",
+        "already_imported": "这张角色卡已在你的卡库中",
+        "already_imported_detail": "「{{name}}」此前已导入，无需重复导入。"
       },
       "persona": {
         "gallery_load_fail": "加载人设图历史失败",
@@ -6213,6 +6218,8 @@
         "btn_import": "导入到我的卡库",
         "btn_import_short": "导入",
         "imported": "「{{name}}」已导入到我的角色卡",
+        "already_imported": "「{{name}}」此前已导入,无需重复导入",
+        "already_imported_short": "已导入",
         "import_fail": "导入失败: {{msg}}"
       },
       "toast": {

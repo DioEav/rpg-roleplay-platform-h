@@ -138,13 +138,19 @@ async def api_public_scripts(q: str | None = None, limit: int = 30, offset: int 
             f"""
             SELECT s.id, s.title, s.description, s.chapter_count, s.word_count,
                    s.clone_count, s.published_at, s.cover_image_url, s.owner_id,
-                   u.display_name AS author, u.username AS author_username
+                   u.display_name AS author, u.username AS author_username,
+                   -- 当前用户是否已导入(订阅指针):前端据此把按钮置为「已导入」,
+                   -- 刷新页面后也不会再出现可重复点击的导入按钮。
+                   EXISTS (
+                     SELECT 1 FROM user_script_subscriptions uss
+                     WHERE uss.user_id = %s AND uss.script_id = s.id
+                   ) AS imported
             FROM scripts s JOIN users u ON u.id = s.owner_id
             WHERE {where}
             ORDER BY {order_by}
             LIMIT %s OFFSET %s
             """,
-            (*params, limit + 1, offset),
+            (user["id"], *params, limit + 1, offset),
         ).fetchall()
         rows = [dict(r) for r in rows]
     has_more = len(rows) > limit
@@ -243,6 +249,9 @@ async def api_clone_public_script(script_id: int, user=Depends(require_user)):
         "ok": True,
         "script_id": script_id,
         "subscribed": True,
+        # 重复导入:订阅指针已存在(PK 冲突)。前端据此提示「已导入」而不是再报一次成功,
+        # clone_count 也不会重复累加。
+        "already_imported": not bool(inserted),
         "title": row.get("title"),
     })
 

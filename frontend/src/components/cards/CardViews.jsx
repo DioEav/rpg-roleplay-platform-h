@@ -47,9 +47,14 @@ function OnlineCardsView() {
   const doImport = async (c) => {
     setImporting((p) => ({ ...p, [c.id]: true }));
     try {
-      await window.api.cards.cloneFromPublic(c.id);
-      window.__apiToast?.(t('cards.page.online.import_ok'), { kind: 'ok', duration: 2200, detail: t('cards.page.online.import_ok_detail', { name: c.name }) });
-      load(q);  // 刷新热度
+      const r = await window.api.cards.cloneFromPublic(c.id);
+      if (r && r.already_imported) {
+        // 与剧本库一致:已导入过只做提示,不再重复报成功。
+        window.__apiToast?.(t('cards.page.online.already_imported'), { kind: 'info', duration: 2400, detail: t('cards.page.online.already_imported_detail', { name: c.name }) });
+      } else {
+        window.__apiToast?.(t('cards.page.online.import_ok'), { kind: 'ok', duration: 2200, detail: t('cards.page.online.import_ok_detail', { name: c.name }) });
+      }
+      load(q);  // 刷新热度 / 导入状态
     } catch (e) {
       window.__apiToast?.(t('cards.page.online.import_fail'), { kind: 'danger', detail: e?.payload?.error || e?.message });
     } finally {
@@ -81,9 +86,11 @@ function OnlineCardsView() {
             {(items || []).map((c) => (
               <div key={c.id} style={{ border: '1px solid var(--line, #36322d)', borderRadius: 10, padding: 14, background: 'var(--panel, #211f1d)', display: 'grid', gap: 8 }}>
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
                     <AvatarImg src={c.avatar_path || null} name={c.name || '?'} size={40} shape="rounded" />
                     <strong style={{ fontSize: 15 }}>{c.name || t('cards.detail.unnamed')}</strong>
+                    {c.mine && <CSBadge color="green">{t('cards.page.online.mine_badge')}</CSBadge>}
+                    {!c.mine && c.imported && <CSBadge color="green">{t('cards.page.online.imported_badge')}</CSBadge>}
                   </div>
                   <span style={{ fontSize: 11, color: 'var(--text-quiet, #9a948c)' }}>♥ {c.clone_count || 0}</span>
                 </div>
@@ -96,7 +103,11 @@ function OnlineCardsView() {
                 </div>
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, marginTop: 2 }}>
                   <span style={{ fontSize: 11, color: 'var(--muted, #b8b2a8)' }}>by {c.owner_name || t('cards.page.online.anon')}</span>
-                  <CSButton variant="primary" loading={!!importing[c.id]} onClick={() => doImport(c)}>{t('cards.page.online.btn_import')}</CSButton>
+                  {(c.mine || c.imported) ? (
+                    <CSButton disabled iconName="check">{c.mine ? t('cards.page.online.mine_badge') : t('cards.page.online.imported_badge')}</CSButton>
+                  ) : (
+                    <CSButton variant="primary" loading={!!importing[c.id]} onClick={() => doImport(c)}>{t('cards.page.online.btn_import')}</CSButton>
+                  )}
                 </div>
               </div>
             ))}

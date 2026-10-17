@@ -33,8 +33,13 @@ function OnlineView({ nav }) {
   const doImport = async (c) => {
     setImporting((p) => ({ ...p, [c.id]: true }));
     try {
-      await window.api.cards.cloneFromPublic(c.id);
-      nav.toast(t('mobile.cards.online.imported', { name: c.name }), 'ok', 'download');
+      const r = await window.api.cards.cloneFromPublic(c.id);
+      if (r && r.already_imported) {
+        // 与桌面端一致:已导入过只提示,不重复报成功。
+        nav.toast(t('mobile.cards.online.already_imported', { name: c.name }), 'info', 'check');
+      } else {
+        nav.toast(t('mobile.cards.online.imported', { name: c.name }), 'ok', 'download');
+      }
       try { window.dispatchEvent(new CustomEvent('rpg-user-cards-updated')); } catch (_) {}
       load(q);
     } catch (e) {
@@ -43,6 +48,9 @@ function OnlineView({ nav }) {
       setImporting((p) => ({ ...p, [c.id]: false }));
     }
   };
+
+  // 已导入(或本人发布)的卡:统一显示不可再导入的状态
+  const isOwned = (c) => !!(c.mine || c.imported);
 
   // 在线卡详情
   if (selected) {
@@ -87,10 +95,11 @@ function OnlineView({ nav }) {
               </div>
             )}
 
-            <button className="pl-btn-primary" onClick={() => doImport(c)} disabled={!!importing[c.id]}
-              style={{ opacity: importing[c.id] ? 0.6 : 1 }}>
-              <Icon name="download" size={16} />
-              {importing[c.id] ? t('mobile.cards.online.importing') : t('mobile.cards.online.btn_import')}
+            <button className="pl-btn-primary" onClick={() => doImport(c)} disabled={!!importing[c.id] || isOwned(c)}
+              style={{ opacity: (importing[c.id] || isOwned(c)) ? 0.6 : 1 }}>
+              <Icon name={isOwned(c) ? 'check' : 'download'} size={16} />
+              {isOwned(c) ? t('mobile.cards.online.already_imported_short', '已导入')
+                : (importing[c.id] ? t('mobile.cards.online.importing') : t('mobile.cards.online.btn_import'))}
             </button>
           </div>
         </div>
@@ -170,8 +179,9 @@ function OnlineView({ nav }) {
                 </div>
                 <button className="pl-headbtn accent" style={{ height: 36, width: 60, borderRadius: 10, fontSize: 12.5 }}
                   onClick={(e) => { e.stopPropagation(); doImport(c); }}
-                  disabled={!!importing[c.id]}>
-                  {importing[c.id] ? '…' : t('mobile.cards.online.btn_import_short')}
+                  disabled={!!importing[c.id] || isOwned(c)}>
+                  {isOwned(c) ? t('mobile.cards.online.already_imported_short', '已导入')
+                    : (importing[c.id] ? '…' : t('mobile.cards.online.btn_import_short'))}
                 </button>
               </button>
             ))}

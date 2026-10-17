@@ -43,13 +43,20 @@ function ScriptsLibraryView() {
     try {
       const r = await window.api.scripts.cloneFromPublic(s.id);
       if (r && r.ok === false) throw new Error(r.error || t('scripts.toast.import_fail'));
-      window.toast?.(t('scripts.public.clone_ok'), {
-        kind: "ok",
-        detail: `${s.title} · script #${r?.script_id ?? "?"}`,
-        duration: 3000,
-      });
       setImportedIds((m) => ({ ...m, [s.id]: true }));
-      setItems((arr) => arr.map((x) => x.id === s.id ? { ...x, clone_count: (x.clone_count || 0) + 1 } : x));
+      if (r?.already_imported) {
+        // 之前已导入过(后端订阅指针已存在):不再谎报导入成功,也不重复累加热度。
+        window.toast?.(t('scripts.public.already_imported', '该剧本已在你的剧本库中'), {
+          kind: "info", detail: s.title, duration: 2600,
+        });
+      } else {
+        window.toast?.(t('scripts.public.clone_ok'), {
+          kind: "ok",
+          detail: `${s.title} · script #${r?.script_id ?? "?"}`,
+          duration: 3000,
+        });
+        setItems((arr) => arr.map((x) => x.id === s.id ? { ...x, clone_count: (x.clone_count || 0) + 1 } : x));
+      }
       try { window.dispatchEvent(new CustomEvent("rpg-scripts-updated")); } catch (_) {}
     } catch (e) {
       window.__apiToast?.(t('scripts.toast.import_fail'), { kind: "danger", detail: e?.message || String(e) });
@@ -84,12 +91,12 @@ function ScriptsLibraryView() {
           {loading ? t('common.loading') : (q ? t('scripts.public.empty_search') : t('scripts.public.empty'))}
         </CSBox>}
         cardDefinition={{
-          header: (s) => (
-            <CSSpaceBetween direction="horizontal" size="xs" alignItems="center">
-              <CSBox key="t" variant="h3" padding="n">{s.title}</CSBox>
-              {(s.mine || importedIds[s.id]) && <CSBadge key="b" color="green">{s.mine ? t('scripts.public.mine_badge') : t('scripts.public.imported_badge')}</CSBadge>}
-            </CSSpaceBetween>
-          ),
+            header: (s) => (
+              <CSSpaceBetween direction="horizontal" size="xs" alignItems="center">
+                <CSBox key="t" variant="h3" padding="n">{s.title}</CSBox>
+                {(s.mine || s.imported || importedIds[s.id]) && <CSBadge key="b" color="green">{s.mine ? t('scripts.public.mine_badge') : t('scripts.public.imported_badge')}</CSBadge>}
+              </CSSpaceBetween>
+            ),
           sections: [
             { id: 'cover', content: (s) => s.cover_image_url ? (
               <AvatarImg
@@ -114,7 +121,7 @@ function ScriptsLibraryView() {
             { id: 'desc', content: (s) => s.description
               ? <CSBox color="text-body-secondary">{s.description}</CSBox> : null },
             { id: 'actions', content: (s) => (
-              (s.mine || importedIds[s.id])
+              (s.mine || s.imported || importedIds[s.id])
                 ? <CSButton disabled iconName="check">{s.mine ? t('scripts.public.is_mine') : t('scripts.public.imported_badge')}</CSButton>
                 : <CSButton variant="primary" iconName="download"
                     loading={cloningId === s.id} disabled={!!cloningId}

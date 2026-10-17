@@ -48,6 +48,7 @@ function ProfilePage() {
   const [cloningScriptId, setCloningScriptId] = useStatePL(null);
   const [importedScriptIds, setImportedScriptIds] = useStatePL({}); // 本会话内已导入的剧本
   const [importingCardIds, setImportingCardIds] = useStatePL({});
+  const [importedCardIds, setImportedCardIds] = useStatePL({}); // 本会话内已导入的角色卡
 
   useEffectPL(() => {
     let alive = true;
@@ -66,11 +67,16 @@ function ProfilePage() {
     try {
       const r = await window.api.scripts.cloneFromPublic(s.id);
       if (r && r.ok === false) throw new Error(r.error || t('scripts.toast.import_fail'));
-      window.toast?.(t('scripts.public.clone_ok'), { kind: 'ok', detail: `${s.title} · script #${r?.script_id ?? '?'}`, duration: 3000 });
       setImportedScriptIds((m) => ({ ...m, [s.id]: true }));
-      setHomeScripts((arr) => Array.isArray(arr)
-        ? arr.map((x) => x.id === s.id ? { ...x, clone_count: (x.clone_count || 0) + 1 } : x)
-        : arr);
+      if (r?.already_imported) {
+        // 之前已导入过:不谎报「导入成功」,也不重复累加热度。
+        window.toast?.(t('scripts.public.already_imported', '该剧本已在你的剧本库中'), { kind: 'info', detail: s.title, duration: 2600 });
+      } else {
+        window.toast?.(t('scripts.public.clone_ok'), { kind: 'ok', detail: `${s.title} · script #${r?.script_id ?? '?'}`, duration: 3000 });
+        setHomeScripts((arr) => Array.isArray(arr)
+          ? arr.map((x) => x.id === s.id ? { ...x, clone_count: (x.clone_count || 0) + 1 } : x)
+          : arr);
+      }
       try { window.dispatchEvent(new CustomEvent('rpg-scripts-updated')); } catch (_) {}
     } catch (e) {
       window.__apiToast?.(t('scripts.toast.import_fail'), { kind: 'danger', detail: e?.message || String(e) });
@@ -83,11 +89,17 @@ function ProfilePage() {
   const onCloneCard = async (c) => {
     setImportingCardIds((p) => ({ ...p, [c.id]: true }));
     try {
-      await window.api.cards.cloneFromPublic(c.id);
-      window.__apiToast?.(t('cards.page.online.import_ok'), { kind: 'ok', duration: 2200, detail: t('cards.page.online.import_ok_detail', { name: c.name }) });
-      setHomeCards((arr) => Array.isArray(arr)
-        ? arr.map((x) => x.id === c.id ? { ...x, clone_count: (x.clone_count || 0) + 1 } : x)
-        : arr);
+      const r = await window.api.cards.cloneFromPublic(c.id);
+      setImportedCardIds((m) => ({ ...m, [c.id]: true }));
+      if (r?.already_imported) {
+        // 与剧本导入一致:已导入过只提示,不重复报成功、不重复累加热度。
+        window.__apiToast?.(t('cards.page.online.already_imported', '这张角色卡已在你的卡库中'), { kind: 'info', detail: c.name, duration: 2600 });
+      } else {
+        window.__apiToast?.(t('cards.page.online.import_ok'), { kind: 'ok', duration: 2200, detail: t('cards.page.online.import_ok_detail', { name: c.name }) });
+        setHomeCards((arr) => Array.isArray(arr)
+          ? arr.map((x) => x.id === c.id ? { ...x, clone_count: (x.clone_count || 0) + 1 } : x)
+          : arr);
+      }
     } catch (e) {
       window.__apiToast?.(t('cards.page.online.import_fail'), { kind: 'danger', detail: e?.payload?.error || e?.message });
     } finally {
@@ -103,7 +115,7 @@ function ProfilePage() {
     : [];
   const featShown = featured.length ? Math.min(featIdx, featured.length - 1) : 0;
   const feat = featured.length ? featured[featShown] : null;
-  const featOwned = !!(feat && (feat.mine || importedScriptIds[feat.id]));
+  const featOwned = !!(feat && (feat.mine || feat.imported || importedScriptIds[feat.id]));
 
   return (
     <div className="pl-home">
@@ -210,7 +222,8 @@ function ProfilePage() {
           ) : (
             <div className="pl-home-grid">
               {homeScripts.slice(0, 8).map((s) => {
-                const owned = !!(s.mine || importedScriptIds[s.id]);
+                // imported 来自后端(订阅指针):刷新页面后仍正确显示「已导入」,不可重复导入
+                const owned = !!(s.mine || s.imported || importedScriptIds[s.id]);
                 return (
                   <article className="pl-home-card" key={s.id}>
                     <div className={`pl-home-cover${s.cover_image_url ? '' : ` ${homeFbClass(s.id)}`}`}>
@@ -272,41 +285,50 @@ function ProfilePage() {
             </div>
           ) : (
             <div className="pl-home-grid">
-              {homeCards.slice(0, 8).map((c) => (
-                <article className="pl-home-char" key={c.id}>
-                  <div className="pl-home-char-top">
+              {homeCards.slice(0, 8).map((c) => {
+                // mine 来自后端(user_id 比对),imported 由后端按克隆来源判定 ——
+                // 与剧本卡一致:刷新后仍显示「我的/已导入」,不会重复出现导入按钮。
+                const ownCard = !!c.mine || (user?.id != null && c.user_id != null && Number(c.user_id) === Number(user.id));
+                const importedCard = !ownCard && !!(c.imported || importedCardIds[c.id]);
+                return (
+                <article className="pl-home-card" key={c.id}>
+                  <div className={`pl-home-cover${c.avatar_path ? '' : ` ${homeFbClass(c.id)}`}`}>
                     <AvatarImg
                       src={c.avatar_path || null}
                       name={c.name || '?'}
-                      size={40}
-                      shape="rounded"
-                      className={homeFbClass(c.id)}
+                      className={`pl-home-cover-img pl-home-cover-img-face ${homeFbClass(c.id)}`}
                     />
-                    <div>
-                      <div className="pl-home-char-name">{c.name || t('cards.detail.unnamed', '未命名')}</div>
-                      {c.identity && <div className="pl-home-char-id">{String(c.identity).slice(0, 40)}</div>}
-                    </div>
-                    <span className="pl-home-heart" title={t('scripts.public.stat_clones', { n: c.clone_count || 0 })}>
+                    <span className="pl-home-cov-chip" title={t('scripts.public.stat_clones', { n: c.clone_count || 0 })}>
                       ♥ {c.clone_count || 0}
                     </span>
                   </div>
-                  <p className="pl-home-char-bio">
-                    {(c.personality || c.background || c.appearance || t('cards.page.online.no_bio', '这位角色还没有留下介绍。')).slice(0, 90)}
-                  </p>
-                  {(c.tags || []).length > 0 && (
-                    <div className="pl-home-tags">
-                      {(c.tags || []).slice(0, 3).map((tg) => <span className="pill" key={tg}>{tg}</span>)}
+                  <div className="pl-home-card-body">
+                    <div className="pl-home-card-title">
+                      {c.name || t('cards.detail.unnamed', '未命名')}
+                      {ownCard && <span className="pill accent">{t('scripts.public.mine_badge', '我的')}</span>}
+                      {importedCard && <span className="pill accent">{t('scripts.public.imported_badge', '已导入')}</span>}
                     </div>
-                  )}
-                  <div className="pl-home-card-foot">
-                    <span className="pl-home-by">by {c.owner_name || t('cards.page.online.anon', '匿名')}</span>
-                    <button className="btn primary pl-home-btn-mini" disabled={!!importingCardIds[c.id]}
-                      onClick={() => onCloneCard(c)}>
-                      <Icon name="download" size={12} /> {t('cards.page.online.btn_import', '导入')}
-                    </button>
+                    {c.identity && <div className="pl-home-card-meta pl-home-char-id">{String(c.identity).slice(0, 40)}</div>}
+                    {(c.tags || []).length > 0 && (
+                      <div className="pl-home-tags">
+                        {(c.tags || []).slice(0, 3).map((tg) => <span className="pill" key={tg}>{tg}</span>)}
+                      </div>
+                    )}
+                    <div className="pl-home-card-foot">
+                      <span className="pl-home-by">by {c.owner_name || t('cards.page.online.anon', '匿名')}</span>
+                      {(ownCard || importedCard) ? (
+                        <button className="btn pl-home-btn-mini" disabled><Icon name="check" size={12} /></button>
+                      ) : (
+                        <button className="btn primary pl-home-btn-mini" disabled={!!importingCardIds[c.id]}
+                          onClick={() => onCloneCard(c)}>
+                          <Icon name="download" size={12} /> {t('cards.page.online.btn_import', '导入')}
+                        </button>
+                      )}
+                    </div>
                   </div>
                 </article>
-              ))}
+                );
+              })}
             </div>
           )}
         </section>

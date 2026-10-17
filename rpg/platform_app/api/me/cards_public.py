@@ -31,7 +31,7 @@ async def api_list_public_cards(q: str | None = None, limit: int = 30, offset: i
     """
     from ... import user_cards
     return json_response(user_cards.list_public_cards(q=q or None, limit=limit, offset=offset,
-                                                      order=order))
+                                                      order=order, user_id=user["id"]))
 
 
 @router.post("/api/cards/public/{card_id}/clone")

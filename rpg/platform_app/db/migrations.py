@@ -2412,6 +2412,33 @@ MIGRATIONS: list[tuple[int, str, list[str]]] = [
         "alter table users add column if not exists suspended_until timestamptz",
     ]),
 
+    (107, "character_cards_allow_cloned_source", [
+        # v28 的 character_cards_source_check 只允许 ('extracted','user','persona','platform'),
+        # 但 user_cards.clone_public_card 插入 source='cloned' 标记「在线库导入的副本」
+        # → 每次导入公开角色卡都 check violation,POST /api/cards/public/{id}/clone 恒 500,
+        # 前端提示「导入失败」。这里把 'cloned' 加入允许值(source 仅作来源溯源,不做业务分支)。
+        "alter table character_cards drop constraint if exists character_cards_source_check",
+        "alter table character_cards add constraint character_cards_source_check "
+        "check (source in ('extracted','user','persona','platform','cloned'))",
+    ]),
+
+    (108, "character_cards_cloned_from", [
+        # 在线角色卡库需要像剧本库那样标出「已导入」状态(此前只能靠用户点一次导入、
+        # 撞 slug 唯一键才知道已导入)。记录副本指向的公开源卡 id,列表用 EXISTS 判定。
+        # 历史上副本靠 slug 后缀 '-imp<源id>' 命名,这里按同规则回填既有数据。
+        "alter table character_cards add column if not exists cloned_from_card_id bigint",
+        """
+        update character_cards
+           set cloned_from_card_id = substring(slug from '-imp([0-9]+)$')::bigint
+         where source = 'cloned'
+           and cloned_from_card_id is null
+           and slug ~ '-imp[0-9]+$'
+        """,
+        "create index if not exists idx_character_cards_cloned_from "
+        "on character_cards(user_id, cloned_from_card_id) "
+        "where cloned_from_card_id is not null",
+    ]),
+
 ]
 
 

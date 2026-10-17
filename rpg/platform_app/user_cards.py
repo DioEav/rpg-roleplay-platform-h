@@ -558,10 +558,13 @@ def set_card_public(user_id: int, card_id: int, is_public: bool) -> dict[str, An
 
 
 def list_public_cards(q: str | None = None, limit: int = 30, offset: int = 0,
-                      order: str = "latest") -> dict[str, Any]:
+                      order: str = "latest", user_id: int | None = None) -> dict[str, Any]:
     """在线角色卡库:只列 is_public 的 PC 卡 + 作者展示名 + 热度。secrets 不外露。
 
     order=latest(默认) 按发布时间倒序;order=hot 按导入数(clone_count)倒序。
+    user_id 传入时额外返回:
+      - mine:是否本人发布的卡(前端据此隐藏导入按钮)
+      - imported:本人是否已导入过该卡(按 cloned_from_card_id 判定,历史数据回落到 slug 规则)
     """
     init_db()
     limit = limit_value(limit, default=30, maximum=60)
@@ -577,13 +580,27 @@ def list_public_cards(q: str | None = None, limit: int = 30, offset: int = 0,
         where.append("(lower(c.name) like %s or lower(c.identity) like %s or lower(c.full_name) like %s)")
         like = f"%{q.lower()}%"
         params.extend([like, like, like])
+    if user_id is not None:
+        # SELECT 段参数在前(psycopg 按 SQL 文本顺序绑定)
+        head_params: list[Any] = [int(user_id), int(user_id)]
+        head_cols = (
+            ", exists (select 1 from character_cards mine "
+            "   where mine.user_id = %s and mine.card_type = 'pc' "
+            "     and (mine.cloned_from_card_id = c.id "
+            "          or mine.slug = coalesce(c.slug, 'card') || '-imp' || c.id::text)) as imported "
+            ", (c.user_id = %s) as mine "
+        )
+    else:
+        head_params = []
+        head_cols = ", false as imported, false as mine "
     sql = (
         "select c.*, u.display_name as owner_name, u.username as owner_username "
+        f"{head_cols}"
         "from character_cards c join users u on u.id = c.user_id "
         f"where {' and '.join(where)} "
         f"order by {order_by} limit %s offset %s"
     )
-    params.extend([limit, offset])
+    params = head_params + params + [limit, offset]
     with connect() as db:
         rows = db.execute(sql, tuple(params)).fetchall()
     items = []
@@ -593,6 +610,8 @@ def list_public_cards(q: str | None = None, limit: int = 30, offset: int = 0,
         dto["clone_count"] = int(r.get("clone_count") or 0)
         dto["published_at"] = str(r["published_at"]) if r.get("published_at") else None
         dto["owner_name"] = r.get("owner_name") or r.get("owner_username") or "匿名作者"
+        dto["imported"] = bool(r.get("imported"))
+        dto["mine"] = bool(r.get("mine"))
         dto.pop("secrets", None)  # 列表不暴露作者私密设定(导入后才得完整卡)
         items.append(dto)
     return {"ok": True, "items": items, "total": len(items), "limit": limit, "offset": offset}
@@ -617,12 +636,14 @@ def clone_public_card(user_id: int, card_id: int) -> dict[str, Any]:
               user_id, slug, card_type, source, first_revealed_chapter,
               name, full_name, aliases, identity, background, appearance, personality,
               speech_style, current_status, secrets, sample_dialogue,
-              tags, metadata, token_budget, priority, importance, enabled, scope, avatar_path
+              tags, metadata, token_budget, priority, importance, enabled, scope, avatar_path,
+              cloned_from_card_id
             )
             select %(uid)s, %(slug)s, 'pc', 'cloned', first_revealed_chapter,
               name, full_name, aliases, identity, background, appearance, personality,
               speech_style, current_status, '', sample_dialogue,
-              tags, metadata, token_budget, priority, importance, true, scope, avatar_path
+              tags, metadata, token_budget, priority, importance, true, scope, avatar_path,
+              %(src)s
             from character_cards where id = %(src)s and is_public and card_type='pc'
             on conflict(user_id, slug, card_type) where card_type in ('pc','persona') do nothing
             returning id
@@ -630,7 +651,14 @@ def clone_public_card(user_id: int, card_id: int) -> dict[str, Any]:
             {"uid": user_id, "slug": new_slug, "src": int(card_id)},
         ).fetchone()
         if not new:
-            raise ValueError("你已导入过这张角色卡")
+            # 已导入过:与剧本库一致返回 already_imported(不再抛错),前端据此提示并置为已导入。
+            existing = db.execute(
+                "select id from character_cards "
+                "where user_id=%s and slug=%s and card_type='pc' limit 1",
+                (user_id, new_slug),
+            ).fetchone()
+            return {"ok": True, "already_imported": True,
+                    "card_id": int(existing["id"]) if existing else None}
         db.execute("update character_cards set clone_count = clone_count + 1 where id = %s", (int(card_id),))
         # 复制人设图历史行 —— image_url 引用同一站内资产(物理文件不重存,满足「公开卡人设图/历史不存两次」)
         try:

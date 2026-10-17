@@ -1856,6 +1856,7 @@
       "empty_search": "No matching public scripts",
       "load_fail": "Failed to load public scripts",
       "clone_ok": "Imported to My Scripts",
+      "already_imported": "This script is already in your library",
       "mine_badge": "Mine",
       "imported_badge": "Imported",
       "is_mine": "My Script",
@@ -4012,7 +4013,11 @@
         "btn_import": "Import",
         "import_ok": "Imported to My Character Cards",
         "import_ok_detail": "\"{{name}}\" has been copied as your own card and is ready to edit in My Character Cards.",
-        "import_fail": "Import failed"
+        "import_fail": "Import failed",
+        "mine_badge": "Mine",
+        "imported_badge": "Imported",
+        "already_imported": "This card is already in your library",
+        "already_imported_detail": "\"{{name}}\" was already imported; no need to import it again."
       },
       "persona": {
         "gallery_load_fail": "Failed to load persona image history",
@@ -6216,6 +6221,8 @@
         "btn_import": "Import to My Cards",
         "btn_import_short": "Import",
         "imported": "\"{{name}}\" imported to My Character Cards",
+        "already_imported": "\"{{name}}\" was already imported; no need to import it again",
+        "already_imported_short": "Imported",
         "import_fail": "Import failed: {{msg}}"
       },
       "toast": {

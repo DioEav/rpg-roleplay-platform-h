@@ -2228,6 +2228,8 @@ button, a, [role="button"], .btn, .iconbtn, summary, label {
 .pl-home-cover > img,
 .pl-home-cover > div { position: absolute; inset: 0; width: 100%; height: 100%; }
 .pl-home-cover > img { object-fit: cover; }
+/* 角色立绘多为竖版,裁切重心偏上保住面部 */
+.pl-home-cover > img.pl-home-cover-img-face { object-position: center 22%; }
 .pl-home-cov-chip { position: absolute; left: 8px; bottom: 8px; display: inline-flex; align-items: center; gap: 4px; padding: 3px 9px; border-radius: 999px; background: rgba(17,20,16,.55); border: 1px solid rgba(255,255,255,.22); backdrop-filter: blur(8px); font-size: 11.5px; color: #f3ecdf; }
 .pl-home-card-body { padding: 11px 12px 12px; display: grid; gap: 6px; }
 .pl-home-card-title { font-family: var(--font-serif); font-size: 14.5px; font-weight: 600; color: var(--text); display: flex; align-items: center; gap: 6px; min-width: 0; }
@@ -2236,14 +2238,8 @@ button, a, [role="button"], .btn, .iconbtn, summary, label {
 .pl-home-card-foot { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .pl-home-btn-mini { padding: 4px 11px; font-size: 12px; border-radius: 5px; display: inline-flex; align-items: center; gap: 5px; }
 
-.pl-home-char { background: var(--panel); border: 1px solid var(--line-soft); border-radius: 10px; padding: 13px; display: grid; gap: 8px; align-content: start; transition: transform .15s ease, box-shadow .15s ease, border-color .15s ease; }
-.pl-home-char:hover { transform: translateY(-2px); border-color: var(--accent-edge); box-shadow: var(--shadow-2); }
-.pl-home-char-top { display: flex; align-items: center; gap: 9px; }
-.pl-home-char-top > div { min-width: 0; }
-.pl-home-char-name { font-size: 14.5px; font-weight: 600; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.pl-home-char-id { font-size: 12px; color: var(--accent); margin-top: 1px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.pl-home-heart { margin-left: auto; flex: none; font-size: 12px; color: var(--muted); }
-.pl-home-char-bio { font-size: 12.5px; color: var(--muted); line-height: 1.6; margin: 0; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; min-height: 40px; }
+/* 角色卡:与剧本卡同构(pl-home-card + 16:9 封面),仅身份行用 accent 色、多一行题材标签 */
+.pl-home-char-id { font-size: 12px; color: var(--accent); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .pl-home-tags { display: flex; gap: 6px; flex-wrap: wrap; }
 
 /* ── 骨架屏 / 空库引导卡 ── */
@@ -2260,7 +2256,6 @@ div[class*="pl-home-fb-"] { display: grid; place-items: center; font-family: var
 .pl-home-fb-4 { background: linear-gradient(155deg, #5a2c1c 0%, #9c4a2a 50%, #d08a4e 100%); }
 .pl-home-fb-5 { background: linear-gradient(155deg, #472a44 0%, #7c4a72 55%, #b07e9e 100%); }
 .pl-home-cover div[class*="pl-home-fb-"] { font-size: 46px; }
-.pl-home-char-top div[class*="pl-home-fb-"] { font-size: 17px; }
 .pl-home-poster > div[class*="pl-home-fb-"] { font-size: 68px; }
 
 /* ── 窄屏回流 ── */
