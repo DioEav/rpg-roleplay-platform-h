@@ -1574,7 +1574,8 @@
       "lines_200": "200 行",
       "lines_500": "500 行",
       "level_all": "全部级别",
-      "empty": "暂无日志数据"
+      "empty": "暂无日志数据",
+      "no_file_hint": "后端日志文件尚未生成。默认写入 rpg/logs/backend.log(10MB×5 轮转,可用环境变量 LOG_FILE 指向其他文件);后端产生日志后此处自动显示内容。"
     },
     "registration": {
       "config_title": "注册配置",
@@ -5867,7 +5868,8 @@
       },
       "logs": {
         "lines": "{{count}}行",
-        "empty": "暂无日志"
+        "empty": "暂无日志",
+        "no_file_hint": "后端日志文件尚未生成。默认写入 rpg/logs/backend.log(可用环境变量 LOG_FILE 覆盖);产生日志后此处自动显示。"
       },
       "health": {
         "database": "数据库",

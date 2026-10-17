@@ -1471,7 +1471,8 @@
       "lines_200": "200 lines",
       "lines_500": "500 lines",
       "level_all": "All levels",
-      "empty": "No log data"
+      "empty": "No log data",
+      "no_file_hint": "The backend log file has not been created yet. Logs are written to rpg/logs/backend.log by default (10MB×5 rotation; override with the LOG_FILE env var). Content appears here automatically once the backend produces logs."
     },
     "registration": {
       "config_title": "Registration Config",
@@ -5871,7 +5872,8 @@
       },
       "logs": {
         "lines": "{{count}} lines",
-        "empty": "No logs"
+        "empty": "No logs",
+        "no_file_hint": "The backend log file has not been created yet. Logs are written to rpg/logs/backend.log by default (override with LOG_FILE). Content appears here automatically once logs are produced."
       },
       "health": {
         "database": "Database",

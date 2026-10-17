@@ -16,6 +16,7 @@ import { downloadBlob } from '../../lib/download.js';
 export function AdminLogsPage() {
   const { t } = useTranslation();
   const [lines, setLines] = React.useState([]);
+  const [source, setSource] = React.useState('file');
   const [loading, setLoading] = React.useState(true);
   const [err, setErr] = React.useState(null);
   const [linesCount, setLinesCount] = React.useState({ value: '100', label: t('admin_page.logs.lines_100') });
@@ -38,14 +39,16 @@ export function AdminLogsPage() {
     setLoading(true);
     setErr(null);
     try {
-      const res = await window.api.admin.logs({ lines: Number(linesCount.value) });
-      setLines(res.lines || res || []);
+      // level 走后端服务端过滤(logs.py 已支持);此前纯前端过滤只覆盖已拉取的尾部。
+      const res = await window.api.admin.logs({ lines: Number(linesCount.value), level: levelFilter.value });
+      setLines(res.lines || []);
+      setSource(res.source || 'file');
     } catch (e) {
       setErr(e?.message || t('admin_page.common.load_fail'));
     } finally {
       setLoading(false);
     }
-  }, [linesCount.value]);
+  }, [linesCount.value, levelFilter.value]);
 
   React.useEffect(() => {
     let cancelled = false;
@@ -53,8 +56,11 @@ export function AdminLogsPage() {
       setLoading(true);
       setErr(null);
       try {
-        const res = await window.api.admin.logs({ lines: Number(linesCount.value) });
-        if (!cancelled) setLines(res.lines || res || []);
+        const res = await window.api.admin.logs({ lines: Number(linesCount.value), level: levelFilter.value });
+        if (!cancelled) {
+          setLines(res.lines || []);
+          setSource(res.source || 'file');
+        }
       } catch (e) {
         if (!cancelled) setErr(e?.message || t('admin_page.common.load_fail'));
       } finally {
@@ -62,14 +68,7 @@ export function AdminLogsPage() {
       }
     })();
     return () => { cancelled = true; };
-  }, [linesCount.value]);
-
-  const filtered = levelFilter.value
-    ? lines.filter((l) => {
-        const s = typeof l === 'string' ? l : String(l);
-        return s.includes(levelFilter.value);
-      })
-    : lines;
+  }, [linesCount.value, levelFilter.value]);
 
   function handleDownload() {
     const content = (lines || []).join('\n');
@@ -114,21 +113,27 @@ export function AdminLogsPage() {
       >
         {loading
           ? <CSBox color="inherit">{t('admin_page.common.loading')}</CSBox>
-          : filtered.length === 0
-            ? <CSBox textAlign="center" color="inherit">{t('admin_page.logs.empty')}</CSBox>
-            : (
-              <pre style={{ fontFamily: 'monospace', fontSize: 12, lineHeight: 1.6, height: 500, overflowY: 'auto', margin: 0, padding: 8, background: 'var(--panel)', borderRadius: 4 }}>
-                {filtered.map((line, i) => {
-                  const s = typeof line === 'string' ? line : String(line);
-                  const color = lineColor(s);
-                  return (
-                    <span key={i} style={color ? { color, display: 'block' } : { display: 'block' }}>
-                      {s}
-                    </span>
-                  );
-                })}
-              </pre>
+          : source === 'none'
+            ? (
+              <CSAlert type="info">
+                {t('admin_page.logs.no_file_hint')}
+              </CSAlert>
             )
+            : lines.length === 0
+              ? <CSBox textAlign="center" color="inherit">{t('admin_page.logs.empty')}</CSBox>
+              : (
+                  <pre style={{ fontFamily: 'monospace', fontSize: 12, lineHeight: 1.6, height: 500, overflowY: 'auto', margin: 0, padding: 8, background: 'var(--panel)', borderRadius: 4 }}>
+                    {lines.map((line, i) => {
+                      const s = typeof line === 'string' ? line : String(line);
+                      const color = lineColor(s);
+                      return (
+                        <span key={i} style={color ? { color, display: 'block' } : { display: 'block' }}>
+                          {s}
+                        </span>
+                      );
+                    })}
+                  </pre>
+                )
         }
       </CSContainer>
     </CSSpaceBetween>

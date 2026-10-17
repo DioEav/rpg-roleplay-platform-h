@@ -5,6 +5,8 @@ import os
 
 from fastapi import Depends
 
+from core.logging import default_log_file_path
+
 from .._deps import json_response
 from ._shared import _require_admin, log, router
 
@@ -16,7 +18,9 @@ async def admin_logs(
     admin=Depends(_require_admin),
 ):
     lines = max(1, min(500, lines))
-    log_file = os.environ.get("LOG_FILE", "")
+    # LOG_FILE 未设时读 core.logging 的默认落盘文件(setup_default_logging 写
+    # 同一路径,两处同源;勿在此另行硬编码)。
+    log_file = os.environ.get("LOG_FILE") or default_log_file_path()
 
     if log_file and os.path.isfile(log_file):
         try:
@@ -37,7 +41,7 @@ async def admin_logs(
             log.warning("admin_logs read error: %s", exc)
 
     return json_response({
-        "lines": ["（日志文件路径未配置）"],
+        "lines": [f"（日志文件不存在：{log_file}；后端产生日志后自动生成）"],
         "total_lines": 1,
         "source": "none",
     })

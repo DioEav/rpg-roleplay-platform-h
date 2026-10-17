@@ -133,6 +133,8 @@ rpg/docs/api_contract_drift.md
 
 # dev-server logs (scripts/dev.sh)
 .dev-logs/
+# 后端运行时落盘日志(setup_default_logging 写 rpg/logs/backend.log,轮转 .1-.5)
+rpg/logs/
 
 # ──────────────────────────────────────────────────────────────────
 #  小说原文 / 内容资产 — 版权敏感,绝不入公开/私有仓库

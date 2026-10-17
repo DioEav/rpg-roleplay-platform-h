@@ -10,6 +10,7 @@ import { LoadingRow, ErrRow, EmptyRow } from './shared.jsx';
 function SectionLogs({ nav }) {
   const { t } = useTranslation();
   const [lines, setLines] = React.useState([]);
+  const [source, setSource] = React.useState('file');
   const [loading, setLoading] = React.useState(true);
   const [err, setErr] = React.useState(null);
   const [lineCount, setLineCount] = React.useState(100);
@@ -17,14 +18,16 @@ function SectionLogs({ nav }) {
 
   const load = React.useCallback(async () => {
     setLoading(true); setErr(null);
-    try { const r = await window.api.admin.logs({ lines: lineCount }); setLines(r.lines || r || []); }
+    try {
+      // level 走后端服务端过滤(logs.py 已支持);此前纯前端过滤只覆盖已拉取的尾部。
+      const r = await window.api.admin.logs({ lines: lineCount, level: levelFilter });
+      setLines(r.lines || []); setSource(r.source || 'file');
+    }
     catch (e) { setErr(e?.message || t('mobile.admin.load_failed')); }
     finally { setLoading(false); }
-  }, [lineCount]);
+  }, [lineCount, levelFilter]);
 
   React.useEffect(() => { load(); }, [load]);
-
-  const filtered = levelFilter ? lines.filter((l) => String(l).includes(levelFilter)) : lines;
 
   function lineColor(line) {
     const s = String(line);
@@ -57,9 +60,13 @@ function SectionLogs({ nav }) {
             ))}
           </div>
 
-          {loading ? <LoadingRow /> : err ? <ErrRow msg={err} onRetry={load} /> : filtered.length === 0 ? <EmptyRow text={t('mobile.admin.logs.empty')} /> : (
+          {loading ? <LoadingRow /> : err ? <ErrRow msg={err} onRetry={load} /> : source === 'none' ? (
+            <div style={{ border: '1px solid var(--line-soft)', borderRadius: 10, background: 'var(--panel)', padding: '12px 14px', fontSize: 12.5, color: 'var(--muted)', lineHeight: 1.6 }}>
+              {t('mobile.admin.logs.no_file_hint')}
+            </div>
+          ) : lines.length === 0 ? <EmptyRow text={t('mobile.admin.logs.empty')} /> : (
             <div style={{ background: 'var(--bg-deep)', borderRadius: 10, border: '1px solid var(--line-soft)', padding: '10px 12px', maxHeight: '60vh', overflowY: 'auto', WebkitOverflowScrolling: 'touch' }}>
-              {filtered.map((line, i) => (
+              {lines.map((line, i) => (
                 <div key={i} style={{ fontFamily: 'var(--font-mono)', fontSize: 11, lineHeight: 1.7, color: lineColor(line), wordBreak: 'break-all' }}>{String(line)}</div>
               ))}
             </div>
