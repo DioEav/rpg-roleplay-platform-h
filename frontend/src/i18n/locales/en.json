@@ -1605,6 +1605,7 @@
       "strike_confirm_btn": "Confirm Add",
       "strike_added_terminated": "Strike added ({{count}} total) — account terminated automatically",
       "strike_added_ok": "Strike added ({{count}}/3 total)",
+      "terminated": "Terminated",
       "op_fail": "Operation failed"
     },
     "csam": {

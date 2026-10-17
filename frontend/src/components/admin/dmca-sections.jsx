@@ -272,6 +272,7 @@ export function AdminDmcaTakedownsPage() {
 export function AdminDmcaStrikesPage() {
   const { t } = useTranslation();
   const [users, setUsers] = React.useState([]);
+  const [threshold, setThreshold] = React.useState(3); // 终止阈值,以后端返回为准
   const [loading, setLoading] = React.useState(true);
   const [err, setErr] = React.useState(null);
   const [strikeModal, setStrikeModal] = React.useState(null); // { user_id, username }
@@ -285,6 +286,7 @@ export function AdminDmcaStrikesPage() {
     try {
       const res = await window.api.admin.dmcaStrikes.list();
       setUsers(res.users || []);
+      setThreshold(res.threshold || 3);
     } catch (e) {
       setErr(e?.message || t('admin_page.common.load_fail'));
     } finally {
@@ -314,9 +316,9 @@ export function AdminDmcaStrikesPage() {
     }
   }
 
-  function strikeBadgeColor(count) {
-    if (count >= 3) return 'red';
-    if (count === 2) return 'severity-medium';
+  function strikeBadgeColor(count, limit) {
+    if (count >= limit) return 'red';
+    if (count === limit - 1) return 'severity-medium';
     return 'severity-low';
   }
 
@@ -344,7 +346,12 @@ export function AdminDmcaStrikesPage() {
             { id: 'username', header: t('admin_page.dmca_strikes.col_username'), cell: (u) => u.username || `uid:${u.user_id}` },
             {
               id: 'count', header: t('admin_page.dmca_strikes.col_count'),
-              cell: (u) => <CSBadge color={strikeBadgeColor(u.strike_count)}>{u.strike_count} / 3</CSBadge>,
+              cell: (u) => (
+                <CSSpaceBetween direction="horizontal" size="xs">
+                  <CSBadge color={strikeBadgeColor(u.strike_count, threshold)}>{u.strike_count} / {threshold}</CSBadge>
+                  {u.terminated_at && <CSBadge color="red">{t('admin_page.dmca_strikes.terminated')}</CSBadge>}
+                </CSSpaceBetween>
+              ),
             },
             {
               id: 'history', header: t('admin_page.dmca_strikes.col_history'),
@@ -357,8 +364,12 @@ export function AdminDmcaStrikesPage() {
                     </CSButton>
                     {isExp && (
                       <ul style={{ margin: '4px 0 0', paddingLeft: 16, fontSize: 12 }}>
-                        {(u.strikes || []).map((s) => (
-                          <li key={s.id}><code>{fmtTime(s.created_at)}</code> — {s.reason}</li>
+                        {(u.strikes || []).map((s, i) => (
+                          <li key={i}>
+                            <code>{fmtTime(s.created_at)}</code>
+                            {' — '}
+                            {s.terminate ? `[${t('admin_page.dmca_strikes.terminated')}] ` : ''}{s.reason}
+                          </li>
                         ))}
                       </ul>
                     )}
@@ -368,7 +379,7 @@ export function AdminDmcaStrikesPage() {
             },
             {
               id: 'actions', header: t('admin_page.common.actions'),
-              cell: (u) => u.strike_count < 3 && (
+              cell: (u) => u.strike_count < threshold && (
                 <CSButton
                   variant="inline-link"
                   onClick={() => { setStrikeModal({ user_id: u.user_id, username: u.username }); setStrikeReason(''); }}

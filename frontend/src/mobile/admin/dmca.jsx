@@ -115,6 +115,7 @@ function SectionDmcaTakedowns({ nav }) {
 function SectionDmcaStrikes({ nav }) {
   const { t } = useTranslation();
   const [items, setItems] = React.useState([]);
+  const [threshold, setThreshold] = React.useState(3); // 终止阈值,以后端返回为准
   const [loading, setLoading] = React.useState(true);
   const [err, setErr] = React.useState(null);
   const [incTarget, setIncTarget] = React.useState(null);
@@ -122,7 +123,7 @@ function SectionDmcaStrikes({ nav }) {
 
   const load = React.useCallback(async () => {
     setLoading(true); setErr(null);
-    try { const r = await window.api.admin.dmcaStrikes.list(); setItems(r.strikes || r || []); }
+    try { const r = await window.api.admin.dmcaStrikes.list(); setItems(r.users || []); setThreshold(r.threshold || 3); }
     catch (e) { setErr(e?.message || t('mobile.admin.load_failed')); }
     finally { setLoading(false); }
   }, []);
@@ -159,7 +160,10 @@ function SectionDmcaStrikes({ nav }) {
                     <strong style={{ fontSize: 13 }}>{s.username || s.user_id}</strong>
                     <span className="mono">{t('mobile.admin.strikes.count', { count: s.strike_count || 0 })}</span>
                   </span>
-                  <button style={{ fontSize: 12, color: 'var(--warn)', padding: '4px 8px' }} onClick={() => setIncTarget(s)}>{t('mobile.admin.strikes.add_btn')}</button>
+                  {s.strike_count < threshold && (
+                    <button style={{ fontSize: 12, color: 'var(--warn)', padding: '4px 8px' }}
+                      onClick={() => setIncTarget(s)}>{t('mobile.admin.strikes.add_btn')}</button>
+                  )}
                 </div>
               ))}
             </div>

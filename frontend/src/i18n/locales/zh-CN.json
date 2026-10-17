@@ -1709,6 +1709,7 @@
       "strike_confirm_btn": "确认添加",
       "strike_added_terminated": "Strike 已添加（共 {{count}} 次），账户已自动终止",
       "strike_added_ok": "Strike 已添加（共 {{count}}/3 次）",
+      "terminated": "已终止",
       "op_fail": "操作失败"
     },
     "csam": {

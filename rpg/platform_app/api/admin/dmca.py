@@ -7,7 +7,7 @@ from __future__ import annotations
 from fastapi import Depends, HTTPException, Request
 
 from ...db import connect
-from ...dmca import increment_strike, queue_account_termination
+from ...dmca import DMCA_STRIKE_THRESHOLD, increment_strike, queue_account_termination
 from .._card_dto import _iso
 from .._deps import _client_ip, json_response
 from ._shared import _require_admin, _write_audit, router
@@ -131,7 +131,7 @@ async def admin_dmca_counter(
                 notes = coalesce(notes,'') || %s,
                 status = 'counter_received'
             where id = %s
-            returning id
+            returning id, restore_after
             """,
             (f"\n[counter-notice] {body.get('notes', '')}", takedown_id),
         ).fetchone()
@@ -141,7 +141,7 @@ async def admin_dmca_counter(
                      target_type="dmca_takedown", target_id=str(takedown_id),
                      details=body, ip=ip)
 
-    return json_response({"ok": True, "restore_after": "now() + 10 days"})
+    return json_response({"ok": True, "restore_after": _iso(result["restore_after"])})
 
 
 @router.get("/api/admin/dmca/strikes")
@@ -163,6 +163,25 @@ async def admin_dmca_strikes_list(
             """,
         ).fetchall()
 
+        # 逐条 strike 历史从审计日志还原(每次 +Strike / 自动终止都留有 audit 行)。
+        audit_rows = db.execute(
+            """
+            select target_id, action, details, created_at
+            from admin_audit_log
+            where target_type = 'user'
+              and action in ('dmca.strike.increment', 'dmca.auto_terminate')
+            order by created_at desc
+            limit 2000
+            """
+        ).fetchall()
+    history: dict = {}
+    for a in audit_rows:
+        history.setdefault(a["target_id"], []).append({
+            "reason": (a.get("details") or {}).get("reason", ""),
+            "created_at": _iso(a.get("created_at")),
+            "terminate": a["action"] == "dmca.auto_terminate",
+        })
+
     users = [{
         "user_id": r["user_id"],
         "username": r["username"],
@@ -170,11 +189,9 @@ async def admin_dmca_strikes_list(
         "last_strike_at": _iso(r.get("last_strike_at")),
         "last_strike_reason": r.get("last_strike_reason") or "",
         "terminated_at": _iso(r.get("terminated_at")),
-        # 聚合表无逐条历史;给出最近一次作为单条,供前端展示。
-        "strikes": ([{"reason": r.get("last_strike_reason") or "", "created_at": _iso(r.get("last_strike_at"))}]
-                    if r["strike_count"] else []),
+        "strikes": history.get(str(r["user_id"]), []),
     } for r in rows]
-    return json_response({"users": users})
+    return json_response({"users": users, "threshold": DMCA_STRIKE_THRESHOLD})
 
 
 @router.post("/api/admin/dmca/strikes/{user_id}/increment")
