@@ -22,7 +22,7 @@ import {
   AdminHealthPage,
   AdminLogsPage,
   AdminRegistrationPage,
-  AdminSecurityPage,
+  // AdminSecurityPage 已随「安全配置」页隐藏(2026-10),恢复时解注释,
   AdminMaintenancePage,
   AdminDmcaTakedownsPage,
   AdminDmcaStrikesPage,
@@ -254,8 +254,11 @@ const getCSModules = (t) => [
     // 「部署」(admin-deploy)入口已隐藏(2026-10):后端不消费 admin.deployment_config,
     // 界面参数(监听地址/CORS/上传限制/SMTP/CAPTCHA)全部不生效,仅装饰。组件与 i18n 原样保留,
     // 恢复 = 加回本处 pages 数组 + sub 行 + entries/platform.jsx 的 PL_IDS 与路由 + settings.jsx SECTIONS + 移动端 menu/MobileAdmin。
+    // 「安全配置」(admin-security)入口已隐藏(2026-10):后端不消费 admin.security_config,
+    // 界面参数(速率限制/密码策略/会话超时/登录锁定/IP 黑名单)全部不生效,仅装饰。组件与 i18n 原样保留,
+    // 恢复 = 加回本处 pages 数组 + sub 行 + entries/platform.jsx 的 PL_IDS 与路由 + 移动端 menu/MobileAdmin。
     pages: ['admin-users', 'admin-usage', 'admin-audit',
-            'admin-health', 'admin-logs', 'admin-registration', 'admin-security', 'admin-maintenance',
+            'admin-health', 'admin-logs', 'admin-registration', 'admin-maintenance',
             'admin-dmca-takedowns', 'admin-dmca-strikes', 'admin-csam-reports', 'admin-aup-actions',
             'admin-feedback', 'admin-achievements'],
     sub: [
@@ -266,7 +269,7 @@ const getCSModules = (t) => [
       { text: t('platform.nav.admin_health'),          href: '#admin-health' },
       { text: t('platform.nav.admin_logs'),            href: '#admin-logs' },
       { text: t('platform.nav.admin_registration'),    href: '#admin-registration' },
-      { text: t('platform.nav.admin_security'),        href: '#admin-security' },
+      // { text: t('platform.nav.admin_security'),        href: '#admin-security' },
       { text: t('platform.nav.admin_maintenance'),     href: '#admin-maintenance' },
       { text: t('platform.nav.admin_dmca_takedowns'),  href: '#admin-dmca-takedowns' },
       { text: t('platform.nav.admin_dmca_strikes'),    href: '#admin-dmca-strikes' },
@@ -836,7 +839,8 @@ function PlatformShellCS({ page, setPage, children, assistant, assistantOpen, on
 
 export { PlatformShellCS, ProfilePage, MePage, ModulesPage, LibraryPage, UsagePage, CapPage, AuthPage, PublicAchievementsPage, PL_NAV, PL_TITLES, PromptModal, ConfirmModal, SettingsToggle, fmtBytes, fmtN, useAutoSave, usePlatformData, useReactiveUser, publishUser, useShellChrome, ResizableSplit, AdminGuard, isAdminPage,
   AdminUsersPage, AdminGlobalUsagePage, AdminAuditPage, AdminHealthPage,
-  AdminLogsPage, AdminRegistrationPage, AdminSecurityPage, AdminMaintenancePage,
+  AdminLogsPage, AdminRegistrationPage, AdminMaintenancePage,
+  // AdminSecurityPage 已随「安全配置」页隐藏(2026-10),恢复时随 import 一并解注释,
   AdminDmcaTakedownsPage, AdminDmcaStrikesPage, AdminCsamReportsPage, AdminAupActionsPage,
   AdminFeedbackPage, AdminAchievementsPage,
 };

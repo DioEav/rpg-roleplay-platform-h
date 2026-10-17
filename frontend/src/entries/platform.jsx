@@ -28,8 +28,9 @@ installWarmTheme(getTheme()); // 按已存主题(rpg.theme)安装,首屏前生�
 // 组件模块 — named import(ESM 自动拉入传递依赖)
 import { PlatformShellCS, ProfilePage, MePage, ModulesPage, LibraryPage, UsagePage, PL_NAV, AdminGuard,
   /* CapPage 已随「扩展」四页隐藏(2026-10),恢复时解注释, */
+  /* AdminSecurityPage 已随「安全配置」页隐藏(2026-10),恢复时解注释, */
   AdminUsersPage, AdminGlobalUsagePage, AdminAuditPage, AdminHealthPage,
-  AdminLogsPage, AdminRegistrationPage, AdminSecurityPage, AdminMaintenancePage,
+  AdminLogsPage, AdminRegistrationPage, AdminMaintenancePage,
   AdminDmcaTakedownsPage, AdminDmcaStrikesPage, AdminCsamReportsPage, AdminAupActionsPage,
   AdminFeedbackPage, AdminAchievementsPage, PublicAchievementsPage,
 } from '../platform-app.jsx';
@@ -97,8 +98,10 @@ const PL_IDS = [
   'settings-models', 'settings-modelparams', 'settings-modules', 'settings-memory',
   // 'admin-deploy' 已隐藏(2026-10):后端不消费 admin.deployment_config(见 platform-app.jsx admin 组注释)。
   // 不在合法 page 集合 → 直链 /admin-deploy 回落主页。恢复 = 加回本行 + 下方路由。
+  // 'admin-security' 已隐藏(2026-10):后端不消费 admin.security_config(见 platform-app.jsx admin 组注释)。
+  // 不在合法 page 集合 → 直链 /admin-security 回落主页。恢复 = 加回本行 + 下方路由。
   'admin-users', 'admin-usage', 'admin-audit', 'admin-health',
-  'admin-logs', 'admin-registration', 'admin-security', 'admin-maintenance',
+  'admin-logs', 'admin-registration', 'admin-maintenance',
   'admin-dmca-takedowns', 'admin-dmca-strikes', 'admin-csam-reports', 'admin-aup-actions',
   'admin-feedback', 'admin-achievements',
   'usage', 'feedback', 'device', 'wall',
@@ -206,7 +209,7 @@ function PlatformApp() {
   else if (page === 'admin-health')       body = <AdminGuard><AdminHealthPage /></AdminGuard>;
   else if (page === 'admin-logs')         body = <AdminGuard><AdminLogsPage /></AdminGuard>;
   else if (page === 'admin-registration') body = <AdminGuard><AdminRegistrationPage /></AdminGuard>;
-  else if (page === 'admin-security')     body = <AdminGuard><AdminSecurityPage /></AdminGuard>;
+  // 'admin-security'(安全配置)已隐藏:深链一律回落主页,见 PL_IDS 处注释。
   else if (page === 'admin-maintenance')      body = <AdminGuard><AdminMaintenancePage /></AdminGuard>;
   else if (page === 'admin-dmca-takedowns')   body = <AdminGuard><AdminDmcaTakedownsPage /></AdminGuard>;
   else if (page === 'admin-dmca-strikes')     body = <AdminGuard><AdminDmcaStrikesPage /></AdminGuard>;

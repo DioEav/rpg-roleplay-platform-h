@@ -9,7 +9,7 @@ import { SectionAudit } from '../admin/audit.jsx';
 import { SectionHealth } from '../admin/health.jsx';
 import { SectionLogs } from '../admin/logs.jsx';
 import { SectionRegistration } from '../admin/registration.jsx';
-import { SectionSecurity } from '../admin/security.jsx';
+// import { SectionSecurity } from '../admin/security.jsx';  // 已隐藏(2026-10),随 case 一起恢复
 import { SectionMaintenance } from '../admin/maintenance.jsx';
 import { SectionDmcaTakedowns, SectionDmcaStrikes } from '../admin/dmca.jsx';
 import { SectionCsamReports } from '../admin/csam.jsx';
@@ -31,7 +31,8 @@ export function MobileAdmin({ nav }) {
     case 'admin-health':      return <SectionHealth nav={nav} />;
     case 'admin-logs':        return <SectionLogs nav={nav} />;
     case 'admin-registration': return <SectionRegistration nav={nav} />;
-    case 'admin-security':    return <SectionSecurity nav={nav} />;
+    // 'admin-security' 已隐藏(2026-10):菜单入口已移除,深链走 default 回管理菜单。
+    // case 'admin-security':    return <SectionSecurity nav={nav} />;
     case 'admin-maintenance': return <SectionMaintenance nav={nav} />;
     case 'admin-dmca-takedowns': return <SectionDmcaTakedowns nav={nav} />;
     case 'admin-dmca-strikes': return <SectionDmcaStrikes nav={nav} />;

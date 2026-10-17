@@ -12,7 +12,8 @@ function getSections(t) {
     { key: 'admin-health', icon: 'cpu', label: t('mobile.admin.section.health') },
     { key: 'admin-logs', icon: 'list', label: t('mobile.admin.section.logs') },
     { key: 'admin-registration', icon: 'key', label: t('mobile.admin.section.registration') },
-    { key: 'admin-security', icon: 'shield', label: t('mobile.admin.section.security') },
+    // 'admin-security' 已隐藏(2026-10):后端不消费 admin.security_config(见桌面端 platform-app.jsx admin 组注释)。
+    // { key: 'admin-security', icon: 'shield', label: t('mobile.admin.section.security') },
     { key: 'admin-maintenance', icon: 'settings', label: t('mobile.admin.section.maintenance') },
     { key: 'admin-dmca-takedowns', icon: 'flag', label: t('mobile.admin.section.dmca_takedowns') },
     { key: 'admin-dmca-strikes', icon: 'warn', label: t('mobile.admin.section.dmca_strikes') },

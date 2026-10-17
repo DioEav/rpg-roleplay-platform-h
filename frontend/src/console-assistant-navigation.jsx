@@ -141,7 +141,7 @@ function targetToPageId(target) {
     "admin.health":       "admin-health",
     "admin.logs":         "admin-logs",
     "admin.registration": "admin-registration",
-    "admin.security":     "admin-security",
+    // "admin.security": "admin-security",  // 安全配置页已隐藏(2026-10):后端不消费该配置,导航目标已下线
     "admin.maintenance":  "admin-maintenance",
     "settings.danger": "settings",
     "settings.profile": "me-edit",

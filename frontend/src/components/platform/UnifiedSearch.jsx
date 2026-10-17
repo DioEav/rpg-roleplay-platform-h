@@ -101,7 +101,8 @@ function UnifiedSearch({ open, onClose, setPage }) {
       { id: "admin-health",  label: tSearch('platform.nav.admin_health'),        parent: adminLabel, hash: "admin-health",        keywords: "health db memory disk process" },
       { id: "admin-logs",    label: tSearch('platform.nav.admin_logs'),          parent: adminLabel, hash: "admin-logs",          keywords: "logs system stderr stdout" },
       { id: "admin-reg",     label: tSearch('platform.nav.admin_registration'),  parent: adminLabel, hash: "admin-registration",  keywords: "registration invite code signup" },
-      { id: "admin-sec",     label: tSearch('platform.nav.admin_security'),      parent: adminLabel, hash: "admin-security",      keywords: "ip blocklist rate limit password policy" },
+      // 「安全配置」入口已隐藏(2026-10):后端不消费 admin.security_config,不再作为可搜索目的地
+      // { id: "admin-sec",     label: tSearch('platform.nav.admin_security'),      parent: adminLabel, hash: "admin-security",      keywords: "ip blocklist rate limit password policy" },
       { id: "admin-maint",   label: tSearch('platform.nav.admin_maintenance'),   parent: adminLabel, hash: "admin-maintenance",   keywords: "maintenance mode announcement restart" },
       { id: "admin-dmca-td", label: tSearch('platform.nav.admin_dmca_takedowns'),parent: adminLabel, hash: "admin-dmca-takedowns",keywords: "dmca takedown notice copyright admin" },
       { id: "admin-dmca-sk", label: tSearch('platform.nav.admin_dmca_strikes'),  parent: adminLabel, hash: "admin-dmca-strikes",  keywords: "dmca strike repeat offender admin" },

@@ -57,7 +57,7 @@ const getPLTitles = (t) => ({
   "admin-health":       [t('platform.nav.admin_health'),       t('platform.nav.admin_health_sub')],
   "admin-logs":         [t('platform.nav.admin_logs'),         t('platform.nav.admin_logs_sub')],
   "admin-registration": [t('platform.nav.admin_registration'), t('platform.nav.admin_registration_sub')],
-  "admin-security":     [t('platform.nav.admin_security'),     t('platform.nav.admin_security_sub')],
+  // "admin-security" 已隐藏(2026-10):页面不再注册,标题表条目一并移除,恢复时加回。
   "admin-maintenance":     [t('platform.nav.admin_maintenance'),     t('platform.nav.admin_maintenance_sub')],
   "admin-dmca-takedowns":  [t('platform.nav.admin_dmca_takedowns'), t('platform.nav.admin_dmca_takedowns_sub')],
   "admin-dmca-strikes":    [t('platform.nav.admin_dmca_strikes'),   t('platform.nav.admin_dmca_strikes_sub')],
