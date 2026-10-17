@@ -56,6 +56,7 @@ function LoginApp() {
   const [inviteAge, setInviteAge] = useState(false);
   const [inviteBusy, setInviteBusy] = useState(false);
   const [inviteErr, setInviteErr] = useState('');
+  const [maintenanceNotice, setMaintenanceNotice] = useState('');  // 非空 = 维护中,值为公告文本
 
   // 1) 已登录直接走开 — 不要让用户重复登录
   useEffect(() => {
@@ -87,7 +88,21 @@ function LoginApp() {
     return () => { cancelled = true; };
   }, []);
 
-  // 2b) 检测邮件链接中的 #reset?token=... 跳转重置模式
+  // 2b) 维护状态(登录接口本身豁免 503,管理员维护期间仍可登录)
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const base = window.__API_BASE || '';
+        const r = await fetch(`${base}/api/maintenance/status`, { credentials: 'include' });
+        const j = await r.json();
+        if (!cancelled && j.enabled) setMaintenanceNotice(j.announcement || '');
+      } catch (_) { /* 拉不到就静默 */ }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
+  // 2c) 检测邮件链接中的 #reset?token=... 跳转重置模式
   useEffect(() => {
     try {
       const hash = location.hash; // e.g. #reset?token=abc123
@@ -563,6 +578,12 @@ function LoginApp() {
             <div className="pl-auth-sub">{t('auth.subtitle')}</div>
           </div>
         </div>
+
+        {maintenanceNotice && (
+          <div role="alert" style={{ background: 'var(--warn-soft, #fdf3d7)', color: 'var(--warn, #8a6d1f)', border: '1px solid rgba(212,179,102,0.4)', borderRadius: 10, padding: '8px 12px', fontSize: 13, marginBottom: 12 }}>
+            <strong>{t('platform.maintenance_banner.label')}</strong>{maintenanceNotice ? ` — ${maintenanceNotice}` : ''}
+          </div>
+        )}
 
         {mode !== 'verify' && mode !== 'forgot' && mode !== 'reset' && mode !== 'magic-otp' && mode !== 'needs-profile' && (
           <div className="pl-auth-tabs" role="tablist">

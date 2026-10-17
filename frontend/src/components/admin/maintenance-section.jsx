@@ -8,7 +8,6 @@ import CSButton from '@cloudscape-design/components/button';
 import CSBox from '@cloudscape-design/components/box';
 import CSAlert from '@cloudscape-design/components/alert';
 import CSToggle from '@cloudscape-design/components/toggle';
-import CSModal from '@cloudscape-design/components/modal';
 import CSFormField from '@cloudscape-design/components/form-field';
 import CSTextarea from '@cloudscape-design/components/textarea';
 import { fmtTime } from './shared.jsx';
@@ -23,8 +22,6 @@ export function AdminMaintenancePage() {
   const [err, setErr] = React.useState(null);
   const [saving, setSaving] = React.useState(false);
   const [draft, setDraft] = React.useState(null);
-  const [restartModal, setRestartModal] = React.useState(false);
-  const [restarting, setRestarting] = React.useState(false);
 
   React.useEffect(() => {
     let cancelled = false;
@@ -51,25 +48,17 @@ export function AdminMaintenancePage() {
     setSaving(true);
     try {
       await window.api.admin.saveMaintenance(draft);
-      setConfig(draft);
+      // maintenance_since 由后端计算,保存后重新拉取以刷新显示;
+      // 刷新失败不掩盖保存成功(draft 保留用户所见的值即可)
+      let fresh = draft;
+      try { fresh = await window.api.admin.maintenance(); } catch (_) {}
+      setConfig(fresh);
+      setDraft(fresh);
       window.toast?.(t('admin_page.maintenance.save_ok'), { kind: 'ok' });
     } catch (e) {
       window.toast?.(t('admin_page.maintenance.save_fail') + ': ' + (e?.message || ''), { kind: 'danger' });
     } finally {
       setSaving(false);
-    }
-  }
-
-  async function handleRestart() {
-    setRestarting(true);
-    try {
-      await window.api.admin.restart();
-      window.toast?.(t('admin_page.maintenance.restart_ok'), { kind: 'ok', duration: 5000 });
-      setRestartModal(false);
-    } catch (e) {
-      window.toast?.(t('admin_page.maintenance.restart_fail') + ': ' + (e?.message || ''), { kind: 'danger' });
-    } finally {
-      setRestarting(false);
     }
   }
 
@@ -86,28 +75,28 @@ export function AdminMaintenancePage() {
             ? <CSBox textAlign="center" color="inherit">{t('admin_page.maintenance.empty')}</CSBox>
             : (
               <CSSpaceBetween size="m">
-                {d.enabled && (
+                {d.maintenance_mode && (
                   <CSAlert type="warning">{t('admin_page.maintenance.mode_warning')}</CSAlert>
                 )}
                 <CSFormField label={t('admin_page.maintenance.field_toggle')}>
                   <CSToggle
-                    checked={!!d.enabled}
-                    onChange={({ detail }) => setDraft((prev) => ({ ...prev, enabled: detail.checked }))}
+                    checked={!!d.maintenance_mode}
+                    onChange={({ detail }) => setDraft((prev) => ({ ...prev, maintenance_mode: detail.checked }))}
                   >
-                    {d.enabled ? t('admin_page.common.toggle_on') : t('admin_page.common.toggle_off')}
+                    {d.maintenance_mode ? t('admin_page.common.toggle_on') : t('admin_page.common.toggle_off')}
                   </CSToggle>
                 </CSFormField>
                 <CSFormField label={t('admin_page.maintenance.field_message')}>
                   <CSTextarea
-                    value={d.message || ''}
-                    onChange={({ detail }) => setDraft((prev) => ({ ...prev, message: detail.value }))}
+                    value={d.announcement || ''}
+                    onChange={({ detail }) => setDraft((prev) => ({ ...prev, announcement: detail.value }))}
                     rows={4}
                     placeholder={t('admin_page.maintenance.message_placeholder')}
                   />
                 </CSFormField>
-                {d.started_at && (
+                {d.maintenance_since && (
                   <CSFormField label={t('admin_page.maintenance.field_started_at')}>
-                    <CSBox color="text-body-secondary">{fmtTime(d.started_at)}</CSBox>
+                    <CSBox color="text-body-secondary">{fmtTime(d.maintenance_since)}</CSBox>
                   </CSFormField>
                 )}
                 <CSBox float="right">
@@ -117,37 +106,6 @@ export function AdminMaintenancePage() {
             )
         }
       </CSContainer>
-
-      <CSContainer header={<CSHeader variant="h2" description={t('admin_page.maintenance.restart_description')}>{t('admin_page.maintenance.restart_title')}</CSHeader>}>
-        <CSSpaceBetween size="m">
-          <CSAlert type="warning">{t('admin_page.maintenance.restart_warning')}</CSAlert>
-          <CSButton
-            variant="normal"
-            iconName="status-warning"
-            onClick={() => setRestartModal(true)}
-          >
-            {t('admin_page.maintenance.restart_btn')}
-          </CSButton>
-        </CSSpaceBetween>
-      </CSContainer>
-
-      {restartModal && (
-        <CSModal
-          visible
-          onDismiss={() => !restarting && setRestartModal(false)}
-          header={t('admin_page.maintenance.restart_modal_title')}
-          footer={
-            <CSBox float="right">
-              <CSSpaceBetween direction="horizontal" size="xs">
-                <CSButton variant="link" disabled={restarting} onClick={() => setRestartModal(false)}>{t('admin_page.common.cancel')}</CSButton>
-                <CSButton variant="primary" loading={restarting} onClick={handleRestart}>{t('admin_page.maintenance.restart_confirm_btn')}</CSButton>
-              </CSSpaceBetween>
-            </CSBox>
-          }
-        >
-          <CSBox>{t('admin_page.maintenance.restart_modal_body')}</CSBox>
-        </CSModal>
-      )}
     </CSSpaceBetween>
   );
 }

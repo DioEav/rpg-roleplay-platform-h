@@ -135,8 +135,9 @@
         throw new ApiError(payload && payload.code, res.status, detail, payload);
       }
 
-      // 503 — service unavailable.
-      if (res.status === 503) {
+      // 503 — service unavailable. 维护模式(payload.maintenance=true)已有全局横幅
+      // 与公告文案,不再叠加通用 toast,避免双重提示。
+      if (res.status === 503 && !(payload && payload.maintenance)) {
         try { toast("服务暂不可用", { kind: "danger", duration: 3600 }); } catch (_) {}
       }
 

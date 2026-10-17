@@ -52,8 +52,24 @@ async def admin_set_maintenance(
     with connect() as db:
         _set_app_config(db, _MAINTENANCE_CFG_KEY, update)
         _write_audit(db, admin, "maintenance.toggle", details=update, ip=ip)
+    # 跳过 5s TTL 缓存,变更立即生效(中间件是唯一消费方)
+    from ...maintenance import invalidate_maintenance_cache
+    invalidate_maintenance_cache()
 
     return json_response({"ok": True})
+
+
+@router.get("/api/maintenance/status")
+async def maintenance_status():
+    """公开维护状态(无鉴权):前端横幅/登录页公告条据此渲染;本身豁免 503 拦截。"""
+    from ...maintenance import get_maintenance_state
+    state = get_maintenance_state()
+    return json_response({
+        "ok": True,
+        "enabled": state["maintenance_mode"],
+        "announcement": state["announcement"],
+        "since": state["maintenance_since"],
+    })
 
 
 @router.post("/api/admin/restart")

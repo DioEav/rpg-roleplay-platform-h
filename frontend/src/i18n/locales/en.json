@@ -1343,6 +1343,9 @@
       "csv_ctx_used": "Ctx Used",
       "csv_ctx_max": "Ctx Max",
       "csv_save_id": "Save ID"
+    },
+    "maintenance_banner": {
+      "label": "Maintenance in progress"
     }
   },
   "admin_page": {
@@ -1541,16 +1544,7 @@
       "field_started_at": "Maintenance Start Time",
       "empty": "No config data",
       "save_ok": "Maintenance config saved",
-      "save_fail": "Save failed",
-      "restart_title": "Service Restart",
-      "restart_description": "Send a graceful reload signal to the backend",
-      "restart_warning": "Restart causes a brief outage (typically 5–15 seconds). Recommended after enabling maintenance mode.",
-      "restart_btn": "Restart Service",
-      "restart_modal_title": "Confirm Service Restart",
-      "restart_modal_body": "A graceful reload (SIGTERM/graceful reload) signal will be sent. In-flight requests will be completed where possible. New requests may fail for ~5–15 seconds — ensure users are notified or maintenance mode is active.",
-      "restart_confirm_btn": "Confirm Restart",
-      "restart_ok": "Restart signal sent — service will gracefully reload",
-      "restart_fail": "Restart failed"
+      "save_fail": "Save failed"
     },
     "dmca_takedowns": {
       "title": "DMCA Takedown Queue",
@@ -5924,15 +5918,7 @@
         "message_label": "Maintenance message",
         "message_placeholder": "Down for maintenance, please check back soon…",
         "started_at": "Started: ",
-        "save_btn": "Save maintenance settings",
-        "restart_heading": "Restart Service",
-        "restart_hint": "The service will restart in 5–30 seconds. Active connections will be dropped.",
-        "restart_btn": "Restart service",
-        "confirm_restart_title": "Confirm restart",
-        "confirm_restart_body": "The service will restart immediately. All active user sessions will be interrupted and should recover within 5–30 seconds.",
-        "confirm_restart_label": "Restart now",
-        "restart_sent": "Restart signal sent",
-        "restart_failed": "Restart failed: {{msg}}"
+        "save_btn": "Save maintenance settings"
       },
       "dmca": {
         "status_open": "Open",

@@ -23,6 +23,12 @@ if str(REPO_ROOT) != sys.path[0]:
 # 强制服务器鉴权模式，避免 local 模式的隐式登录干扰
 os.environ.setdefault("RPG_REQUIRE_AUTH", "1")
 
+# 与 app.py 同款:导入期即加载 .env(override=True)。否则任何在 make_client()
+# (import app)之前碰 DB 的测试(如 setUpClass 里先 cleanup_test_users)都会拿不到
+# DATABASE_URL,连接池回退到默认 postgresql:///rpg_platform → PoolTimeout。
+from core.config import load_dotenv_once
+load_dotenv_once()
+
 
 def random_suffix(n: int = 8) -> str:
     return "".join(random.choices(string.ascii_lowercase + string.digits, k=n))
@@ -51,6 +57,22 @@ def _ensure_registration_open():
     from platform_app.db import connect
     with connect() as db:
         db.execute("delete from app_config where key = 'admin.registration_config'")
+        # 同理复位维护模式:开启时 503 gate 会拦掉所有非豁免 API,连片弄挂集成测试
+        db.execute("delete from app_config where key = 'admin.maintenance_config'")
+    # 中间件带 5s TTL 缓存,测试直接改库后必须失效,否则本进程内后续用例读到旧值
+    try:
+        from platform_app.maintenance import invalidate_maintenance_cache
+        invalidate_maintenance_cache()
+    except Exception:
+        pass
+    # 清掉 TestClient 固定 IP(testclient)的注册预算计数,否则反复本地跑测试
+    # 会把 10 次/10min 的 reg:ip 预算用光,后续注册全部 400
+    try:
+        import redis_bus
+        if redis_bus.get_sync_client() is not None:
+            redis_bus.rate_reset("reg:ip:testclient")
+    except Exception:
+        pass
 
 
 def cleanup_test_users() -> int:

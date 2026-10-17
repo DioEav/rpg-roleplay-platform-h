@@ -1447,6 +1447,9 @@
       "csv_ctx_used": "上下文used",
       "csv_ctx_max": "上下文max",
       "csv_save_id": "存档ID"
+    },
+    "maintenance_banner": {
+      "label": "维护中"
     }
   },
   "admin_page": {
@@ -1645,16 +1648,7 @@
       "field_started_at": "维护开始时间",
       "empty": "暂无配置数据",
       "save_ok": "维护配置已保存",
-      "save_fail": "保存失败",
-      "restart_title": "服务重启",
-      "restart_description": "发送优雅重载信号到后端服务",
-      "restart_warning": "重启会短暂中断服务（通常 5-15 秒）。建议在维护模式开启后进行。",
-      "restart_btn": "重启服务",
-      "restart_modal_title": "确认重启服务",
-      "restart_modal_body": "服务将发送优雅重载（SIGTERM/graceful reload）信号，当前进行中的请求会尽量完成。重启期间（约 5-15 秒）新请求可能失败，请确保已通知用户或已开启维护模式。",
-      "restart_confirm_btn": "确认重启",
-      "restart_ok": "重启指令已发送，服务将优雅重载",
-      "restart_fail": "重启失败"
+      "save_fail": "保存失败"
     },
     "dmca_takedowns": {
       "title": "DMCA 下架队列",
@@ -5921,15 +5915,7 @@
         "message_label": "维护提示消息",
         "message_placeholder": "正在维护中，请稍后再试…",
         "started_at": "开始时间：",
-        "save_btn": "保存维护配置",
-        "restart_heading": "服务重启",
-        "restart_hint": "重启后约 5–30 秒服务恢复，当前连接将断开。",
-        "restart_btn": "重启服务",
-        "confirm_restart_title": "确认重启服务",
-        "confirm_restart_body": "服务将立即重启，所有在线用户会话中断，约 5–30 秒恢复。",
-        "confirm_restart_label": "确认重启",
-        "restart_sent": "重启指令已发送",
-        "restart_failed": "重启失败: {{msg}}"
+        "save_btn": "保存维护配置"
       },
       "dmca": {
         "status_open": "待处理",

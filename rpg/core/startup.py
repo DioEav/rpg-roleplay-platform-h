@@ -707,6 +707,10 @@ def configure_app(app: FastAPI) -> None:
     app.add_middleware(GZipMiddleware, minimum_size=_gzip_min_bytes())
 
     # Custom middleware (后注册的先执行)
+    # 维护模式 gate 先注册 → api_contract 后注册先跑(先完成 /api/v1→/api 规范化与
+    # request_id 注入),maintenance gate 看到的是规范化路径。
+    from platform_app.maintenance import maintenance_middleware
+    app.middleware("http")(maintenance_middleware)
     app.middleware("http")(api_contract_middleware)
 
     # Exception handlers

@@ -34,6 +34,7 @@ import {
 import Modal from './components/Modal.jsx';
 import ConfirmDialog from './components/ConfirmDialog.jsx';
 import PolicyNoticeBanner from './components/PolicyNoticeBanner.jsx';
+import MaintenanceBanner from './components/MaintenanceBanner.jsx';
 // #2 合并:平台顶栏「反馈」改用功能更全的 FeedbackDrawer(原 QuickModal 是其功能子集 —— 缺历史/
 // 回执/管理员回复/对话节选/自部署邮箱/i18n;退役 QuickModal,零功能丢失,platform 反馈反而更全)。
 import { FeedbackDrawer } from './components/FeedbackDrawer.jsx';
@@ -624,6 +625,8 @@ function PlatformShellCS({ page, setPage, children, assistant, assistantOpen, on
           onClose={() => { markAnnouncementSeen(); setWelcomeOpen(false); setWelcomeFirstTime(false); }} />
       )}
       <HelpDrawerRoot />
+      {/* 维护横幅:文档流内嵌,插在吸顶导航之前,自然下推内容不重叠 */}
+      <MaintenanceBanner />
       <div id="pl-cs-topnav" className="pl-cs-topbar"
         style={{ position: 'sticky', top: 0, zIndex: 1002, display: 'flex', alignItems: 'center', background: 'var(--bg-deep)' }}>
         {/* 左:折叠按钮 + logo + 分组导航(创作/游玩/系统/管理;AWS 把服务菜单放左侧) */}

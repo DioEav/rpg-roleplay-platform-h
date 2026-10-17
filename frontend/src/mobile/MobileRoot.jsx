@@ -19,6 +19,7 @@ import { useState, useCallback, useRef, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Icon } from './icons.jsx';
 import { PageHeader, Layer } from './chrome.jsx';
+import MaintenanceBanner from '../components/MaintenanceBanner.jsx';
 import { launchSave } from './launch.js';
 import { MobileHome } from './MobileHome.jsx';
 import { Placeholder } from './MobilePlaceholder.jsx';
@@ -268,6 +269,8 @@ export function MobileRoot({ page = 'profile', setPage }) {
   return (
     <div className="m-root">
       <div className="pl-root">
+        {/* 维护横幅:pl-root 是 flex 纵向容器,文档流内嵌自然下推 tabhost,不与页头重叠 */}
+        <MaintenanceBanner />
         <div className="pl-tabhost">
           {layers.map((L, i) => {
             const isTop = i === layers.length - 1;
