@@ -251,12 +251,15 @@ const getCSModules = (t) => [
   // 系统管理:仅 admin 角色可见/可访问(adminOnly)。部署配置等站点级设置从用户
   // 「设置 & 账户」中拆出,独立成网站管理功能页,三道鉴权(菜单隐藏 + 路由 AdminGuard + 后端 403)。
   { id: 'admin', label: t('platform.nav.admin'), group: t('platform.nav.group_admin'), adminOnly: true,
-    pages: ['admin-deploy', 'admin-users', 'admin-usage', 'admin-audit',
+    // 「部署」(admin-deploy)入口已隐藏(2026-10):后端不消费 admin.deployment_config,
+    // 界面参数(监听地址/CORS/上传限制/SMTP/CAPTCHA)全部不生效,仅装饰。组件与 i18n 原样保留,
+    // 恢复 = 加回本处 pages 数组 + sub 行 + entries/platform.jsx 的 PL_IDS 与路由 + settings.jsx SECTIONS + 移动端 menu/MobileAdmin。
+    pages: ['admin-users', 'admin-usage', 'admin-audit',
             'admin-health', 'admin-logs', 'admin-registration', 'admin-security', 'admin-maintenance',
             'admin-dmca-takedowns', 'admin-dmca-strikes', 'admin-csam-reports', 'admin-aup-actions',
             'admin-feedback', 'admin-achievements'],
     sub: [
-      { text: t('platform.nav.admin_deploy'),          href: '#admin-deploy' },
+      // { text: t('platform.nav.admin_deploy'),          href: '#admin-deploy' },
       { text: t('platform.nav.admin_users'),           href: '#admin-users' },
       { text: t('platform.nav.admin_usage'),           href: '#admin-usage' },
       { text: t('platform.nav.admin_audit'),           href: '#admin-audit' },

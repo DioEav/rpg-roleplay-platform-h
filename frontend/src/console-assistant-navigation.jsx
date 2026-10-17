@@ -134,7 +134,7 @@ function targetToPageId(target) {
     "settings.modelparams": "settings",
     "settings.memory": "settings",
     "settings.permissions": "settings",
-    "settings.deploy": "admin-deploy",
+    // "settings.deploy": "admin-deploy",  // 部署页已隐藏(2026-10):后端不消费该配置,导航目标已下线
     "admin.users":        "admin-users",
     "admin.usage":        "admin-usage",
     "admin.audit":        "admin-audit",

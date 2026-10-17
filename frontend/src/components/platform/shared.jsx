@@ -50,7 +50,7 @@ const getPLTitles = (t) => ({
   "me-edit":   [t('platform.nav.me_edit'),    t('platform.nav.me_edit_sub')],
   "me-settings": [t('platform.nav.me_settings'), t('platform.nav.me_settings_sub')],
   settings: [t('platform.nav.settings'),  t('platform.nav.settings_sub')],
-  "admin-deploy": [t('platform.nav.admin_deploy'), t('platform.nav.admin_deploy_sub')],
+  // "admin-deploy" 已隐藏(2026-10):页面不再注册,标题表条目一并移除,恢复时加回。
   "admin-users":        [t('platform.nav.admin_users'),        t('platform.nav.admin_users_sub')],
   "admin-usage":        [t('platform.nav.admin_usage'),        t('platform.nav.admin_usage_sub')],
   "admin-audit":        [t('platform.nav.admin_audit'),        t('platform.nav.admin_audit_sub')],

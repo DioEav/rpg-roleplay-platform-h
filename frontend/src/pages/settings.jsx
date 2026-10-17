@@ -44,7 +44,9 @@ function SettingsPage({ section: sectionProp } = {}) {
     { id: "modelparams", label: t('settings.nav.modelparams'), icon: "spark" },
     { id: "modules",     label: t('settings.nav.modules'),     icon: "spark" },
     { id: "memory",      label: t('settings.nav.memory'),      icon: "memory" },
-    { id: "deploy",      label: t('settings.nav.deploy'),      icon: "world" },
+    // 「部署」区块已隐藏(2026-10):后端不消费 admin.deployment_config,界面参数
+    // (监听地址/CORS/上传限制/SMTP/CAPTCHA)全部不生效,仅装饰。DeploySection 组件与 i18n 原样保留,
+    // 恢复 = 把 deploy 加回 SECTIONS、解注释下方渲染行,并恢复 platform-app.jsx / entries/platform.jsx / 移动端 admin 的入口。
     // 「权限设置」区块已隐藏(2026-10):PermSection 组件与 i18n 原样保留,
     // 恢复 = 把 permissions 加回 SECTIONS、渲染 <PermSection /> 并恢复 platform-app.jsx / entries/platform.jsx 路由。
     // 「账号与数据迁移」区块已隐藏(2026-10):AccountSection 组件与 i18n 原样保留,
@@ -91,7 +93,7 @@ function SettingsPage({ section: sectionProp } = {}) {
       {section === "modelparams" && <ModelParamsSection />}
       {section === "modules" && <ModuleModelsSection />}
       {section === "memory" && <MemorySection />}
-      {section === "deploy" && <DeploySection />}
+      {/* 「部署」区块已隐藏:见上方 SECTIONS 处注释 */}
       {/* 「权限设置」区块已隐藏:见上方 SECTIONS 处注释 */}
       {/* 「账号与数据迁移」区块已隐藏:见上方 SECTIONS 处注释 */}
       {/* 「高危」区块已隐藏:见上方 SECTIONS 处注释 */}

@@ -10,7 +10,9 @@
 //
 // 后端必须为这些路径做 history-fallback(返回 Platform.html),否则深链/刷新 404。
 
-export const PL_HASH_ALIASES = { branches: 'saves-branches', 'settings-deploy': 'admin-deploy' };
+// 'settings-deploy' 别名已隐藏(2026-10):admin-deploy 页不再注册,旧链接统一回落主页。
+// 恢复时把 'settings-deploy': 'admin-deploy' 加回本行。
+export const PL_HASH_ALIASES = { branches: 'saves-branches' };
 
 // page id → 路径。
 // 注意:主页用 /profile 而非裸 /。生产 Cloudflare 有「裸 / → /Login.html」上游规则,

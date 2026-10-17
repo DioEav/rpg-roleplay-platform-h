@@ -93,8 +93,8 @@ function UnifiedSearch({ open, onClose, setPage }) {
     // 「权限设置」入口已隐藏(2026-10),不再作为可搜索目的地
     // 「高危」入口已隐藏,不再作为可搜索目的地
     // 部署配置已拆到「系统管理」,仅 admin 可见
+    // 「部署」入口已隐藏(2026-10):后端不消费 admin.deployment_config,不再作为可搜索目的地
     ...(isAdmin ? [
-      { id: "deploy",        label: tSearch('platform.nav.admin_deploy'),        parent: adminLabel, hash: "admin-deploy",        keywords: "host port cors upload deploy admin" },
       { id: "admin-users",   label: tSearch('platform.nav.admin_users'),         parent: adminLabel, hash: "admin-users",         keywords: "users ban role deactivate admin" },
       { id: "admin-usage",   label: tSearch('platform.nav.admin_usage'),         parent: adminLabel, hash: "admin-usage",         keywords: "global usage token cost admin" },
       { id: "admin-audit",   label: tSearch('platform.nav.admin_audit'),         parent: adminLabel, hash: "admin-audit",         keywords: "audit log admin action" },

@@ -16,7 +16,7 @@ import { SectionCsamReports } from '../admin/csam.jsx';
 import { SectionAupActions } from '../admin/aup.jsx';
 import { SectionFeedback } from '../admin/feedback.jsx';
 import { SectionAchievements } from '../admin/achievements.jsx';
-import { SectionDeploy } from '../admin/deploy.jsx';
+// import { SectionDeploy } from '../admin/deploy.jsx';  // 已隐藏(2026-10),随 case 一起恢复
 
 /* ══════════════════════════════════════════
    主入口
@@ -39,7 +39,9 @@ export function MobileAdmin({ nav }) {
     case 'admin-aup-actions': return <SectionAupActions nav={nav} />;
     case 'admin-feedback':    return <SectionFeedback nav={nav} />;
     case 'admin-achievements': return <SectionAchievements nav={nav} />;
-    case 'admin-deploy':      return <SectionDeploy nav={nav} />;
+    // 'admin-deploy' 已隐藏(2026-10):菜单入口已移除,深链走 default 回管理菜单。
+    // 恢复 = 解注释本行 + menu.jsx 的菜单项(与桌面端入口一起)。
+    // case 'admin-deploy':      return <SectionDeploy nav={nav} />;
     default:                  return <AdminMenu nav={nav} />;
   }
 }

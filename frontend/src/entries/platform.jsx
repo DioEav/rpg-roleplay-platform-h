@@ -95,8 +95,8 @@ const PL_IDS = [
   // 不在合法 page 集合 → 直链 /modules、/play-settings 由 plPathToPage 返回 null 回落主页。
   'scripts-library', 'scripts-editor', 'scripts-settings',
   'settings-models', 'settings-modelparams', 'settings-modules', 'settings-memory',
-  'admin-deploy',
-  // 'settings-permissions' 与 'settings-account' 已隐藏(2026-10):不在合法 page 集合 → 直链回落主页。
+  // 'admin-deploy' 已隐藏(2026-10):后端不消费 admin.deployment_config(见 platform-app.jsx admin 组注释)。
+  // 不在合法 page 集合 → 直链 /admin-deploy 回落主页。恢复 = 加回本行 + 下方路由。
   'admin-users', 'admin-usage', 'admin-audit', 'admin-health',
   'admin-logs', 'admin-registration', 'admin-security', 'admin-maintenance',
   'admin-dmca-takedowns', 'admin-dmca-strikes', 'admin-csam-reports', 'admin-aup-actions',
@@ -199,7 +199,7 @@ function PlatformApp() {
   // 'settings-permissions'(权限设置)已隐藏:深链一律回落主页。
   // 'settings-account'(账号与数据迁移)已隐藏:深链一律回落主页。
   // 'settings-danger'(高危区块)已隐藏:深链一律回落主页,见 pages/settings.jsx 内注释。
-  else if (page === 'admin-deploy') body = <AdminGuard><SettingsPage section="deploy" /></AdminGuard>;
+  // 'admin-deploy'(部署)已隐藏:深链一律回落主页,见 PL_IDS 处注释。
   else if (page === 'admin-users')        body = <AdminGuard><AdminUsersPage /></AdminGuard>;
   else if (page === 'admin-usage')        body = <AdminGuard><AdminGlobalUsagePage /></AdminGuard>;
   else if (page === 'admin-audit')        body = <AdminGuard><AdminAuditPage /></AdminGuard>;

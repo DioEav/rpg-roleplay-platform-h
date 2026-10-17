@@ -20,7 +20,9 @@ function getSections(t) {
     { key: 'admin-aup-actions', icon: 'slash', label: t('mobile.admin.section.aup_actions') },
     { key: 'admin-feedback', icon: 'feedback', label: t('mobile.admin.section.feedback') },
     { key: 'admin-achievements', icon: 'trophy', label: t('mobile.admin.section.achievements') },
-    { key: 'admin-deploy', icon: 'cloud', label: t('mobile.admin.section.deploy') },
+    // 'admin-deploy' 已隐藏(2026-10):后端不消费 admin.deployment_config(见桌面端 platform-app.jsx admin 组注释)。
+    // 恢复 = 解注释本行 + MobileAdmin.jsx 的 case(与桌面端入口一起)。
+    // { key: 'admin-deploy', icon: 'cloud', label: t('mobile.admin.section.deploy') },
   ];
 }
 

@@ -179,11 +179,11 @@ export function AdminUsersPage() {
               { id: 'last_login', header: t('admin_page.users.col_last_login'), cell: (u) => fmtTime(u.last_login_at || u.last_login) },
               {
                 id: 'token_30d', header: t('admin_page.users.col_token_30d'),
-                cell: (u) => typeof u.token_usage_30d === 'number' ? u.token_usage_30d.toLocaleString() : '—',
+                cell: (u) => typeof u.usage_tokens_30d === 'number' ? u.usage_tokens_30d.toLocaleString() : '—',
               },
               {
                 id: 'sessions', header: t('admin_page.users.col_sessions'),
-                cell: (u) => typeof u.active_session_count === 'number' ? u.active_session_count : '—',
+                cell: (u) => typeof u.session_count === 'number' ? u.session_count : '—',
               },
               {
                 id: 'actions', header: t('admin_page.common.actions'), minWidth: 200,
