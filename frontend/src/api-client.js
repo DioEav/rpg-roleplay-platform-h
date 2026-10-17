@@ -135,9 +135,10 @@
         throw new ApiError(payload && payload.code, res.status, detail, payload);
       }
 
-      // 503 — service unavailable. 维护模式(payload.maintenance=true)已有全局横幅
-      // 与公告文案,不再叠加通用 toast,避免双重提示。
-      if (res.status === 503 && !(payload && payload.maintenance)) {
+      // 503 — service unavailable. 维护模式(payload.maintenance=true)且本页面
+      // 挂有维护横幅(MaintenanceBanner 会置 window.__MAINTENANCE_BANNER_VISIBLE)时
+      // 不再叠加通用 toast;游戏台等无横幅的入口仍靠 toast 获得反馈。
+      if (res.status === 503 && !(payload && payload.maintenance && window.__MAINTENANCE_BANNER_VISIBLE)) {
         try { toast("服务暂不可用", { kind: "danger", duration: 3600 }); } catch (_) {}
       }
 
