@@ -460,6 +460,7 @@
       // CSAM Reports
       csamReports: {
         list: ({ status } = {}) => GET(`/api/admin/csam/reports`, status ? { status } : undefined),
+        create: (body) => POST(`/api/admin/csam/reports`, body),
         decision: (id, body) => POST(`/api/admin/csam/reports/${id}/decision`, body),
       },
       // AUP 用户操作 (suspend / unsuspend / terminate)

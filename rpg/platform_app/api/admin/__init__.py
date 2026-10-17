@@ -71,6 +71,7 @@ from .aup import (
 )
 from .co_builders import admin_co_builders
 from .csam import (
+    admin_csam_create,
     admin_csam_decision,
     admin_csam_list,
 )

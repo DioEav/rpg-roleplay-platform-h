@@ -2396,6 +2396,14 @@ MIGRATIONS: list[tuple[int, str, list[str]]] = [
         # storage_key 展示 —— 与 asset.name || storage_key 的既有取值口径一致。
         "alter table user_assets add column if not exists name text not null default ''",
     ]),
+    (105, "csam_reports_status_default_pending", [
+        # 状态词汇表对齐:v57 建表时 default 'open'(注释 open|decided),但
+        # api/admin/csam.py 列表端点默认过滤 'pending'、桌面/移动端筛选选项也只有
+        # pending/decided —— 结果「待决定」筛选拿 'pending' 查 'open' 的行,永远为空。
+        # 端点/前端均已是 'pending',这里把列默认值对齐过来(仅影响此后插入的行;
+        # 本表此前无任何写入方,不存在存量数据)。v57 的注释不再改,以本迁移为准。
+        "alter table csam_reports alter column status set default 'pending'",
+    ]),
 
 ]
 

@@ -1639,7 +1639,14 @@
       "decision_select_placeholder": "Select…",
       "notes_field": "Notes",
       "notes_placeholder": "Basis for decision, CyberTipline report ID, etc…",
+      "cybertip_field": "CyberTipline report ID (optional)",
       "decided_ok": "Decision recorded",
+      "create_btn": "New Report",
+      "create_modal_title": "New Report Entry",
+      "field_reported_user": "Reported username (optional)",
+      "field_content_url": "Content URL (optional)",
+      "field_description": "Report description *",
+      "create_ok": "Report recorded",
       "op_fail": "Operation failed"
     },
     "aup": {
@@ -5953,6 +5960,7 @@
         "decide_btn": "Make decision",
         "decide_sheet_title": "Decision for CSAM report #{{id}}",
         "decision_label": "Decision (founded / escalate / unfounded)",
+        "cybertip_label": "CyberTip ID (optional)",
         "notes_label": "Notes",
         "notes_placeholder": "Handling notes…"
       },

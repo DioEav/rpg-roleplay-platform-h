@@ -12,6 +12,7 @@ import CSAlert from '@cloudscape-design/components/alert';
 import CSSelect from '@cloudscape-design/components/select';
 import CSModal from '@cloudscape-design/components/modal';
 import CSFormField from '@cloudscape-design/components/form-field';
+import CSInput from '@cloudscape-design/components/input';
 import CSTextarea from '@cloudscape-design/components/textarea';
 import { fmtTime } from './shared.jsx';
 
@@ -25,8 +26,11 @@ export function AdminCsamReportsPage() {
   const [err, setErr] = React.useState(null);
   const [statusFilter, setStatusFilter] = React.useState({ value: 'pending', label: t('admin_page.csam.status_pending') });
   const [decisionModal, setDecisionModal] = React.useState(null); // report item
-  const [decisionForm, setDecisionForm] = React.useState({ decision: '', notes: '' });
+  const [decisionForm, setDecisionForm] = React.useState({ decision: '', notes: '', cybertip_report_id: '' });
   const [deciding, setDeciding] = React.useState(false);
+  const [createModal, setCreateModal] = React.useState(false);
+  const [createForm, setCreateForm] = React.useState({ reported_username: '', content_url: '', description: '' });
+  const [creating, setCreating] = React.useState(false);
 
   const statusOptions = [
     { value: 'pending', label: t('admin_page.csam.status_pending') },
@@ -61,12 +65,27 @@ export function AdminCsamReportsPage() {
       await window.api.admin.csamReports.decision(decisionModal.id, decisionForm);
       window.toast?.(t('admin_page.csam.decided_ok'), { kind: 'ok' });
       setDecisionModal(null);
-      setDecisionForm({ decision: '', notes: '' });
+      setDecisionForm({ decision: '', notes: '', cybertip_report_id: '' });
       load();
     } catch (e) {
       window.toast?.(t('admin_page.csam.op_fail') + ': ' + (e?.message || ''), { kind: 'danger' });
     } finally {
       setDeciding(false);
+    }
+  }
+
+  async function doCreate() {
+    setCreating(true);
+    try {
+      await window.api.admin.csamReports.create(createForm);
+      window.toast?.(t('admin_page.csam.create_ok'), { kind: 'ok' });
+      setCreateModal(false);
+      setCreateForm({ reported_username: '', content_url: '', description: '' });
+      load();
+    } catch (e) {
+      window.toast?.(t('admin_page.csam.op_fail') + ': ' + (e?.message || ''), { kind: 'danger' });
+    } finally {
+      setCreating(false);
     }
   }
 
@@ -96,6 +115,7 @@ export function AdminCsamReportsPage() {
                   options={statusOptions}
                   onChange={({ detail }) => setStatusFilter(detail.selectedOption)}
                 />
+                <CSButton variant="primary" onClick={() => setCreateModal(true)}>{t('admin_page.csam.create_btn')}</CSButton>
                 <CSButton iconName="refresh" onClick={load} loading={loading}>{t('admin_page.common.refresh')}</CSButton>
               </CSSpaceBetween>
             }
@@ -123,7 +143,7 @@ export function AdminCsamReportsPage() {
               cell: (r) => r.status === 'pending' && (
                 <CSButton
                   variant="inline-link"
-                  onClick={() => { setDecisionModal(r); setDecisionForm({ decision: '', notes: '' }); }}
+                  onClick={() => { setDecisionModal(r); setDecisionForm({ decision: '', notes: '', cybertip_report_id: '' }); }}
                 >
                   {t('admin_page.csam.btn_decide')}
                 </CSButton>
@@ -148,12 +168,29 @@ export function AdminCsamReportsPage() {
           }
         >
           <CSSpaceBetween size="m">
+            <CSBox>
+              <div style={{ fontSize: 13 }}>
+                {t('admin_page.csam.col_reported_user')}: {decisionModal.reported_username || `uid:${decisionModal.reported_user_id}` || '—'}
+              </div>
+              <div style={{ fontSize: 13, wordBreak: 'break-all' }}>
+                {t('admin_page.csam.col_content')}: {decisionModal.content_url || t('admin_page.csam.content_no_url')}
+              </div>
+              {decisionModal.description && (
+                <div style={{ fontSize: 13, whiteSpace: 'pre-wrap', marginTop: 4 }}>{decisionModal.description}</div>
+              )}
+            </CSBox>
             <CSAlert type="warning">{t('admin_page.csam.decision_warning')}</CSAlert>
             <CSFormField label={t('admin_page.csam.decision_field')}>
               <CSSelect
                 selectedOption={decisionOptions.find((o) => o.value === decisionForm.decision) || { value: '', label: t('admin_page.csam.decision_select_placeholder') }}
                 options={decisionOptions}
                 onChange={({ detail }) => setDecisionForm((f) => ({ ...f, decision: detail.selectedOption.value }))}
+              />
+            </CSFormField>
+            <CSFormField label={t('admin_page.csam.cybertip_field')}>
+              <CSInput
+                value={decisionForm.cybertip_report_id}
+                onChange={({ detail }) => setDecisionForm((f) => ({ ...f, cybertip_report_id: detail.value }))}
               />
             </CSFormField>
             <CSFormField label={t('admin_page.csam.notes_field')}>
@@ -163,6 +200,34 @@ export function AdminCsamReportsPage() {
                 rows={3}
                 placeholder={t('admin_page.csam.notes_placeholder')}
               />
+            </CSFormField>
+          </CSSpaceBetween>
+        </CSModal>
+      )}
+
+      {createModal && (
+        <CSModal
+          visible
+          onDismiss={() => !creating && setCreateModal(false)}
+          header={t('admin_page.csam.create_modal_title')}
+          footer={
+            <CSBox float="right">
+              <CSSpaceBetween direction="horizontal" size="xs">
+                <CSButton variant="link" disabled={creating} onClick={() => setCreateModal(false)}>{t('admin_page.common.cancel')}</CSButton>
+                <CSButton variant="primary" loading={creating} disabled={!createForm.description.trim()} onClick={doCreate}>{t('admin_page.common.submit')}</CSButton>
+              </CSSpaceBetween>
+            </CSBox>
+          }
+        >
+          <CSSpaceBetween size="m">
+            <CSFormField label={t('admin_page.csam.field_reported_user')}>
+              <CSInput value={createForm.reported_username} onChange={({ detail }) => setCreateForm((f) => ({ ...f, reported_username: detail.value }))} />
+            </CSFormField>
+            <CSFormField label={t('admin_page.csam.field_content_url')}>
+              <CSInput value={createForm.content_url} onChange={({ detail }) => setCreateForm((f) => ({ ...f, content_url: detail.value }))} />
+            </CSFormField>
+            <CSFormField label={t('admin_page.csam.field_description')}>
+              <CSTextarea value={createForm.description} onChange={({ detail }) => setCreateForm((f) => ({ ...f, description: detail.value }))} rows={4} />
             </CSFormField>
           </CSSpaceBetween>
         </CSModal>

@@ -1743,7 +1743,14 @@
       "decision_select_placeholder": "请选择…",
       "notes_field": "备注",
       "notes_placeholder": "决定依据、CyberTipline 报告 ID 等…",
+      "cybertip_field": "CyberTip 上报编号（选填）",
       "decided_ok": "决定已记录",
+      "create_btn": "新建举报",
+      "create_modal_title": "新建举报记录",
+      "field_reported_user": "被举报用户名（选填）",
+      "field_content_url": "内容链接（选填）",
+      "field_description": "举报描述 *",
+      "create_ok": "举报记录已创建",
       "op_fail": "操作失败"
     },
     "aup": {
@@ -5950,6 +5957,7 @@
         "decide_btn": "作出决定",
         "decide_sheet_title": "CSAM 举报 #{{id}} 决定",
         "decision_label": "决定 (founded / escalate / unfounded)",
+        "cybertip_label": "CyberTip 编号（选填）",
         "notes_label": "备注",
         "notes_placeholder": "处理说明…"
       },

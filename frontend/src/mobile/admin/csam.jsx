@@ -30,7 +30,11 @@ function SectionCsamReports({ nav }) {
     if (!decideTarget || !vals.decision) return;
     setBusy(true);
     try {
-      await window.api.admin.csamReports.decision(decideTarget.id, { decision: vals.decision, notes: vals.notes || '' });
+      await window.api.admin.csamReports.decision(decideTarget.id, {
+        decision: vals.decision,
+        notes: vals.notes || '',
+        cybertip_report_id: vals.cybertip_report_id || '',
+      });
       nav.toast(t('mobile.admin.processed'), 'ok');
       setDecideTarget(null);
       load();
@@ -92,6 +96,7 @@ function SectionCsamReports({ nav }) {
           title={t('mobile.admin.csam.decide_sheet_title', { id: decideTarget.id })}
           fields={[
             { key: 'decision', label: t('mobile.admin.csam.decision_label'), placeholder: 'founded' },
+            { key: 'cybertip_report_id', label: t('mobile.admin.csam.cybertip_label'), placeholder: 'NCMEC Report #' },
             { key: 'notes', label: t('mobile.admin.csam.notes_label'), multiline: true, placeholder: t('mobile.admin.csam.notes_placeholder') },
           ]}
           busy={busy} onConfirm={doDecide} onCancel={() => setDecideTarget(null)}
