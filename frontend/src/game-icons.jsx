@@ -30,6 +30,7 @@ const Icon = ({ name, size = 16, strokeWidth = 1.6, style }) => {
     attach: <path d="M21 11.5l-9 9a5 5 0 1 1-7-7l9-9a3.5 3.5 0 0 1 5 5l-9 9a2 2 0 0 1-3-3l8-8" />,
     mic: <><rect x="9" y="3" width="6" height="12" rx="3" /><path d="M5 11a7 7 0 0 0 14 0M12 18v3" /></>,
     diamond_sm: <><path d="M12 4 20 12 12 20 4 12z" /></>,
+    clock: <><circle cx="12" cy="12" r="9" /><path d="M12 7v5l3 2" /></>,
 
     // statuses — 平台独有
     spinner: <><path d="M12 3a9 9 0 1 1-9 9" /></>,

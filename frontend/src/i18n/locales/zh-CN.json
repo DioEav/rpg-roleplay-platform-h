@@ -943,7 +943,7 @@
       "admin_users": "用户管理",
       "admin_users_sub": "用户列表、角色分配、封禁与会话管理",
       "admin_usage": "全局用量",
-      "admin_usage_sub": "全平台 Token 消耗与成本总览",
+      "admin_usage_sub": "全平台 Token 消耗总览",
       "admin_audit": "审计日志",
       "admin_audit_sub": "管理员操作记录与安全事件",
       "admin_health": "系统健康",
@@ -1351,6 +1351,20 @@
       "tavern_no_id": "未返回对话 id",
       "tavern_create_failed": "新建对话失败"
     },
+    "home": {
+      "last_played": "上次玩到",
+      "continue_play": "继续游玩",
+      "featured_chip": "精选 · 在线剧本库",
+      "hot_scripts": "热门剧本",
+      "hot_cards": "人气角色卡",
+      "go_scripts": "进入剧本库",
+      "go_cards": "进入角色卡库",
+      "view_detail": "查看详情",
+      "empty_scripts": "公开剧本库还是空的。把你的剧本设为公开分享，它就会出现在首页和在线剧本库里。",
+      "empty_scripts_btn": "去分享剧本",
+      "empty_cards": "还没有公开的角色卡。在「用户角色卡」里发布一张，这里就会展示给所有旅行者。",
+      "empty_cards_btn": "去发布角色卡"
+    },
     "usage": {
       "title": "用量",
       "title_recent": "最近 {{range}}",
@@ -1501,7 +1515,7 @@
     },
     "usage": {
       "title": "全局用量",
-      "description": "全平台 Token 消耗与成本总览",
+      "description": "全平台 Token 消耗总览",
       "days_7": "最近 7 天",
       "days_14": "最近 14 天",
       "days_30": "最近 30 天",

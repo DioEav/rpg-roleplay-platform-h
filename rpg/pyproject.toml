@@ -16,6 +16,7 @@ dependencies = [
     "google-genai>=2.23.0",
     "httpx[http2]>=0.28",
     "openai>=3.13.0",
+    "psutil>=7.0",
     "psycopg[binary]>=3.3.5",
     "psycopg-pool>=3.3",
     "python-dotenv>=1.2.3",

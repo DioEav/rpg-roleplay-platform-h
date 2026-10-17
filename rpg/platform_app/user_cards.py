@@ -557,11 +557,20 @@ def set_card_public(user_id: int, card_id: int, is_public: bool) -> dict[str, An
             "published_at": str(row["published_at"]) if row["published_at"] else None}
 
 
-def list_public_cards(q: str | None = None, limit: int = 30, offset: int = 0) -> dict[str, Any]:
-    """在线角色卡库:只列 is_public 的 PC 卡 + 作者展示名 + 热度。secrets 不外露。"""
+def list_public_cards(q: str | None = None, limit: int = 30, offset: int = 0,
+                      order: str = "latest") -> dict[str, Any]:
+    """在线角色卡库:只列 is_public 的 PC 卡 + 作者展示名 + 热度。secrets 不外露。
+
+    order=latest(默认) 按发布时间倒序;order=hot 按导入数(clone_count)倒序。
+    """
     init_db()
     limit = limit_value(limit, default=30, maximum=60)
     offset = max(0, int(offset))
+    order_by = (
+        "c.clone_count desc nulls last, c.published_at desc nulls last, c.id desc"
+        if order == "hot"
+        else "c.published_at desc nulls last, c.id desc"
+    )
     where = ["c.is_public", "c.card_type = 'pc'"]
     params: list[Any] = []
     if q:
@@ -572,7 +581,7 @@ def list_public_cards(q: str | None = None, limit: int = 30, offset: int = 0) ->
         "select c.*, u.display_name as owner_name, u.username as owner_username "
         "from character_cards c join users u on u.id = c.user_id "
         f"where {' and '.join(where)} "
-        "order by c.published_at desc nulls last, c.id desc limit %s offset %s"
+        f"order by {order_by} limit %s offset %s"
     )
     params.extend([limit, offset])
     with connect() as db:

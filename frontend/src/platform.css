@@ -2174,3 +2174,100 @@ button, a, [role="button"], .btn, .iconbtn, summary, label {
   .pl-stat { border-right: 0; border-bottom: 1px solid var(--line-soft); }
   .pl-table { font-size: 12px; }
 }
+
+/* ===== Home v2 —— 主页「首映式」改版(task: 主页展示在线剧本库/角色卡库内容) =====
+   问候区 + 精选剧本 Hero 轮播 + 热门剧本排 + 人气角色卡排。
+   全部走现有 token,亮 A 暖纸 / 暗色暖夜自动适配;封面缺图用「渐变+剧名首字」补位。 */
+.pl-home { display: grid; gap: 22px; }
+
+/* ── 问候区 ── */
+.pl-home-hello { display: flex; align-items: flex-end; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
+.pl-home-eyebrow { font-size: 12px; font-weight: 600; letter-spacing: .05em; color: var(--accent); }
+.pl-home-title { font-family: var(--font-serif); font-size: 23px; font-weight: 600; margin: 3px 0 0; color: var(--text); }
+.pl-home-hello-actions { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.pl-home-last-chip { display: inline-flex; align-items: center; gap: 7px; padding: 7px 13px; border-radius: 8px; background: var(--panel); border: 1px solid var(--line); font-size: 12.5px; color: var(--muted); }
+.pl-home-last-chip b { font-weight: 600; color: var(--text); }
+.pl-home-hello-actions .btn { display: inline-flex; align-items: center; gap: 6px; }
+
+/* ── 精选 Hero(海报式大横幅) ── */
+.pl-home-hero { position: relative; border-radius: 14px; overflow: hidden; border: 1px solid var(--line); min-height: 256px; display: flex; isolation: isolate; }
+.pl-home-hero-bg { position: absolute; inset: -36px; z-index: -2; background-size: cover; background-position: center 30%; filter: blur(26px) saturate(.92); transform: scale(1.12); }
+.pl-home-hero::after { content: ""; position: absolute; inset: 0; z-index: -1; background: linear-gradient(90deg, rgba(17,20,16,.88) 0%, rgba(17,20,16,.62) 42%, rgba(17,20,16,.14) 76%, rgba(17,20,16,.32) 100%); }
+.pl-home-hero-body { position: relative; display: flex; align-items: center; justify-content: space-between; gap: 28px; padding: 26px 30px; width: 100%; }
+.pl-home-hero-info { max-width: 600px; display: grid; gap: 10px; justify-items: start; }
+.pl-home-hero-title { font-family: var(--font-serif); font-size: 32px; font-weight: 700; color: #fdf9f0; margin: 0; letter-spacing: .03em; line-height: 1.25; }
+.pl-home-hero-desc { font-size: 13.5px; line-height: 1.7; color: rgba(243,235,224,.86); margin: 0; max-width: 470px; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.pl-home-hero-chips { display: flex; gap: 8px; flex-wrap: wrap; }
+.pl-home-gchip { display: inline-flex; align-items: center; gap: 4px; padding: 4px 10px; border-radius: 999px; background: rgba(255,255,255,.13); border: 1px solid rgba(255,255,255,.22); backdrop-filter: blur(8px); font-size: 12px; color: #f3ecdf; white-space: nowrap; }
+.pl-home-hero-btns { display: flex; gap: 10px; margin-top: 4px; }
+.pl-home-hero-btns .btn { display: inline-flex; align-items: center; gap: 6px; }
+.pl-home-btn-dark { background: rgba(255,255,255,.08); border-color: rgba(255,255,255,.35); color: #f5eee3; }
+.pl-home-btn-dark:hover { background: rgba(255,255,255,.16); border-color: rgba(255,255,255,.5); color: #fff; }
+.pl-home-hero-side { display: grid; gap: 12px; justify-items: center; }
+.pl-home-poster { width: 150px; height: 200px; border-radius: 8px; overflow: hidden; box-shadow: 0 18px 48px -18px rgba(0,0,0,.6); transform: rotate(2deg); }
+.pl-home-poster > img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.pl-home-poster > div { width: 100%; height: 100%; }
+.pl-home-dots { display: flex; gap: 6px; }
+.pl-home-dots button { width: 6px; height: 6px; padding: 0; border: 0; border-radius: 999px; background: rgba(255,255,255,.38); cursor: pointer; transition: width .15s ease, background .15s ease; }
+.pl-home-dots button.on { width: 18px; background: #e8956d; }
+
+/* ── 内容排(热门剧本 / 人气角色卡) ── */
+.pl-home-sec { display: grid; gap: 12px; }
+.pl-home-sec-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.pl-home-sec-head h2 { display: flex; align-items: center; gap: 7px; font-family: var(--font-serif); font-size: 16px; font-weight: 600; margin: 0; color: var(--text); }
+.pl-home-sec-head h2 svg { color: var(--accent); }
+.pl-home-more { display: inline-flex; align-items: center; gap: 3px; font-size: 12.5px; color: var(--muted); background: none; border: 0; padding: 3px 6px; border-radius: 6px; cursor: pointer; }
+.pl-home-more:hover { color: var(--accent); background: var(--accent-soft); }
+
+.pl-home-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(212px, 1fr)); gap: 14px; }
+/* 卡片用普通文档流(不用嵌套 grid):封面高度只由 aspect-ratio 决定,子元素绝对定位铺满,
+   避免「grid 项 + aspect-ratio + 百分比子高」循环尺寸导致封面失控、压住下方内容。 */
+.pl-home-card { background: var(--panel); border: 1px solid var(--line-soft); border-radius: 10px; overflow: hidden; transition: transform .15s ease, box-shadow .15s ease, border-color .15s ease; }
+.pl-home-card:hover { transform: translateY(-2px); border-color: var(--accent-edge); box-shadow: var(--shadow-2); }
+.pl-home-cover { position: relative; width: 100%; aspect-ratio: 16 / 9; overflow: hidden; background: var(--panel-2); }
+.pl-home-cover > img,
+.pl-home-cover > div { position: absolute; inset: 0; width: 100%; height: 100%; }
+.pl-home-cover > img { object-fit: cover; }
+.pl-home-cov-chip { position: absolute; left: 8px; bottom: 8px; display: inline-flex; align-items: center; gap: 4px; padding: 3px 9px; border-radius: 999px; background: rgba(17,20,16,.55); border: 1px solid rgba(255,255,255,.22); backdrop-filter: blur(8px); font-size: 11.5px; color: #f3ecdf; }
+.pl-home-card-body { padding: 11px 12px 12px; display: grid; gap: 6px; }
+.pl-home-card-title { font-family: var(--font-serif); font-size: 14.5px; font-weight: 600; color: var(--text); display: flex; align-items: center; gap: 6px; min-width: 0; }
+.pl-home-card-title .pill { flex: none; }
+.pl-home-card-meta { font-size: 12px; color: var(--muted); }
+.pl-home-card-foot { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.pl-home-btn-mini { padding: 4px 11px; font-size: 12px; border-radius: 5px; display: inline-flex; align-items: center; gap: 5px; }
+
+.pl-home-char { background: var(--panel); border: 1px solid var(--line-soft); border-radius: 10px; padding: 13px; display: grid; gap: 8px; align-content: start; transition: transform .15s ease, box-shadow .15s ease, border-color .15s ease; }
+.pl-home-char:hover { transform: translateY(-2px); border-color: var(--accent-edge); box-shadow: var(--shadow-2); }
+.pl-home-char-top { display: flex; align-items: center; gap: 9px; }
+.pl-home-char-top > div { min-width: 0; }
+.pl-home-char-name { font-size: 14.5px; font-weight: 600; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pl-home-char-id { font-size: 12px; color: var(--accent); margin-top: 1px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pl-home-heart { margin-left: auto; flex: none; font-size: 12px; color: var(--muted); }
+.pl-home-char-bio { font-size: 12.5px; color: var(--muted); line-height: 1.6; margin: 0; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; min-height: 40px; }
+.pl-home-tags { display: flex; gap: 6px; flex-wrap: wrap; }
+
+/* ── 骨架屏 / 空库引导卡 ── */
+.pl-home-skel { display: grid; grid-template-columns: repeat(auto-fill, minmax(212px, 1fr)); gap: 14px; }
+.pl-home-skel i { display: block; height: 176px; border-radius: 10px; background: var(--panel-2); border: 1px solid var(--line-soft); animation: pl-home-pulse 1.2s ease-in-out infinite; }
+@keyframes pl-home-pulse { 0%, 100% { opacity: .55; } 50% { opacity: 1; } }
+.pl-home-guide { border: 1px dashed var(--line-strong); border-radius: 10px; padding: 16px 18px; font-size: 13px; color: var(--muted); display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; line-height: 1.6; }
+
+/* ── 缺图渐变补位色板(5 组):div 命中时渲染剧名/角色首字 ── */
+div[class*="pl-home-fb-"] { display: grid; place-items: center; font-family: var(--font-serif); font-weight: 700; color: rgba(255,255,255,.55); }
+.pl-home-fb-1 { background: linear-gradient(155deg, #1f3a33 0%, #2f5a4a 45%, #6fae8b 100%); }
+.pl-home-fb-2 { background: linear-gradient(155deg, #2b2f4a 0%, #45507e 55%, #8a7fb2 100%); }
+.pl-home-fb-3 { background: linear-gradient(155deg, #1d3440 0%, #2f5a6e 50%, #5f97a8 100%); }
+.pl-home-fb-4 { background: linear-gradient(155deg, #5a2c1c 0%, #9c4a2a 50%, #d08a4e 100%); }
+.pl-home-fb-5 { background: linear-gradient(155deg, #472a44 0%, #7c4a72 55%, #b07e9e 100%); }
+.pl-home-cover div[class*="pl-home-fb-"] { font-size: 46px; }
+.pl-home-char-top div[class*="pl-home-fb-"] { font-size: 17px; }
+.pl-home-poster > div[class*="pl-home-fb-"] { font-size: 68px; }
+
+/* ── 窄屏回流 ── */
+@media (max-width: 860px) {
+  .pl-home-hero-body { flex-direction: column; align-items: flex-start; gap: 18px; }
+  .pl-home-hero-side { display: none; }
+  .pl-home-hero-title { font-size: 26px; }
+  .pl-home-hero { min-height: 0; }
+}
+

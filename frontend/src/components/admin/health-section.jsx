@@ -49,11 +49,13 @@ export function AdminHealthPage() {
     };
   }, [fetchHealth]);
 
+  // 后端 /api/admin/health 契约:{ db:{ok,latency_ms}, process:{pid,uptime_s,memory_rss_mb},
+  // disk:{free_gb,total_gb,percent_used} }。此前读 data?.memory(后端无此键,RSS 在 process 下)
+  // 与 disk.used_percent(后端叫 percent_used),内存/磁盘两块恒「暂无数据」。
   const db = data?.database || data?.db || {};
-  const mem = data?.memory || {};
   const disk = data?.disk || {};
   const proc = data?.process || data?.proc || {};
-  const diskPct = typeof disk.used_percent === 'number' ? disk.used_percent : null;
+  const diskPct = typeof disk.percent_used === 'number' ? disk.percent_used : null;
 
   return (
     <CSSpaceBetween size="l">
@@ -102,8 +104,8 @@ export function AdminHealthPage() {
                     <div>
                       <strong>{t('admin_page.health.mem_title')}</strong>
                       <div>
-                        {typeof mem.rss_mb === 'number'
-                          ? <CSStatusIndicator type="success">RSS {mem.rss_mb} MB</CSStatusIndicator>
+                        {typeof proc.memory_rss_mb === 'number'
+                          ? <CSStatusIndicator type="success">RSS {proc.memory_rss_mb} MB</CSStatusIndicator>
                           : <CSStatusIndicator type="pending">{t('admin_page.health.mem_no_data')}</CSStatusIndicator>
                         }
                       </div>

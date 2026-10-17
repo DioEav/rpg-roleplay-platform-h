@@ -23,10 +23,15 @@ async def api_set_card_visibility(request: Request, card_id: int, user=Depends(r
 
 
 @router.get("/api/cards/public")
-async def api_list_public_cards(q: str | None = None, limit: int = 30, offset: int = 0, user=Depends(require_user)):
-    """在线角色卡库:浏览他人公开的 PC 卡(只列 is_public,不含作者私密 secrets)。"""
+async def api_list_public_cards(q: str | None = None, limit: int = 30, offset: int = 0,
+                                order: str = "latest", user=Depends(require_user)):
+    """在线角色卡库:浏览他人公开的 PC 卡(只列 is_public,不含作者私密 secrets)。
+
+    order=latest(默认) 按发布时间倒序;order=hot 按导入数(clone_count)倒序。
+    """
     from ... import user_cards
-    return json_response(user_cards.list_public_cards(q=q or None, limit=limit, offset=offset))
+    return json_response(user_cards.list_public_cards(q=q or None, limit=limit, offset=offset,
+                                                      order=order))
 
 
 @router.post("/api/cards/public/{card_id}/clone")

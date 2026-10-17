@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import os
+import shutil
 import sys
 import time
 
@@ -38,7 +39,7 @@ async def admin_health(admin=Depends(_require_admin)):
     except Exception as exc:
         log.warning("health check db error: %s", exc)
 
-    # process info
+    # process info(psutil 已列入 requirements/pyproject;未安装时优雅降级为 None,前端隐藏该项)
     pid = os.getpid()
     memory_rss_mb = None
     uptime_s = None
@@ -48,20 +49,20 @@ async def admin_health(admin=Depends(_require_admin)):
         proc = psutil.Process(pid)
         memory_rss_mb = round(proc.memory_info().rss / (1024 * 1024), 2)
         uptime_s = round(time.time() - proc.create_time(), 1)
-    except ImportError:
-        pass
     except Exception:
         pass
 
-    # disk
+    # disk:shutil.disk_usage 是 os.statvfs 的标准库跨平台封装——POSIX 上就是同一
+    # statvfs 语义(Linux 数值与 df 一致),Windows 上也不再 AttributeError(旧实现
+    # 直接调 os.statvfs,Windows 下异常被吞、三项恒 0,前端会显示误导性的 0%)。
     disk_free_gb = 0.0
     disk_total_gb = 0.0
     disk_percent_used = 0.0
     try:
-        st = os.statvfs("/")
-        disk_total_gb = round(st.f_frsize * st.f_blocks / (1024 ** 3), 2)
-        disk_free_gb = round(st.f_frsize * st.f_bavail / (1024 ** 3), 2)
-        disk_percent_used = round((1 - st.f_bavail / st.f_blocks) * 100, 1) if st.f_blocks else 0.0
+        du = shutil.disk_usage("/")
+        disk_total_gb = round(du.total / (1024 ** 3), 2)
+        disk_free_gb = round(du.free / (1024 ** 3), 2)
+        disk_percent_used = round(du.used / du.total * 100, 1) if du.total else 0.0
     except Exception:
         pass
 

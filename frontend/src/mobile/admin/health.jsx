@@ -26,15 +26,16 @@ function SectionHealth({ nav }) {
     return () => clearInterval(id);
   }, [load]);
 
+  // 后端契约:{ db, process:{pid,uptime_s,memory_rss_mb}, disk:{percent_used} }。
+  // 此前读 data?.memory 与 disk.used_percent(后端无此键/字段),内存/磁盘两行恒 "—"。
   const db = data?.database || data?.db || {};
-  const mem = data?.memory || {};
   const disk = data?.disk || {};
   const proc = data?.process || data?.proc || {};
 
   const rows = data ? [
     { key: t('mobile.admin.health.database'), ok: db.ok !== false, val: db.ok !== false ? `online${typeof db.latency_ms === 'number' ? ` · ${db.latency_ms}ms` : ''}` : t('mobile.admin.health.offline'), icon: 'cpu' },
-    { key: t('mobile.admin.health.memory'), ok: typeof mem.rss_mb === 'number', val: typeof mem.rss_mb === 'number' ? `RSS ${mem.rss_mb} MB` : '—', icon: 'layers' },
-    { key: t('mobile.admin.health.disk'), ok: (disk.used_percent || 0) < 90, val: disk.used_percent != null ? t('mobile.admin.health.disk_used', { pct: disk.used_percent }) : '—', icon: 'folder' },
+    { key: t('mobile.admin.health.memory'), ok: typeof proc.memory_rss_mb === 'number', val: typeof proc.memory_rss_mb === 'number' ? `RSS ${proc.memory_rss_mb} MB` : '—', icon: 'layers' },
+    { key: t('mobile.admin.health.disk'), ok: (disk.percent_used || 0) < 90, val: disk.percent_used != null ? t('mobile.admin.health.disk_used', { pct: disk.percent_used }) : '—', icon: 'folder' },
     { key: t('mobile.admin.health.process'), ok: !!proc.pid, val: proc.pid ? `PID ${proc.pid}${proc.uptime_s ? ` · ${Math.round(proc.uptime_s / 60)}min` : ''}` : '—', icon: 'plug' },
   ] : [];
 

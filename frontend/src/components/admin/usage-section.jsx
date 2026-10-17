@@ -44,11 +44,13 @@ export function AdminGlobalUsagePage() {
     return () => { cancelled = true; };
   }, [days.value]);
 
-  const summary = data?.summary || {};
+  // 后端 /api/admin/usage 返回的键是 total(非 summary),字段是 requests/total_tokens/cost_usd。
+  // 此前读 data?.summary / total_requests / total_cost 等臆造字段名,整页数字恒 0 或 "—"。
+  const summary = data?.total || {};
   const byUser = data?.by_user || [];
   const byApi = data?.by_api || [];
   const byDay = data?.by_day || [];
-  const maxDayTokens = byDay.reduce((m, d) => Math.max(m, d.tokens || 0), 1);
+  const maxDayTokens = byDay.reduce((m, d) => Math.max(m, d.total_tokens || 0), 1);
 
   return (
     <CSSpaceBetween size="l">
@@ -76,12 +78,13 @@ export function AdminGlobalUsagePage() {
           : !data
             ? <CSBox color="inherit" textAlign="center">{t('admin_page.usage.empty')}</CSBox>
             : (
+              // 成本卡片已隐藏(2026-10,应要求):恢复 = 解注释下方 cost 项并改回 columns={3}。
               <CSKeyValuePairs
-                columns={3}
+                columns={2}
                 items={[
-                  { label: t('admin_page.usage.kv_requests'), value: (summary.total_requests || 0).toLocaleString() },
+                  { label: t('admin_page.usage.kv_requests'), value: (summary.requests || 0).toLocaleString() },
                   { label: t('admin_page.usage.kv_tokens'), value: (summary.total_tokens || 0).toLocaleString() },
-                  { label: t('admin_page.usage.kv_cost'), value: typeof summary.total_cost === 'number' ? `$${summary.total_cost.toFixed(4)}` : '—' },
+                  // { label: t('admin_page.usage.kv_cost'), value: typeof summary.cost_usd === 'number' ? `$${summary.cost_usd.toFixed(4)}` : '—' },
                 ]}
               />
             )
@@ -98,12 +101,13 @@ export function AdminGlobalUsagePage() {
           columnDefinitions={[
             { id: 'rank', header: t('admin_page.usage.col_rank'), cell: (_, idx) => idx + 1, width: 50 },
             { id: 'username', header: t('admin_page.usage.col_username'), cell: (u) => u.username || u.user_id || '—' },
-            { id: 'tokens', header: t('admin_page.usage.col_tokens'), cell: (u) => (u.tokens || 0).toLocaleString() },
-            { id: 'cost', header: t('admin_page.usage.col_cost'), cell: (u) => typeof u.cost === 'number' ? `$${u.cost.toFixed(4)}` : '—' },
+            { id: 'tokens', header: t('admin_page.usage.col_tokens'), cell: (u) => (u.total_tokens || 0).toLocaleString() },
+            // 成本列已隐藏(2026-10,应要求):恢复 = 解注释本行(按用户表)。
+            // { id: 'cost', header: t('admin_page.usage.col_cost'), cell: (u) => typeof u.cost_usd === 'number' ? `$${u.cost_usd.toFixed(4)}` : '—' },
             {
               id: 'pct', header: t('admin_page.usage.col_pct'),
               cell: (u) => {
-                const pct = summary.total_tokens > 0 ? Math.round((u.tokens / summary.total_tokens) * 100) : 0;
+                const pct = summary.total_tokens > 0 ? Math.round((u.total_tokens / summary.total_tokens) * 100) : 0;
                 return (
                   <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                     <div style={{ flex: 1, height: 6, background: 'var(--panel-2)', borderRadius: 3 }}>
@@ -127,8 +131,9 @@ export function AdminGlobalUsagePage() {
           empty={<CSBox textAlign="center" color="inherit">{t('admin_page.usage.empty_generic')}</CSBox>}
           columnDefinitions={[
             { id: 'api_id', header: t('admin_page.usage.col_api'), cell: (a) => a.api_id || a.api || '—' },
-            { id: 'tokens', header: t('admin_page.usage.col_token'), cell: (a) => (a.tokens || 0).toLocaleString() },
-            { id: 'cost', header: t('admin_page.usage.col_cost'), cell: (a) => typeof a.cost === 'number' ? `$${a.cost.toFixed(4)}` : '—' },
+            { id: 'tokens', header: t('admin_page.usage.col_token'), cell: (a) => (a.total_tokens || 0).toLocaleString() },
+            // 成本列已隐藏(2026-10,应要求):恢复 = 解注释本行(按 API 表)。
+            // { id: 'cost', header: t('admin_page.usage.col_cost'), cell: (a) => typeof a.cost_usd === 'number' ? `$${a.cost_usd.toFixed(4)}` : '—' },
           ]}
         />
       </CSContainer>
@@ -141,14 +146,14 @@ export function AdminGlobalUsagePage() {
             : (
               <CSSpaceBetween size="xs">
                 {byDay.map((d) => {
-                  const barPct = Math.max(2, Math.round((d.tokens || 0) / maxDayTokens * 100));
+                  const barPct = Math.max(2, Math.round((d.total_tokens || 0) / maxDayTokens * 100));
                   return (
                     <div key={d.date} style={{ display: 'flex', alignItems: 'center', gap: 10, fontSize: 12 }}>
                       <span style={{ minWidth: 90, color: 'var(--muted)' }}>{d.date}</span>
                       <div style={{ flex: 1, height: 14, background: 'var(--panel-2)', borderRadius: 3 }}>
-                        <div style={{ width: `${barPct}%`, height: '100%', background: 'var(--info-soft)', borderRadius: 3 }} />
+                        <div style={{ width: `${barPct}%`, height: '100%', background: 'var(--info)', borderRadius: 3 }} />
                       </div>
-                      <span style={{ minWidth: 80, textAlign: 'right' }}>{(d.tokens || 0).toLocaleString()}</span>
+                      <span style={{ minWidth: 80, textAlign: 'right' }}>{(d.total_tokens || 0).toLocaleString()}</span>
                     </div>
                   );
                 })}

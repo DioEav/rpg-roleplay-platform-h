@@ -23,10 +23,12 @@ function SectionUsage({ nav }) {
 
   React.useEffect(() => { load(); }, [load]);
 
-  const summary = data?.summary || {};
+  // 后端 /api/admin/usage 返回的键是 total(非 summary),字段是 requests/total_tokens/cost_usd。
+  // 此前读 data?.summary / total_requests / total_cost 等臆造字段名,整页数字恒 0 或 "—"。
+  const summary = data?.total || {};
   const byUser = data?.by_user || [];
   const byDay = data?.by_day || [];
-  const maxDay = byDay.reduce((m, d) => Math.max(m, d.tokens || 0), 1);
+  const maxDay = byDay.reduce((m, d) => Math.max(m, d.total_tokens || 0), 1);
 
   return (
     <>
@@ -49,12 +51,12 @@ function SectionUsage({ nav }) {
 
           {loading ? <LoadingRow /> : err ? <ErrRow msg={err} onRetry={load} /> : !data ? <EmptyRow /> : (
             <>
-              {/* 汇总卡片 */}
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8, marginBottom: 14 }}>
+              {/* 汇总卡片(成本卡已隐藏 2026-10,应要求;恢复 = 解注释 cost 项并改回 1fr 1fr 1fr) */}
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginBottom: 14 }}>
                 {[
-                  [t('mobile.admin.usage.requests'), (summary.total_requests || 0).toLocaleString()],
+                  [t('mobile.admin.usage.requests'), (summary.requests || 0).toLocaleString()],
                   ['Tokens', (summary.total_tokens || 0).toLocaleString()],
-                  [t('mobile.admin.usage.cost'), typeof summary.total_cost === 'number' ? `$${summary.total_cost.toFixed(3)}` : '—'],
+                  // [t('mobile.admin.usage.cost'), typeof summary.cost_usd === 'number' ? `$${summary.cost_usd.toFixed(3)}` : '—'],
                 ].map(([k, v]) => (
                   <div key={k} style={{ border: '1px solid var(--line-soft)', borderRadius: 10, background: 'var(--panel)', padding: '10px 8px', textAlign: 'center' }}>
                     <div style={{ fontSize: 16, fontWeight: 600, fontFamily: 'var(--font-serif)' }}>{v}</div>
@@ -69,14 +71,14 @@ function SectionUsage({ nav }) {
                   <div className="pl-sec-head"><h2>{t('mobile.admin.usage.daily_tokens')}</h2></div>
                   <div style={{ display: 'grid', gap: 4 }}>
                     {byDay.slice(-14).map((d) => {
-                      const pct = Math.max(2, Math.round((d.tokens || 0) / maxDay * 100));
+                      const pct = Math.max(2, Math.round((d.total_tokens || 0) / maxDay * 100));
                       return (
                         <div key={d.date} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 11.5 }}>
                           <span style={{ minWidth: 76, color: 'var(--muted-2)', fontFamily: 'var(--font-mono)' }}>{d.date?.slice(5)}</span>
                           <div style={{ flex: 1, height: 12, background: 'var(--panel-3)', borderRadius: 4, overflow: 'hidden' }}>
                             <div style={{ width: `${pct}%`, height: '100%', background: 'var(--info)', borderRadius: 4 }} />
                           </div>
-                          <span style={{ minWidth: 64, textAlign: 'right', fontFamily: 'var(--font-mono)', color: 'var(--text-quiet)' }}>{(d.tokens || 0).toLocaleString()}</span>
+                          <span style={{ minWidth: 64, textAlign: 'right', fontFamily: 'var(--font-mono)', color: 'var(--text-quiet)' }}>{(d.total_tokens || 0).toLocaleString()}</span>
                         </div>
                       );
                     })}
@@ -93,7 +95,7 @@ function SectionUsage({ nav }) {
                       <span className="pl-row-ic info" style={{ width: 24, height: 24, fontSize: 11, fontFamily: 'var(--font-mono)', display: 'grid', placeItems: 'center' }}>{i + 1}</span>
                       <span className="pl-row-tx">
                         <strong style={{ fontSize: 13 }}>{u.username || u.user_id || '—'}</strong>
-                        <span className="mono">{(u.tokens || 0).toLocaleString()} tokens {typeof u.cost === 'number' ? ` · $${u.cost.toFixed(3)}` : ''}</span>
+                        <span className="mono">{(u.total_tokens || 0).toLocaleString()} tokens{/* 成本已隐藏(2026-10,应要求):恢复 = 接回 `{typeof u.cost_usd === 'number' ? ` · $${u.cost_usd.toFixed(3)}` : ''}` */}</span>
                       </span>
                     </div>
                   ))}

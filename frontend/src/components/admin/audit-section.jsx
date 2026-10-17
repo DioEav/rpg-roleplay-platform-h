@@ -40,12 +40,15 @@ export function AdminAuditPage() {
       setLoading(true);
       setErr(null);
       try {
+        // 后端 /api/admin/audit 契约:筛选参数名是 action_type(前缀匹配 action 列),
+        // 响应为 { entries, total, page, limit },行字段 actor_username/action/target_type/target_id/details/ip/created_at。
+        // 此前发 action_prefix、读 res.items/res.logs、列读 operator/target/detail 等臆造字段,筛选失效且多数列恒 "—"。
         const params = { page, limit };
-        if (actionFilter.value) params.action_prefix = actionFilter.value;
+        if (actionFilter.value) params.action_type = actionFilter.value;
         const res = await window.api.admin.auditLog(params);
         if (!cancelled) {
-          setItems(res.items || res.logs || res || []);
-          setTotal(res.total || (res.items || res.logs || res || []).length);
+          setItems(res.entries || []);
+          setTotal(res.total || 0);
         }
       } catch (e) {
         if (!cancelled) setErr(e?.message || t('admin_page.common.load_fail'));
@@ -85,17 +88,17 @@ export function AdminAuditPage() {
             empty={<CSBox textAlign="center" color="inherit">{t('admin_page.audit.empty')}</CSBox>}
             columnDefinitions={[
               { id: 'created_at', header: t('admin_page.audit.col_time'), cell: (r) => fmtTime(r.created_at || r.timestamp) },
-              { id: 'operator', header: t('admin_page.audit.col_operator'), cell: (r) => r.operator || r.user || r.username || '—' },
+              { id: 'operator', header: t('admin_page.audit.col_operator'), cell: (r) => r.actor_username || '—' },
               {
                 id: 'action_type', header: t('admin_page.audit.col_action_type'),
                 cell: (r) => <CSBadge color="blue">{r.action_type || r.action || '—'}</CSBadge>,
               },
-              { id: 'target', header: t('admin_page.audit.col_target'), cell: (r) => r.target || r.resource || '—' },
+              { id: 'target', header: t('admin_page.audit.col_target'), cell: (r) => (r.target_type ? `${r.target_type}${r.target_id ? ` #${r.target_id}` : ''}` : '—') },
               {
                 id: 'detail', header: t('admin_page.audit.col_detail'),
                 cell: (r) => {
                   const key = r.id || r.created_at;
-                  const raw = r.detail || r.meta || r.extra;
+                  const raw = r.details;
                   if (!raw) return '—';
                   const str = typeof raw === 'string' ? raw : JSON.stringify(raw, null, 2);
                   const isExpanded = expandedDetail === key;

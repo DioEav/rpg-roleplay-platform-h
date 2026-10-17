@@ -115,10 +115,18 @@ async def api_script_visibility(request: Request, script_id: int, user=Depends(r
 
 @router.get("/api/scripts/public")
 async def api_public_scripts(q: str | None = None, limit: int = 30, offset: int = 0,
-                             user=Depends(require_user)):
-    """浏览公开剧本库。支持标题/简介搜索,按发布时间倒序。"""
+                             order: str = "latest", user=Depends(require_user)):
+    """浏览公开剧本库。支持标题/简介搜索。
+
+    order=latest(默认) 按发布时间倒序;order=hot 按导入数(clone_count)倒序。
+    """
     limit = max(1, min(int(limit or 30), 60))
     offset = max(0, int(offset or 0))
+    order_by = (
+        "s.clone_count DESC NULLS LAST, s.published_at DESC NULLS LAST, s.id DESC"
+        if order == "hot"
+        else "s.published_at DESC NULLS LAST, s.id DESC"
+    )
     where = "s.is_public"
     params: list = []
     if q:
@@ -133,7 +141,7 @@ async def api_public_scripts(q: str | None = None, limit: int = 30, offset: int 
                    u.display_name AS author, u.username AS author_username
             FROM scripts s JOIN users u ON u.id = s.owner_id
             WHERE {where}
-            ORDER BY s.published_at DESC NULLS LAST, s.id DESC
+            ORDER BY {order_by}
             LIMIT %s OFFSET %s
             """,
             (*params, limit + 1, offset),

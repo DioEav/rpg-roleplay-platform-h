@@ -839,7 +839,7 @@
       "admin_users": "User Management",
       "admin_users_sub": "User list, role assignment, banning, session management",
       "admin_usage": "Global Usage",
-      "admin_usage_sub": "Platform-wide token consumption and cost overview",
+      "admin_usage_sub": "Platform-wide token consumption overview",
       "admin_audit": "Audit Log",
       "admin_audit_sub": "Admin action records and security events",
       "admin_health": "System Health",
@@ -1248,6 +1248,20 @@
       "tavern_no_id": "No conversation ID returned",
       "tavern_create_failed": "Failed to create conversation"
     },
+    "home": {
+      "last_played": "Last played",
+      "continue_play": "Continue",
+      "featured_chip": "Featured · Script library",
+      "hot_scripts": "Popular Scripts",
+      "hot_cards": "Popular Characters",
+      "go_scripts": "Browse script library",
+      "go_cards": "Browse character library",
+      "view_detail": "View details",
+      "empty_scripts": "The public script library is empty. Share one of your scripts and it will appear on the home page and in the library.",
+      "empty_scripts_btn": "Share a script",
+      "empty_cards": "No public character cards yet. Publish one from \"My Characters\" and it will show up here.",
+      "empty_cards_btn": "Publish a card"
+    },
     "usage": {
       "title": "Usage",
       "title_recent": "Last {{range}}",
@@ -1398,7 +1412,7 @@
     },
     "usage": {
       "title": "Global Usage",
-      "description": "Platform-wide token consumption and cost overview",
+      "description": "Platform-wide token consumption overview",
       "days_7": "Last 7 days",
       "days_14": "Last 14 days",
       "days_30": "Last 30 days",

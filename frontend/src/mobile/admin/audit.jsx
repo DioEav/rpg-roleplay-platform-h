@@ -19,10 +19,11 @@ function SectionAudit({ nav }) {
   const load = React.useCallback(async (p = 1) => {
     setLoading(true); setErr(null);
     try {
+      // 后端契约:筛选参数 action_type(非 action_prefix),响应 { entries, total }(非 items/logs)。
       const params = { page: p, limit: LIMIT };
-      if (actionFilter) params.action_prefix = actionFilter;
+      if (actionFilter) params.action_type = actionFilter;
       const res = await window.api.admin.auditLog(params);
-      setItems(res.items || res.logs || res || []);
+      setItems(res.entries || []);
       setPage(p);
     } catch (e) { setErr(e?.message || t('mobile.admin.load_failed')); }
     finally { setLoading(false); }

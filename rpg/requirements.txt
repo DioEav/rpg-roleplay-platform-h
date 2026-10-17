@@ -35,6 +35,9 @@ openai==3.13.0
 psycopg==3.3.5
 psycopg-binary==3.3.5
 psycopg-pool==3.3.1
+# >= 而非 ==:psutil 带 C 扩展,钉死版本在 Docker 的 python:3.14-slim 下可能没有
+# 对应 cp314 轮子;放开下限让 pip 自选已有轮子的最新版(Dockerfile 构建层有 gcc 兜底)。
+psutil>=7.0
 pyasn1==0.6.4
 pyasn1_modules==0.4.2
 pycparser==3.0
