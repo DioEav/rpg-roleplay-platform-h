@@ -10,8 +10,8 @@ from fastapi import Depends, Request
 from psycopg.types.json import Jsonb
 
 from ...db import connect
-from .._deps import json_response
-from ._shared import _require_admin, router
+from .._deps import _client_ip, json_response
+from ._shared import _require_admin, _write_audit, router
 
 _ACHV_SLUG = _re.compile(r"^[a-z0-9][a-z0-9_]{1,48}[a-z0-9]$")
 _ACHV_TIERS = {"bronze", "silver", "gold", None, ""}
@@ -89,6 +89,9 @@ async def admin_achv_create(request: Request, admin=Depends(_require_admin)):
                 clean["hidden"], clean["sort_order"], clean["enabled"],
             ),
         ).fetchone()
+        _write_audit(db, admin, "achievement.def.create",
+                     target_type="achievement_def", target_id=clean["id"],
+                     details=clean, ip=_client_ip(request))
     return json_response({"ok": True, "item": dict(row)})
 
 
@@ -116,11 +119,14 @@ async def admin_achv_update(achievement_id: str, request: Request, admin=Depends
                 clean["sort_order"], clean["enabled"], achievement_id,
             ),
         ).fetchone()
+        _write_audit(db, admin, "achievement.def.update",
+                     target_type="achievement_def", target_id=achievement_id,
+                     details=clean, ip=_client_ip(request))
     return json_response({"ok": True, "item": dict(row)})
 
 
 @router.delete("/api/admin/achievements/{achievement_id}")
-async def admin_achv_delete(achievement_id: str, admin=Depends(_require_admin)):
+async def admin_achv_delete(achievement_id: str, request: Request, admin=Depends(_require_admin)):
     """软删:置 enabled=false,保留 user_achievements 引用(不剥夺已解锁)。"""
     with connect() as db:
         row = db.execute(
@@ -130,4 +136,7 @@ async def admin_achv_delete(achievement_id: str, admin=Depends(_require_admin)):
         ).fetchone()
         if not row:
             return json_response({"ok": False, "error": "未找到"}, status_code=404)
+        _write_audit(db, admin, "achievement.def.disable",
+                     target_type="achievement_def", target_id=achievement_id,
+                     details={"enabled": False}, ip=_client_ip(request))
     return json_response({"ok": True, "disabled": achievement_id})
