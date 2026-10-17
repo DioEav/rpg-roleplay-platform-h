@@ -209,6 +209,7 @@ function LoginApp() {
   const fields = ['verify', 'forgot', 'reset'].includes(mode) ? [] : (schema?.[mode] || []);
   const minPw = schema?.notes?.min_password_length || 8;
   const inviteOnly = !!schema?.notes?.invite_only;
+  const registrationClosed = !!schema?.notes?.registration_closed;
 
   const setField = (k, v) => setValues((prev) => ({ ...prev, [k]: v }));
 
@@ -573,8 +574,10 @@ function LoginApp() {
                     className={mode === 'register' ? 'active' : ''}
                     aria-selected={mode === 'register'}
                     onClick={() => { setMode('register'); setErr(''); setNotice(''); }}
-                    disabled={inviteOnly}
-                    data-tip={inviteOnly ? t('auth.invite_only_tip') : undefined}>{t('auth.register_tab')}</button>
+                    disabled={registrationClosed}
+                    data-tip={registrationClosed
+                      ? t('auth.registration_closed_tip')
+                      : (inviteOnly ? t('auth.invite_only_tip') : undefined)}>{t('auth.register_tab')}</button>
           </div>
         )}
 

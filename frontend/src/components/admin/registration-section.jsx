@@ -79,7 +79,7 @@ export function AdminRegistrationPage() {
     try {
       await window.api.admin.createInviteCodes({
         count: Number(createForm.count),
-        expires_days: Number(createForm.expires_days),
+        expires_in_days: Number(createForm.expires_days),
         note: createForm.note || undefined,
       });
       window.toast?.(t('admin_page.registration.create_ok'), { kind: 'ok' });
@@ -162,17 +162,17 @@ export function AdminRegistrationPage() {
             { id: 'note', header: t('admin_page.registration.col_note'), cell: (c) => c.note || '—' },
             {
               id: 'status', header: t('admin_page.registration.col_status'),
-              cell: (c) => c.used_by
-                ? <CSBadge color="grey">{t('admin_page.registration.status_used', { user: c.used_by })}</CSBadge>
-                : c.expired_at && new Date(c.expired_at) < new Date()
+              cell: (c) => c.used_at
+                ? <CSBadge color="grey">{t('admin_page.registration.status_used', { user: c.used_by_username })}</CSBadge>
+                : c.expires_at && new Date(c.expires_at) < new Date()
                   ? <CSBadge color="red">{t('admin_page.registration.status_expired')}</CSBadge>
                   : <CSBadge color="green">{t('admin_page.registration.status_available')}</CSBadge>,
             },
-            { id: 'expires', header: t('admin_page.registration.col_expires'), cell: (c) => fmtTime(c.expires_at || c.expired_at) },
+            { id: 'expires', header: t('admin_page.registration.col_expires'), cell: (c) => fmtTime(c.expires_at) },
             { id: 'created', header: t('admin_page.common.created_at'), cell: (c) => fmtTime(c.created_at) },
             {
               id: 'actions', header: t('admin_page.common.actions'),
-              cell: (c) => !c.used_by
+              cell: (c) => !c.used_at
                 ? <CSButton variant="inline-link" onClick={() => setDeleteTarget(c.code)}>{t('common.delete')}</CSButton>
                 : null,
             },

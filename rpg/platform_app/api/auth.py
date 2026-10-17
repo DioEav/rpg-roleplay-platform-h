@@ -439,12 +439,17 @@ async def api_auth_schema():
     init_db()
     with connect() as db:
         user_count = db.execute("select count(*) as n from users").fetchone()["n"]
+        # 注册模式来自 admin UI 配置:invite → 注册表单透出必填邀请码字段;
+        # closed → notes.registration_closed=true,前端据此禁用注册入口。
+        reg_mode = _auth._registration_mode(db)
     first_user_is_admin = int(user_count) == 0
     notes: dict = {
         "min_password_length": pw_min,
         "max_password_length": 1024,
-        "invite_only": False,
+        "invite_only": reg_mode == "invite",
     }
+    if reg_mode == "closed":
+        notes["registration_closed"] = True
     # Cloudflare Turnstile site key（仅当配置时透出 → 前端据此渲染人机验证挂件）。
     from .. import turnstile as _turnstile
     _ts_sitekey = _turnstile.sitekey()

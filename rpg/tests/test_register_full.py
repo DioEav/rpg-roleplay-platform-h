@@ -499,3 +499,63 @@ def test_register_closed_mode_rejected_before_invite_check(monkeypatch, mock_ema
             age_confirmed=True,
             invite_code=None,
         )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 测试 9: invite 模式只看邀请码(不叠加白名单) / allowlist 仍走白名单
+# ─────────────────────────────────────────────────────────────────────────────
+
+def test_register_invite_mode_valid_code_without_allowlist_ok(monkeypatch, mock_email):
+    """mode=invite:邮箱不在 registration_allowlist 白名单里,但持有有效邀请码 → 放行。
+
+    回归锁:「仅邀请」= 邀请码单一门槛(2026-10 起),不再叠加白名单 gate。
+    """
+    import platform_app.auth as auth_mod
+
+    monkeypatch.setattr(auth_mod, "init_db", lambda: None)
+    monkeypatch.setattr(auth_mod, "connect", lambda: _FakeConn({
+        "banned_users": [],
+        "users where lower(email)": [],
+        "users where username": [],
+        "app_config": [{"value": {"mode": "invite"}}],
+        # 有效邀请码:未使用、未过期
+        "invite_codes": [{"code": "ABCD1234", "used_by": None, "expires_at": None}],
+        "email_verifications": [],
+    }))
+    result = auth_mod.register(
+        username="invited",
+        password="SecurePass123!",
+        email="invited@example.com",
+        birthday=date(1995, 5, 15),
+        terms_accepted=True,
+        age_confirmed=True,
+        invite_code="ABCD1234",
+    )
+    assert result["ok"] is True
+    assert result["pending_verify"] is True
+    assert mock_email, "邀请码有效时应发送验证码邮件"
+
+
+def test_register_allowlist_mode_still_gated(monkeypatch, mock_email):
+    """mode=allowlist(SQL 内测别名):不在白名单 → 拒绝,且与 invite 无关。"""
+    import platform_app.auth as auth_mod
+
+    monkeypatch.setattr(auth_mod, "init_db", lambda: None)
+    monkeypatch.setattr(auth_mod, "connect", lambda: _FakeConn({
+        "banned_users": [],
+        "users where lower(email)": [],
+        "users where username": [],
+        "app_config": [{"value": {"mode": "allowlist"}}],
+        "registration_allowlist": [],  # 不在白名单
+        "invite_codes": [],
+        "email_verifications": [],
+    }))
+    with pytest.raises(ValueError, match="白名单"):
+        auth_mod.register(
+            username="walkin",
+            password="SecurePass123!",
+            email="walkin@example.com",
+            birthday=date(1995, 5, 15),
+            terms_accepted=True,
+            age_confirmed=True,
+        )

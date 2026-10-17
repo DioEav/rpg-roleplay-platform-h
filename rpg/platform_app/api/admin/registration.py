@@ -16,9 +16,10 @@ from ._shared import _get_app_config, _require_admin, _set_app_config, _write_au
 _REGISTRATION_CFG_KEY = "admin.registration_config"
 
 # mode 语义(消费方 platform_app/auth.py):
-#   open    — 开放注册
-#   invite  — 邀请码 + registration_allowlist 白名单双重门槛
-#   closed  — 关闭注册(所有建号路径拒绝,已注册用户登录不受影响)
+#   open     — 开放注册
+#   invite   — 仅邀请码(单次有效、可设过期;校验见 _check_invite_code)
+#   allowlist— SQL 手动设置的内测白名单别名(registration_allowlist)
+#   closed   — 关闭注册(所有建号路径拒绝,已注册用户登录不受影响)
 # 历史 key require_email_verify / auto_approve 无任何消费方,已随前端开关一并移除。
 _DEFAULT_REGISTRATION = {
     "mode": "open",

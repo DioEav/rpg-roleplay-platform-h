@@ -2528,8 +2528,8 @@
     "request_fail": "Request failed",
     "forget_password": "Forgot password",
     "forgot_notice": "Please contact an admin to reset your password (self-service not yet available)",
-    "invite_only_tip": "This deployment is invite-only; registration is closed",
-    "invite_only_note": "This deployment is invite-only. Contact an admin to get an account.",
+    "invite_only_tip": "Registration requires an invite code",
+    "invite_only_note": "This deployment is invite-only. A valid invite code is required to register.",
     "first_admin": "The first registered user will become the admin.",
     "min_password": "Password must be at least {{min}} characters.",
     "field_required": "Please fill in {{label}}",
@@ -2601,7 +2601,8 @@
       "profile_saving": "Saving…",
       "profile_submit": "Complete Registration"
     },
-    "captcha_required": "Please complete the CAPTCHA verification before submitting"
+    "captcha_required": "Please complete the CAPTCHA verification before submitting",
+    "registration_closed_tip": "Registration is closed"
   },
   "saves": {
     "list": {

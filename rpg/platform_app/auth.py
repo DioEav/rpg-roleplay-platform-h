@@ -394,12 +394,10 @@ def register(
         _check_invite_code(db, invite_code)
 
         # ── 白名单校验(allowlist 模式) ────────────────────────────────────────
-        # task: 内测期所有注册路径(密码注册 + magic-link)都要白名单 gate。
-        # registration_config.mode='allowlist' 时,只准 registration_allowlist
-        # 里的邮箱注册。开发模式 / open 不变。
-        # task: mode='invite' 是 admin UI「仅邀请」按钮的语义,
-        # mode='allowlist' 是 SQL 手动设置的别名 — 两者都走白名单 gate。
-        if mode in ("allowlist", "invite"):
+        # registration_config.mode='allowlist'(SQL 手动设置的内测别名)时,只准
+        # registration_allowlist 里的邮箱注册。开发模式 / open / invite 不拦 —
+        # 「仅邀请」由上方 _check_invite_code 单独把关,不叠加白名单。
+        if mode == "allowlist":
             wl = db.execute(
                 "select 1 from registration_allowlist where email_norm = %s",
                 (email_norm,),
@@ -874,11 +872,11 @@ def verify_apple_identity_token(identity_token: str, raw_nonce: str = "") -> dic
 
 
 def _assert_registration_allowed(db, email_norm: str) -> None:
-    """closed 一律拒绝;allowlist/invite 模式下,新账号邮箱必须在白名单(与密码注册同 gate);open/dev 不拦。"""
+    """closed 一律拒绝;allowlist 模式下新账号邮箱必须在白名单;invite 只由邀请码把关;open/dev 不拦。"""
     mode = _registration_mode(db)
     if mode == "closed":
         raise ValueError("平台已关闭注册，暂时无法接受新用户")
-    if mode in ("allowlist", "invite"):
+    if mode == "allowlist":
         wl = db.execute("select 1 from registration_allowlist where email_norm = %s", (email_norm,)).fetchone() if email_norm else None
         if not wl:
             raise ValueError("该邮箱不在内测白名单。本批次仅向早期预约者开放。")

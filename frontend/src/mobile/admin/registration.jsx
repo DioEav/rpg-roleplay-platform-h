@@ -46,7 +46,7 @@ function SectionRegistration({ nav }) {
   async function handleCreate(vals) {
     setCreating(true);
     try {
-      await window.api.admin.createInviteCodes({ count: Number(vals.count) || 1, expires_days: Number(vals.expires_days) || 30, note: vals.note || undefined });
+      await window.api.admin.createInviteCodes({ count: Number(vals.count) || 1, expires_in_days: Number(vals.expires_in_days) || 30, note: vals.note || undefined });
       nav.toast(t('mobile.admin.registration.invite_created'), 'ok');
       setShowCreate(false);
       const codes = await window.api.admin.inviteCodes();
@@ -101,9 +101,9 @@ function SectionRegistration({ nav }) {
                     <span className="pl-row-ic info"><Icon name="key" size={17} /></span>
                     <span className="pl-row-tx">
                       <strong className="mono" style={{ fontSize: 13 }}>{c.code}</strong>
-                      <span>{c.used ? t('mobile.admin.registration.code_used') : t('mobile.admin.registration.code_unused')}{c.expires_at ? ` · ${t('mobile.admin.registration.expires')} ${fmtDate(c.expires_at)}` : ''}{c.note ? ` · ${c.note}` : ''}</span>
+                      <span>{c.used_at ? t('mobile.admin.registration.code_used') : t('mobile.admin.registration.code_unused')}{c.expires_at ? ` · ${t('mobile.admin.registration.expires')} ${fmtDate(c.expires_at)}` : ''}{c.note ? ` · ${c.note}` : ''}</span>
                     </span>
-                    {!c.used && <button style={{ fontSize: 12, color: 'var(--danger)', padding: '4px 8px' }} onClick={() => setDeleteTarget(c.code)}>{t('common.delete')}</button>}
+                    {!c.used_at && <button style={{ fontSize: 12, color: 'var(--danger)', padding: '4px 8px' }} onClick={() => setDeleteTarget(c.code)}>{t('common.delete')}</button>}
                   </div>
                 ))}
               </div>
@@ -117,7 +117,7 @@ function SectionRegistration({ nav }) {
           title={t('mobile.admin.registration.create_sheet_title')}
           fields={[
             { key: 'count', label: t('mobile.admin.registration.field_count'), default: '1', type: 'number' },
-            { key: 'expires_days', label: t('mobile.admin.registration.field_expires_days'), default: '30', type: 'number' },
+            { key: 'expires_in_days', label: t('mobile.admin.registration.field_expires_days'), default: '30', type: 'number' },
             { key: 'note', label: t('mobile.admin.registration.field_note'), default: '' },
           ]}
           busy={creating}

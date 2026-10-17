@@ -37,7 +37,20 @@ def make_client():
     from fastapi.testclient import TestClient
 
     import app  # noqa: F401 触发路由注册
+    _ensure_registration_open()
     return TestClient(app.app)
+
+
+def _ensure_registration_open():
+    """复位 admin.registration_config(删除 → 默认 open)。
+
+    closed/invite 模式现在会真实拦截注册(mode=closed 曾长期无消费方,测试库可能
+    残留历史配置),不复位会让所有注册类集成测试连片失败。需要特定 mode 的集成
+    测试在用例内自行写入并在结束时还原。
+    """
+    from platform_app.db import connect
+    with connect() as db:
+        db.execute("delete from app_config where key = 'admin.registration_config'")
 
 
 def cleanup_test_users() -> int:

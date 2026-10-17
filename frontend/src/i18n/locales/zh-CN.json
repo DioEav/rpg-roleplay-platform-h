@@ -2632,8 +2632,8 @@
     "request_fail": "请求失败",
     "forget_password": "忘记密码",
     "forgot_notice": "请联系管理员重置密码(暂未提供自助找回流程)",
-    "invite_only_tip": "当前部署为邀请制,注册关闭",
-    "invite_only_note": "当前部署为邀请制,请联系管理员获取账号。",
+    "invite_only_tip": "注册需邀请码",
+    "invite_only_note": "当前部署为邀请制，注册时需填写有效邀请码。",
     "first_admin": "首个注册用户会成为管理员。",
     "min_password": "密码至少 {{min}} 位。",
     "field_required": "请填写{{label}}",
@@ -2705,7 +2705,8 @@
       "profile_saving": "保存中…",
       "profile_submit": "完成注册"
     },
-    "captcha_required": "请先完成人机验证后再提交"
+    "captcha_required": "请先完成人机验证后再提交",
+    "registration_closed_tip": "注册已关闭"
   },
   "saves": {
     "list": {
