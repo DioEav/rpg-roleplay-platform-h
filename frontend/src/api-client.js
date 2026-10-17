@@ -467,11 +467,6 @@
       suspendUser: (userId, body) => POST(`/api/admin/users/${userId}/suspend`, body),
       unsuspendUser: (userId) => POST(`/api/admin/users/${userId}/unsuspend`, {}),
       terminateUser: (userId, body) => POST(`/api/admin/users/${userId}/terminate`, body),
-      // Feedback 管理
-      feedback: {
-        list: ({ status } = {}) => GET(`/api/admin/feedback`, status ? { status } : undefined),
-        decision: (id, body) => POST(`/api/admin/feedback/${id}/decision`, body),
-      },
       // Policy notices
       policy: {
         notices: () => GET(`/api/admin/policy/notices`),

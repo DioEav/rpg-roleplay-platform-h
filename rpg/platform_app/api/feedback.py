@@ -34,6 +34,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from ..db import connect
 from ..moderation import moderate_feedback
 from ._deps import _client_ip, json_response, require_admin, require_user
+from .admin._shared import _write_audit
 
 router = APIRouter()
 log = logging.getLogger(__name__)
@@ -652,8 +653,8 @@ async def admin_feedback_decision(
     admin=Depends(_require_admin),
 ):
     """FB-03: admin 标记反馈。
-    decision=ok|nsfw_terminate|spam
-    nsfw_terminate 时走现有 /api/admin/users/{id}/terminate 逻辑。
+    decision=ok|nsfw_terminate|spam;决定即终态,不可重复决定。
+    nsfw_terminate 时对关联账户执行 queue_account_termination(与 AUP 终止/DMCA 三振同一条链路)。
     """
     body = await request.json()
     ip = _client_ip(request)
@@ -668,11 +669,15 @@ async def admin_feedback_decision(
 
     with connect() as db:
         row = db.execute(
-            "select id, user_id from feedback where id = %s",
+            "select id, user_id, review_decision from feedback where id = %s",
             (feedback_id,),
         ).fetchone()
         if not row:
             raise HTTPException(status_code=404, detail="反馈不存在")
+
+        # 已决定项不可覆盖(FB-03):决定即终态,重审需运维侧直接改库修正。
+        if row["review_decision"] is not None:
+            raise HTTPException(status_code=409, detail="该反馈已有审查决定，不能重复决定")
 
         db.execute(
             """
@@ -684,22 +689,35 @@ async def admin_feedback_decision(
         )
 
         # nsfw_terminate: 调现有 queue_account_termination
+        terminated = False
+        terminate_refused = False
         if decision == "nsfw_terminate":
             # 匿名反馈无关联账户(user_id=NULL):传 None 进 queue_account_termination 会
-            # SQL/格式化崩溃成 500。直接拒绝(已记 review_decision,合规证据仍留存)。
+            # SQL/格式化崩溃成 500。决定照常落库(audit 留痕),终止拒之门外。
             if row["user_id"] is None:
-                return json_response(
-                    {"ok": False, "error": "匿名反馈无关联账户,无法执行 nsfw_terminate"},
-                    status_code=409,
+                terminate_refused = True
+            else:
+                from ..dmca import queue_account_termination
+                terminate_reason = f"反馈审查 nsfw_terminate (feedback_id={feedback_id}): {notes}"
+                queue_account_termination(db, row["user_id"], terminate_reason)
+                terminated = True
+                log.warning(
+                    "feedback nsfw_terminate: feedback_id=%s user_id=%s admin=%s",
+                    feedback_id, row["user_id"], admin.get("username"),
                 )
-            from ..dmca import queue_account_termination
-            terminate_reason = f"反馈审查 nsfw_terminate (feedback_id={feedback_id}): {notes}"
-            queue_account_termination(db, row["user_id"], terminate_reason)
-            log.warning(
-                "feedback nsfw_terminate: feedback_id=%s user_id=%s admin=%s",
-                feedback_id, row["user_id"], admin.get("username"),
-            )
 
+        # 审计:决定本身(含 notes 与是否实际执行了终止)必须留痕,与 dmca/csam/aup 对齐。
+        _write_audit(db, admin, f"feedback.decision.{decision}",
+                     target_type="feedback", target_id=str(feedback_id),
+                     details={"decision": decision, "notes": notes,
+                              "user_id": row["user_id"], "terminated": terminated},
+                     ip=ip)
+
+    if terminate_refused:
+        return json_response(
+            {"ok": False, "error": "匿名反馈无关联账户,无法执行 nsfw_terminate"},
+            status_code=409,
+        )
     return json_response({"ok": True, "decision": decision})
 
 
@@ -754,4 +772,10 @@ async def admin_feedback_reply(
                     emailed = True
                 except Exception as exc:
                     log.warning("feedback reply email failed: id=%s err=%s", feedback_id, exc)
+
+        # 审计:回复/撤回留痕(reply 为空串 = 撤回),与 dmca/csam/aup 对齐。
+        _write_audit(db, admin, "feedback.reply",
+                     target_type="feedback", target_id=str(feedback_id),
+                     details={"reply": reply, "emailed": emailed},
+                     ip=ip)
     return json_response({"ok": True, "reply": reply, "emailed": emailed})
