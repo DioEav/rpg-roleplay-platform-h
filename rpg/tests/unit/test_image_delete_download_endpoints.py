@@ -72,6 +72,45 @@ class DeleteEndpoint(unittest.TestCase):
         del_file.assert_not_called()
         nullify.assert_not_called()
 
+    def _run_with_refs(self, refs):
+        """以 confirm=True 跑删除端点，find_references 返回给定引用列表。"""
+        import json
+        class _Req:
+            async def json(self):
+                return {"confirm": True}
+        emitted, del_file, nullify = [], MagicMock(), MagicMock()
+        db = _fake_db()
+        with patch.object(images_api, "get_image_record", return_value=dict(RECORD)), \
+             patch.object(images_api, "require_user", return_value=USER), \
+             patch.object(images_api, "init_db"), \
+             patch.object(images_api, "connect", return_value=db), \
+             patch("platform_app.storage.delete_file", del_file), \
+             patch("platform_app.storage.find_references", return_value=refs), \
+             patch("platform_app.library.nullify_references", nullify), \
+             patch("state_event_bus.emit", side_effect=lambda *a: emitted.append(a)):
+            resp = asyncio.run(images_api.api_delete_image(7, _Req()))
+        return json.loads(resp.body), del_file, nullify
+
+    def test_foreign_user_reference_keeps_physical_file(self):
+        """他人仍在引用(如导入的公开角色卡头像):只解除自己的引用,文件保留。"""
+        refs = [{"kind": "card_avatar", "table": "character_cards",
+                 "id": 9, "name": "别人导入的卡", "owner_id": 99}]
+        body, del_file, nullify = self._run_with_refs(refs)
+        self.assertTrue(body["ok"] and body["deleted"])
+        self.assertTrue(body["file_kept"], "他人引用时禁止物理删除")
+        self.assertEqual(body["kept_for_other_users"], 1)
+        del_file.assert_not_called()
+        nullify.assert_called_once_with(7, RECORD["url"], refs)
+
+    def test_own_reference_only_deletes_physical_file(self):
+        """只有自己的引用:照旧删文件(行为不变)。"""
+        refs = [{"kind": "card_avatar", "table": "character_cards",
+                 "id": 8, "name": "自己的卡", "owner_id": 7}]
+        body, del_file, nullify = self._run_with_refs(refs)
+        self.assertFalse(body["file_kept"])
+        del_file.assert_called_once_with("ai_images/abc.png")
+        nullify.assert_called_once()
+
 
 class DownloadEndpoint(unittest.TestCase):
 

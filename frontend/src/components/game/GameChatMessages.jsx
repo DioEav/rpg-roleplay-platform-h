@@ -695,7 +695,13 @@ function ChatImageGroup({ images }) {
           throw new Error((res && res.error) || 'delete_failed');
         }
         setLightbox(null);
-        try { window.toast && window.toast(t('lightbox.deleted'), { kind: 'ok' }); } catch (_) {}
+        try {
+          if (window.toast) {
+            window.toast(res.file_kept
+              ? t('lightbox.deleted_file_kept', '已解除你的引用；图片仍被其他用户使用，文件已保留')
+              : t('lightbox.deleted'), { kind: res.file_kept ? 'info' : 'ok' });
+          }
+        } catch (_) {}
       }
     : undefined;
   return (

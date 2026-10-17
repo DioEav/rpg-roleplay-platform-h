@@ -630,8 +630,12 @@ async def api_delete_image(image_id: int, request: Request):
     from platform_app import storage
 
     references = storage.find_references(url) if url else []
+    # 其他用户仍在引用(如别人导入的公开角色卡头像/人设图):只解除引用,物理文件必须保留。
+    foreign = storage.foreign_references(user_id, references)
     if references and not confirm:
-        return json_response({"ok": False, "needs_confirm": True, "references": references})
+        return json_response({"ok": False, "needs_confirm": True, "references": references,
+                              "other_users": len(foreign),
+                              "file_kept_if_confirmed": bool(foreign)})
     if references:
         from platform_app.library import nullify_references
 
@@ -649,16 +653,20 @@ async def api_delete_image(image_id: int, request: Request):
         )
 
     key = _image_storage_key(url)
-    if key:
+    file_kept = bool(foreign)
+    if key and not file_kept:
         storage.delete_file(key)
 
     # 函数内 import：模块顶部绑死会绕过单测对 state_event_bus.emit 的 patch，
     # 也会让多 worker 场景下的广播失效（与 library.py / image_jobs.py 同款写法）。
     from state_event_bus import emit
 
-    emit(user_id, "image", "deleted", {"url": url, "image_id": image_id})
+    emit(user_id, "image", "deleted", {"url": url, "image_id": image_id,
+                                       "file_kept": file_kept})
 
-    return json_response({"ok": True, "deleted": True})
+    return json_response({"ok": True, "deleted": True,
+                          "file_kept": file_kept,
+                          "kept_for_other_users": len(foreign)})
 
 
 # ══════════════════════════════════════════════════════════════════════
@@ -709,6 +717,13 @@ def cleanup_old_chat_images(days: int = 14) -> int:
         url: str = r["url"] or ""
         # URL 格式：/api/images/file/{filename}
         if url.startswith("/api/images/file/"):
+            # 仍被任何业务记录引用(角色卡头像/人设图/剧本封面/用户头像)时保留物理文件:
+            # 清理只回收无人引用的孤儿文件,否则会把别人正在用的卡图删坏。
+            try:
+                if _storage.find_references(url):
+                    continue
+            except Exception:
+                continue  # 引用查询失败 → 保守保留
             filename = url[len("/api/images/file/"):]
             # 安全检查：只允许纯文件名
             if filename and "/" not in filename and "\\" not in filename and not filename.startswith("."):

@@ -107,7 +107,9 @@ def find_references(url: str) -> list[dict]:
       character_cards.avatar_path
       card_persona_images.image_url
 
-    返回 list[{kind, table, id, title/name}]，供前端删除确认弹窗展示。
+    返回 list[{kind, table, id, title/name, owner_id}]，供前端删除确认弹窗展示；
+    owner_id 是引用方归属(用户卡=卡主, NPC 卡/剧本封面=剧本 owner),删除时据此判断
+    是否有「其他用户」仍在引用 —— 有则只解除引用、保留物理文件。
     用户量有限，全扫可接受；迁移到 user_assets 后可改用 ref_kind/ref_id 结构化反查。
     """
     from .db import connect, init_db
@@ -127,12 +129,13 @@ def find_references(url: str) -> list[dict]:
                 "table": "users",
                 "id": r["id"],
                 "name": r["username"],
+                "owner_id": r["id"],
             })
 
         # scripts.cover_image_url
         try:
             rows = db.execute(
-                "select id, title from scripts where cover_image_url = %s",
+                "select id, title, owner_id from scripts where cover_image_url = %s",
                 (url,),
             ).fetchall()
             for r in rows:
@@ -141,14 +144,20 @@ def find_references(url: str) -> list[dict]:
                     "table": "scripts",
                     "id": r["id"],
                     "title": r["title"],
+                    "owner_id": r["owner_id"],
                 })
         except Exception:
             pass
 
-        # character_cards.avatar_path
+        # character_cards.avatar_path — 用户卡直接挂 user_id;剧本 NPC 卡归属剧本 owner
         try:
             rows = db.execute(
-                "select id, name from character_cards where avatar_path = %s",
+                """
+                select cc.id, cc.name, coalesce(cc.user_id, s.owner_id) as owner_id
+                  from character_cards cc
+                  left join scripts s on s.id = cc.script_id
+                 where cc.avatar_path = %s
+                """,
                 (url,),
             ).fetchall()
             for r in rows:
@@ -157,14 +166,21 @@ def find_references(url: str) -> list[dict]:
                     "table": "character_cards",
                     "id": r["id"],
                     "name": r["name"],
+                    "owner_id": r["owner_id"],
                 })
         except Exception:
             pass
 
-        # card_persona_images.image_url
+        # card_persona_images.image_url — 归属其所属卡片的 owner
         try:
             rows = db.execute(
-                "select id from card_persona_images where image_url = %s",
+                """
+                select cpi.id, coalesce(cc.user_id, s.owner_id) as owner_id
+                  from card_persona_images cpi
+                  join character_cards cc on cc.id = cpi.card_id
+                  left join scripts s on s.id = cc.script_id
+                 where cpi.image_url = %s
+                """,
                 (url,),
             ).fetchall()
             for r in rows:
@@ -172,8 +188,22 @@ def find_references(url: str) -> list[dict]:
                     "kind": "persona_image",
                     "table": "card_persona_images",
                     "id": r["id"],
+                    "owner_id": r["owner_id"],
                 })
         except Exception:
             pass
 
     return results
+
+
+def foreign_references(user_id: int, references: list[dict]) -> list[dict]:
+    """从 find_references 结果中筛出不属于 user_id 的引用。
+
+    owner_id 缺失(历史数据/异常)按「他人」处理:宁可保留文件,也不误删别人还在用的图。
+    """
+    foreign: list[dict] = []
+    for ref in references or []:
+        owner = ref.get("owner_id")
+        if owner is None or int(owner) != int(user_id):
+            foreign.append(ref)
+    return foreign

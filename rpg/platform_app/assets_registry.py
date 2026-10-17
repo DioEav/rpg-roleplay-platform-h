@@ -210,7 +210,8 @@ def find_asset_references(user_id: int, asset_id: int) -> dict:
 # 删除：删 DB 行 + 物理文件（不置空引用字段，调用方 / S5 端点负责）
 # ---------------------------------------------------------------------------
 
-def delete_asset(user_id: int, asset_id: int, *, force: bool = False) -> dict:
+def delete_asset(user_id: int, asset_id: int, *, force: bool = False,
+                 keep_file: bool = False) -> dict:
     """删除 user_assets 行 + 物理文件。
 
     调用约定：
@@ -218,8 +219,10 @@ def delete_asset(user_id: int, asset_id: int, *, force: bool = False) -> dict:
         若 references 非空且 force=False，本函数返回 {ok: False, error: 'has_references',
         references: [...]}，**不执行删除**，由端点弹确认后以 force=True 再调；
       - force=True 则无论引用与否直接删除（调用方负责已置空引用字段）。
+      - keep_file=True：只删 DB 行，保留物理文件。用于「其他用户仍在引用」的场景
+        （如别人导入的公开角色卡头像），删文件会让他们的卡图失效。
 
-    返回 {ok, deleted: bool, storage_key, references: [...]}。
+    返回 {ok, deleted: bool, storage_key, references: [...], file_kept: bool}。
     资产不存在或不属于 user_id 则 {ok: False, error: 'not_found'}。
     """
     asset = get_asset(user_id, asset_id)
@@ -254,8 +257,9 @@ def delete_asset(user_id: int, asset_id: int, *, force: bool = False) -> dict:
             (asset_id, user_id),
         )
 
-    # 删物理文件（失败 silent）
-    if storage_key:
+    # 删物理文件（失败 silent）；keep_file 时只删 DB 行（他人仍引用该文件）
+    file_kept = bool(keep_file)
+    if storage_key and not file_kept:
         try:
             from . import storage as _storage  # lazy import
             _storage.delete_file(storage_key)
@@ -267,6 +271,7 @@ def delete_asset(user_id: int, asset_id: int, *, force: bool = False) -> dict:
         "deleted": True,
         "storage_key": storage_key,
         "references": refs,
+        "file_kept": file_kept,
     }
 
 

@@ -114,7 +114,7 @@ function DocIcon({ name }) {
 }
 
 // ── 删除确认弹窗 ─────────────────────────────────────────────
-function DeleteConfirmModal({ open, asset, references, onCancel, onConfirm, busy }) {
+function DeleteConfirmModal({ open, asset, references, otherUsers = 0, onCancel, onConfirm, busy }) {
   const { t } = useTranslation();
   if (!open || !asset) return null;
 
@@ -154,6 +154,13 @@ function DeleteConfirmModal({ open, asset, references, onCancel, onConfirm, busy
           <CSAlert type="warning" header={t('components.file_library.delete_modal.refs_warning_header')}>
             {t('components.file_library.delete_modal.refs_warning_body')}<br />
             <strong>{refText}</strong>
+          </CSAlert>
+        )}
+        {otherUsers > 0 && (
+          <CSAlert type="info" header={t('components.file_library.delete_modal.other_users_header', '其他用户仍在使用')}>
+            {t('components.file_library.delete_modal.other_users_body',
+              '该图片仍被其他用户引用（{{n}} 处）。确认后只会解除你的引用，图片文件会保留，不影响其他用户。',
+              { n: otherUsers })}
           </CSAlert>
         )}
         <CSBox>
@@ -391,7 +398,7 @@ export default function FileLibrary() {
     try {
       const r = await window.api?.library?.deleteAsset(asset.id, false, true);
       if (r && r.ok === false && r.needs_confirm) {
-        setDeleteState({ asset, phase: 'confirm', references: r.references || [] });
+        setDeleteState({ asset, phase: 'confirm', references: r.references || [], otherUsers: r.other_users || 0 });
       } else if (r && r.ok && r.deleted) {
         // 兼容旧后端(无 probe 字段时仍可能直删)——不静默:照样移除 + toast
         setAssets(prev => prev.filter(a => a.id !== asset.id));
@@ -465,7 +472,13 @@ export default function FileLibrary() {
       }
       setAssets(prev => prev.filter(a => a.id !== asset.id));
       setDeleteState(null);
-      window.toast?.(t('components.file_library.toast.deleted', { name: asset.name || '#' + asset.id }), { kind: 'ok', duration: 2400 });
+      if (r?.file_kept) {
+        // 其他用户仍在引用:只解除了自己的引用,物理文件已保留
+        window.toast?.(t('components.file_library.toast.deleted_file_kept',
+          '已解除你的引用；图片仍被其他用户使用，文件已保留'), { kind: 'info', duration: 3200 });
+      } else {
+        window.toast?.(t('components.file_library.toast.deleted', { name: asset.name || '#' + asset.id }), { kind: 'ok', duration: 2400 });
+      }
     } catch (e) {
       window.toast?.(e?.message || t('components.file_library.toast.delete_failed'), { kind: 'danger', duration: 3000 });
       setDeleteState(null);
@@ -578,6 +591,7 @@ export default function FileLibrary() {
         open={!!deleteState}
         asset={deleteState?.asset}
         references={deleteState?.references}
+        otherUsers={deleteState?.otherUsers || 0}
         onCancel={handleDeleteCancel}
         onConfirm={handleDeleteConfirm}
         busy={deleteBusy}

@@ -87,6 +87,37 @@ class ProbeMode(unittest.TestCase):
             result = lib.delete_asset_with_refs(7, 55, confirm=True, probe=False)
         self.assertTrue(result.get("ok") and result.get("deleted"))
 
+    def test_foreign_reference_keeps_physical_file(self):
+        """他人仍在引用 → delete_asset 必须带 keep_file=True(只删 DB 行)。"""
+        refs = [{"kind": "card_avatar", "id": 9, "name": "别人导入的卡", "owner_id": 99}]
+        db = _fake_db()
+        with patch("platform_app.assets_registry.find_asset_references",
+                   return_value={"ok": True, "references": refs, "asset": {"id": 55, "url": "u"}}), \
+             patch("platform_app.assets_registry.delete_asset",
+                   return_value={"ok": True, "deleted": True, "storage_key": "ai_images/abc.png"}) as del_mock, \
+             patch.object(lib, "nullify_references"), \
+             patch("platform_app.db.connect", return_value=db), \
+             patch("state_event_bus.emit"):
+            result = lib.delete_asset_with_refs(7, 55, confirm=True, probe=False)
+        self.assertTrue(result.get("file_kept"))
+        self.assertEqual(result.get("kept_for_other_users"), 1)
+        self.assertTrue(del_mock.call_args.kwargs.get("keep_file"), "他人引用时必须保留文件")
+
+    def test_own_reference_deletes_file(self):
+        """只有自己的引用 → 照旧删文件。"""
+        refs = [{"kind": "card_avatar", "id": 8, "name": "自己的卡", "owner_id": 7}]
+        db = _fake_db()
+        with patch("platform_app.assets_registry.find_asset_references",
+                   return_value={"ok": True, "references": refs, "asset": {"id": 55, "url": "u"}}), \
+             patch("platform_app.assets_registry.delete_asset",
+                   return_value={"ok": True, "deleted": True, "storage_key": "ai_images/abc.png"}) as del_mock, \
+             patch.object(lib, "nullify_references"), \
+             patch("platform_app.db.connect", return_value=db), \
+             patch("state_event_bus.emit"):
+            result = lib.delete_asset_with_refs(7, 55, confirm=True, probe=False)
+        self.assertFalse(result.get("file_kept"))
+        self.assertFalse(del_mock.call_args.kwargs.get("keep_file"))
+
 
 class BackfillSizes(unittest.TestCase):
     """list_assets 对 size=0 的行 stat 磁盘回填(修卡片显示 —)。"""

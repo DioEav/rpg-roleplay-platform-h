@@ -7336,6 +7336,8 @@
         "confirm_delete": "确认删除",
         "refs_warning_header": "删除后相关位置将显示错误",
         "refs_warning_body": "以下位置正在使用此文件,删除后它们会显示缺失图/错误:",
+        "other_users_header": "其他用户仍在使用",
+        "other_users_body": "该图片仍被其他用户引用（{{n}} 处）。确认后只会解除你的引用，图片文件会保留，不影响其他用户。",
         "confirm_text": "确定要删除「{{name}}」？此操作不可撤销。",
         "asset_fallback": "资产 #{{id}}"
       },
@@ -7354,6 +7356,7 @@
       "load_error": "加载失败",
       "toast": {
         "deleted": "已删除 {{name}}",
+        "deleted_file_kept": "已解除你的引用；图片仍被其他用户使用，文件已保留",
         "delete_failed": "删除失败",
         "renamed": "已重命名为 {{name}}",
         "rename_failed": "重命名失败"
@@ -7711,10 +7714,11 @@
     "crop_failed": "裁剪失败",
     "crop_hint": "拖动调整裁剪区域，应用后保存",
     "delete": "删除",
-    "delete_confirm_body": "删除后不可恢复。若该图已被角色头像或封面引用，引用将同时被移除。",
+    "delete_confirm_body": "删除后不可恢复。若该图已被角色头像或封面引用，你的引用会被解除；若仍有其他用户引用，图片文件将保留。",
     "delete_confirm_title": "删除这张图片？",
     "delete_failed": "删除失败",
     "deleted": "已删除",
+    "deleted_file_kept": "已解除你的引用；图片仍被其他用户使用，文件已保留",
     "download": "下载"
   },
   "m_caps_extra": {

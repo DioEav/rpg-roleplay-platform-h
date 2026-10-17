@@ -7339,6 +7339,8 @@
         "confirm_delete": "Delete",
         "refs_warning_header": "Removing this file will break references",
         "refs_warning_body": "The following locations are using this file and will show broken images or errors after deletion:",
+        "other_users_header": "Other users still use this image",
+        "other_users_body": "This image is still referenced by other users ({{n}} place(s)). Confirming will only detach your references; the image file is kept and other users are unaffected.",
         "confirm_text": "Are you sure you want to delete \"{{name}}\"? This action cannot be undone.",
         "asset_fallback": "Asset #{{id}}"
       },
@@ -7714,10 +7716,11 @@
     "crop_failed": "Crop failed",
     "crop_hint": "Drag to adjust the crop area, then apply to save",
     "delete": "Delete",
-    "delete_confirm_body": "This cannot be undone. If the image is referenced by a character avatar or cover, those references will be cleared too.",
+    "delete_confirm_body": "This cannot be undone. Your own avatar/cover references will be cleared; if other users still reference the image, the file will be kept.",
     "delete_confirm_title": "Delete this image?",
     "delete_failed": "Delete failed",
     "deleted": "Deleted",
+    "deleted_file_kept": "Your references were cleared; the image is still used by other users, so the file was kept",
     "download": "Download"
   },
   "m_caps_extra": {

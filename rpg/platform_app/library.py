@@ -280,6 +280,14 @@ def delete_asset_with_refs(
     references = ref_result.get("references") or []
     asset = ref_result.get("asset") or {}
 
+    # 其他用户仍在引用(别人导入的公开角色卡头像/人设图等) → 只解除引用,保留物理文件。
+    try:
+        from .storage import foreign_references as _foreign_refs
+        foreign = _foreign_refs(user_id, references)
+    except Exception:
+        # 归属查询失败时保守处理:按「有他人引用」对待,绝不误删文件
+        foreign = list(references or [])
+
     # 只读探测:总是要求确认(owner 校验已在上面做过),引用列表给确认框做警告展示
     if probe:
         return {
@@ -287,6 +295,8 @@ def delete_asset_with_refs(
             "needs_confirm": True,
             "references": references,
             "asset": asset,
+            "other_users": len(foreign),
+            "file_kept_if_confirmed": bool(foreign),
         }
 
     # 有引用 + 未确认 → 要求前端二次确认
@@ -296,6 +306,8 @@ def delete_asset_with_refs(
             "needs_confirm": True,
             "references": references,
             "asset": asset,
+            "other_users": len(foreign),
+            "file_kept_if_confirmed": bool(foreign),
         }
 
     # 置空所有引用字段（有引用且 confirm=True，或本来就无引用）
@@ -303,8 +315,10 @@ def delete_asset_with_refs(
     if references and url:
         nullify_references(user_id, url, references)
 
-    # 物理删除（force=True：引用已处理）
-    result = _reg.delete_asset(user_id, asset_id, force=True)
+    # 物理删除（force=True：引用已处理）；他人仍引用时只删 DB 行、保留文件
+    result = _reg.delete_asset(user_id, asset_id, force=True, keep_file=bool(foreign))
+    result["file_kept"] = bool(foreign)
+    result["kept_for_other_users"] = len(foreign)
 
     # 同步清理 ai_images —— 根治「文件库删图后聊天里还留着占位」:
     # 聊天历史走的是 ai_images 表(/api/images/list),文件库删的只是 user_assets 行 + 文件;
