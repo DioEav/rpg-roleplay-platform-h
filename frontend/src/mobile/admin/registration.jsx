@@ -90,17 +90,6 @@ function SectionRegistration({ nav }) {
                     </button>
                   ))}
                 </div>
-
-                {[
-                  { key: 'email_verification', label: t('mobile.admin.registration.email_verification') },
-                  { key: 'auto_approve', label: t('mobile.admin.registration.auto_approve') },
-                ].map(({ key, label }) => (
-                  <div key={key} className="pl-row" style={{ cursor: 'pointer' }} onClick={() => saveReg({ [key]: !regConfig[key] })}>
-                    <span className={`pl-row-ic ${regConfig[key] ? 'ok' : ''}`}><Icon name={regConfig[key] ? 'check' : 'close'} size={17} /></span>
-                    <span className="pl-row-tx"><strong style={{ fontSize: 13.5 }}>{label}</strong></span>
-                    <span style={{ fontSize: 12, color: regConfig[key] ? 'var(--ok)' : 'var(--muted)' }}>{regConfig[key] ? t('mobile.admin.registration.on') : t('mobile.admin.registration.off')}</span>
-                  </div>
-                ))}
               </div>
 
               <div className="pl-sec">

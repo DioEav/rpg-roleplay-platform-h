@@ -15,10 +15,13 @@ from ._shared import _get_app_config, _require_admin, _set_app_config, _write_au
 
 _REGISTRATION_CFG_KEY = "admin.registration_config"
 
+# mode 语义(消费方 platform_app/auth.py):
+#   open    — 开放注册
+#   invite  — 邀请码 + registration_allowlist 白名单双重门槛
+#   closed  — 关闭注册(所有建号路径拒绝,已注册用户登录不受影响)
+# 历史 key require_email_verify / auto_approve 无任何消费方,已随前端开关一并移除。
 _DEFAULT_REGISTRATION = {
     "mode": "open",
-    "require_email_verify": False,
-    "auto_approve": True,
 }
 
 
@@ -38,7 +41,7 @@ async def admin_set_registration(
     body = await request.json()
     ip = _client_ip(request)
 
-    allowed_keys = {"mode", "require_email_verify", "auto_approve"}
+    allowed_keys = {"mode"}
     update = {k: v for k, v in body.items() if k in allowed_keys}
 
     with connect() as db:

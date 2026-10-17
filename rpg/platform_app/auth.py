@@ -385,6 +385,11 @@ def register(
         if existing_user:
             raise ValueError("注册失败，请检查输入后重试")
 
+        # ── 注册模式 gate（admin UI「开放/仅邀请/关闭」）────────────────────
+        mode = _registration_mode(db)
+        if mode == "closed":
+            raise ValueError("平台已关闭注册，暂时无法接受新用户")
+
         # ── 邀请码校验（invite 模式）─────────────────────────────────────────
         _check_invite_code(db, invite_code)
 
@@ -392,14 +397,6 @@ def register(
         # task: 内测期所有注册路径(密码注册 + magic-link)都要白名单 gate。
         # registration_config.mode='allowlist' 时,只准 registration_allowlist
         # 里的邮箱注册。开发模式 / open 不变。
-        try:
-            row = db.execute(
-                "select value from app_config where key = 'admin.registration_config' limit 1"
-            ).fetchone()
-            cfg = (row.get("value") if row else None) or {}
-            mode = (cfg.get("mode") or "").lower()
-        except Exception:
-            mode = ""
         # task: mode='invite' 是 admin UI「仅邀请」按钮的语义,
         # mode='allowlist' 是 SQL 手动设置的别名 — 两者都走白名单 gate。
         if mode in ("allowlist", "invite"):
@@ -572,29 +569,32 @@ def _row_get(row, key: str, default=None):
             return default
 
 
+def _registration_mode(db) -> str:
+    """读取 admin.registration_config.mode 并小写化;行缺失/异常一律视为 open。
+
+    app_config.value 是 jsonb(psycopg 返回 dict),兼容历史 JSON 字符串形态。
+    register / _check_invite_code / _assert_registration_allowed / magic & 免密
+    建号路径共用,保证 closed/invite/allowlist 语义的单一真相源。
+    """
+    try:
+        row = db.execute(
+            "select value from app_config where key = 'admin.registration_config' limit 1"
+        ).fetchone()
+        cfg = (row.get("value") if row else None) or {}
+        if isinstance(cfg, str):
+            import json as _json
+            cfg = _json.loads(cfg)
+        return str((cfg.get("mode") or "")).strip().lower()
+    except Exception:
+        return ""
+
+
 def _check_invite_code(db, invite_code: str | None) -> None:
     """若 registration_config.mode == 'invite'，校验 invite_code；否则跳过。
 
-    invite_codes 表 v36 已存在。注意: registration_config 来自 app_config 表
-    如果该表/行不存在则视为 open 模式。
+    invite_codes 表 v36 已存在。如果该表/行不存在则视为 open 模式。
     """
-    try:
-        cfg_row = db.execute(
-            "select value from app_config where key = 'admin.registration_config' limit 1"
-        ).fetchone()
-    except Exception:
-        cfg_row = None
-
-    mode = "open"
-    if cfg_row:
-        import json as _json
-        try:
-            cfg = _json.loads(cfg_row["value"])
-            mode = cfg.get("mode", "open")
-        except Exception:
-            pass
-
-    if mode != "invite":
+    if _registration_mode(db) != "invite":
         return
 
     if not invite_code:
@@ -874,13 +874,10 @@ def verify_apple_identity_token(identity_token: str, raw_nonce: str = "") -> dic
 
 
 def _assert_registration_allowed(db, email_norm: str) -> None:
-    """allowlist/invite 模式下,新账号邮箱必须在白名单(与密码注册同 gate);open/dev 不拦。"""
-    try:
-        row = db.execute("select value from app_config where key = 'admin.registration_config' limit 1").fetchone()
-        cfg = (row.get("value") if row else None) or {}
-        mode = (cfg.get("mode") or "").lower()
-    except Exception:
-        mode = ""
+    """closed 一律拒绝;allowlist/invite 模式下,新账号邮箱必须在白名单(与密码注册同 gate);open/dev 不拦。"""
+    mode = _registration_mode(db)
+    if mode == "closed":
+        raise ValueError("平台已关闭注册，暂时无法接受新用户")
     if mode in ("allowlist", "invite"):
         wl = db.execute("select 1 from registration_allowlist where email_norm = %s", (email_norm,)).fetchone() if email_norm else None
         if not wl:
@@ -1688,6 +1685,9 @@ def verify_passwordless_and_login(email: str, code: str, ip: str = "") -> dict:
         ).fetchone()
 
         if user_row is None:
+            # closed 模式:禁止新建账号(已注册用户登录不受影响)
+            if _registration_mode(db) == "closed":
+                raise ValueError("平台已关闭注册，暂时无法接受新用户")
             # 未注册：必须在白名单里
             wl_row = db.execute(
                 "select email_norm, batch from registration_allowlist where email_norm = %s",
@@ -1759,6 +1759,9 @@ def login_via_magic_token(email: str, ip: str = "", *, magic_token: str = "") ->
             (email_norm,),
         ).fetchone()
         if user_row is None:
+            # closed 模式:禁止新建账号(已注册用户登录不受影响)
+            if _registration_mode(db) == "closed":
+                raise ValueError("平台已关闭注册，暂时无法接受新用户")
             # 未注册:必须在白名单(magic token 已通过 consume_magic_token 校验,这里二次保险)
             wl_row = db.execute(
                 "select email_norm, batch from registration_allowlist where email_norm = %s",

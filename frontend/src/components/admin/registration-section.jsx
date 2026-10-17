@@ -11,7 +11,6 @@ import CSBadge from '@cloudscape-design/components/badge';
 import CSAlert from '@cloudscape-design/components/alert';
 import CSInput from '@cloudscape-design/components/input';
 import CSSelect from '@cloudscape-design/components/select';
-import CSToggle from '@cloudscape-design/components/toggle';
 import CSModal from '@cloudscape-design/components/modal';
 import CSFormField from '@cloudscape-design/components/form-field';
 import { fmtTime } from './shared.jsx';
@@ -133,22 +132,6 @@ export function AdminRegistrationPage() {
                       </CSButton>
                     ))}
                   </CSSpaceBetween>
-                </CSFormField>
-                <CSFormField label={t('admin_page.registration.field_email_verify')}>
-                  <CSToggle
-                    checked={!!regConfig.email_verification}
-                    onChange={({ detail }) => saveReg({ email_verification: detail.checked })}
-                  >
-                    {regConfig.email_verification ? t('admin_page.common.toggle_on') : t('admin_page.common.toggle_off')}
-                  </CSToggle>
-                </CSFormField>
-                <CSFormField label={t('admin_page.registration.field_auto_approve')}>
-                  <CSToggle
-                    checked={!!regConfig.auto_approve}
-                    onChange={({ detail }) => saveReg({ auto_approve: detail.checked })}
-                  >
-                    {regConfig.auto_approve ? t('admin_page.common.toggle_on') : t('admin_page.common.toggle_off')}
-                  </CSToggle>
                 </CSFormField>
               </CSSpaceBetween>
             )

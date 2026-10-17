@@ -444,3 +444,58 @@ def test_generate_email_code():
     code = generate_email_code(6)
     assert len(code) == 6
     assert code.isdigit()
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 测试 8: closed 模式拒绝注册(REG mode=closed 回归锁)
+# ─────────────────────────────────────────────────────────────────────────────
+
+def test_register_closed_mode_rejected(monkeypatch, mock_email):
+    """admin 置 mode=closed 后注册一律拒绝。
+
+    app_config.value 兼容两种形态:jsonb dict(psycopg 线上形态)与
+    JSON 字符串(历史/测试 fake 形态),两种都必须命中 closed gate。
+    """
+    import platform_app.auth as auth_mod
+
+    monkeypatch.setattr(auth_mod, "init_db", lambda: None)
+    for cfg_value in ({"mode": "closed"}, json.dumps({"mode": "closed"})):
+        monkeypatch.setattr(auth_mod, "connect", lambda: _FakeConn({
+            "banned_users": [],
+            "users where lower(email)": [],
+            "users where username": [],
+            "app_config": [{"value": cfg_value}],
+        }))
+        with pytest.raises(ValueError, match="关闭注册"):
+            auth_mod.register(
+                username="closeduser",
+                password="SecurePass123!",
+                email="closeduser@example.com",
+                birthday=date(1995, 5, 15),
+                terms_accepted=True,
+                age_confirmed=True,
+            )
+    assert not mock_email, "closed 模式不应发送验证码邮件"
+
+
+def test_register_closed_mode_rejected_before_invite_check(monkeypatch, mock_email):
+    """closed 优先于 invite:即使同时配置了 invite 语义,错误信息也应是关闭注册。"""
+    import platform_app.auth as auth_mod
+
+    monkeypatch.setattr(auth_mod, "init_db", lambda: None)
+    monkeypatch.setattr(auth_mod, "connect", lambda: _FakeConn({
+        "banned_users": [],
+        "users where lower(email)": [],
+        "users where username": [],
+        "app_config": [{"value": {"mode": "closed"}}],
+    }))
+    with pytest.raises(ValueError, match="关闭注册"):
+        auth_mod.register(
+            username="closeduser2",
+            password="SecurePass123!",
+            email="closeduser2@example.com",
+            birthday=date(1995, 5, 15),
+            terms_accepted=True,
+            age_confirmed=True,
+            invite_code=None,
+        )
