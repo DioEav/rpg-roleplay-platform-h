@@ -426,11 +426,6 @@ function ProfilePage() {
           )}
         </section>
       )}
-      <div className="pl-home-cards-more">
-        <button className="btn" onClick={() => plNavigate('cards-online')}>
-          <Icon name="cards" size={13} /> {t('platform.home.go_cards', '进入角色卡库')} <Icon name="chevron_right" size={13} />
-        </button>
-      </div>
       </div>
       )}
       </div>

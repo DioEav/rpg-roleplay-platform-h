@@ -2192,7 +2192,6 @@ button, a, [role="button"], .btn, .iconbtn, summary, label {
 /* 视图切换入场:淡入 + 轻微上移(reduced-motion 时关闭) */
 .pl-home-view { display: grid; gap: 20px; animation: pl-home-view-in .3s ease; }
 @keyframes pl-home-view-in { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: none; } }
-.pl-home-cards-more { display: flex; justify-content: center; }
 
 /* ── 问候区 ── */
 .pl-home-hello { display: flex; align-items: flex-end; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
