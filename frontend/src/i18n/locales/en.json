@@ -1248,9 +1248,13 @@
       "tavern_create_failed": "Failed to create conversation"
     },
     "home": {
+      "rail_label": "Content sections",
+      "rail_scripts": "Scripts",
+      "rail_cards": "Characters",
       "last_played": "Last played",
       "continue_play": "Continue",
       "featured_chip": "Featured · Script library",
+      "featured_card_chip": "Top pick · Character library",
       "hot_scripts": "Popular Scripts",
       "hot_cards": "Popular Characters",
       "go_scripts": "Browse script library",

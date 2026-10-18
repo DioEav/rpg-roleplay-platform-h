@@ -2176,9 +2176,23 @@ button, a, [role="button"], .btn, .iconbtn, summary, label {
 }
 
 /* ===== Home v2 —— 主页「首映式」改版(task: 主页展示在线剧本库/角色卡库内容) =====
-   问候区 + 精选剧本 Hero 轮播 + 热门剧本排 + 人气角色卡排。
+   左栏(剧本/角色卡双视图切换) + 问候区 + 精选剧本 Hero 轮播 + 热门剧本排 + 人气角色卡排。
    全部走现有 token,亮 A 暖纸 / 暗色暖夜自动适配;封面缺图用「渐变+剧名首字」补位。 */
-.pl-home { display: grid; gap: 22px; }
+.pl-home { display: grid; grid-template-columns: 76px minmax(0, 1fr); gap: 20px; align-items: start; }
+
+/* ── 左栏 rail:面板式,图标+文字标签,双视图切换 ── */
+.pl-home-rail { position: sticky; top: 56px; display: grid; gap: 6px; justify-items: stretch; background: var(--panel); border: 1px solid var(--line-soft); border-radius: 12px; padding: 10px 8px; box-shadow: var(--shadow-1); }
+.pl-home-rail-btn { position: relative; border: 0; background: transparent; color: var(--muted); display: grid; gap: 3px; justify-items: center; padding: 10px 0 8px; border-radius: 9px; cursor: pointer; transition: transform .16s ease, background .16s ease, color .16s ease, box-shadow .16s ease; }
+.pl-home-rail-btn:hover { background: var(--panel-2); color: var(--text); transform: translateY(-1px); }
+.pl-home-rail-btn:active { transform: scale(.96); }
+.pl-home-rail-btn.on { background: var(--accent-soft); color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent-edge); }
+.pl-home-rail-btn.on::before { content: ""; position: absolute; left: -8px; top: 10px; bottom: 10px; width: 3px; border-radius: 999px; background: var(--accent); }
+.pl-home-rail-label { font-size: 11.5px; font-weight: 500; letter-spacing: .02em; }
+.pl-home-main { display: grid; gap: 22px; min-width: 0; }
+/* 视图切换入场:淡入 + 轻微上移(reduced-motion 时关闭) */
+.pl-home-view { display: grid; gap: 20px; animation: pl-home-view-in .3s ease; }
+@keyframes pl-home-view-in { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: none; } }
+.pl-home-cards-more { display: flex; justify-content: center; }
 
 /* ── 问候区 ── */
 .pl-home-hello { display: flex; align-items: flex-end; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
@@ -2205,7 +2219,7 @@ button, a, [role="button"], .btn, .iconbtn, summary, label {
 .pl-home-btn-dark:hover { background: rgba(255,255,255,.16); border-color: rgba(255,255,255,.5); color: #fff; }
 .pl-home-hero-side { display: grid; gap: 12px; justify-items: center; }
 .pl-home-poster { width: 150px; height: 200px; border-radius: 8px; overflow: hidden; box-shadow: 0 18px 48px -18px rgba(0,0,0,.6); transform: rotate(2deg); }
-.pl-home-poster > img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.pl-home-poster > img { width: 100%; height: 100%; object-fit: cover; object-position: center 25%; display: block; }
 .pl-home-poster > div { width: 100%; height: 100%; }
 .pl-home-dots { display: flex; gap: 6px; }
 .pl-home-dots button { width: 6px; height: 6px; padding: 0; border: 0; border-radius: 999px; background: rgba(255,255,255,.38); cursor: pointer; transition: width .15s ease, background .15s ease; }
@@ -2258,11 +2272,19 @@ div[class*="pl-home-fb-"] { display: grid; place-items: center; font-family: var
 .pl-home-cover div[class*="pl-home-fb-"] { font-size: 46px; }
 .pl-home-poster > div[class*="pl-home-fb-"] { font-size: 68px; }
 
-/* ── 窄屏回流 ── */
+/* ── 窄屏回流 ──
+   注意:左栏 rail 不随宽度折叠 —— 高 DPI/浏览器缩放会让 CSS 视口宽度远小于物理宽度,
+   按宽度折叠会出现「按钮跑到顶部」的错觉。竖直左栏在任何桌面宽度下都保持,
+   真正的窄屏(<600px)由 MobileRoot 移动壳接管(m2 开启时)。 */
 @media (max-width: 860px) {
   .pl-home-hero-body { flex-direction: column; align-items: flex-start; gap: 18px; }
   .pl-home-hero-side { display: none; }
   .pl-home-hero-title { font-size: 26px; }
   .pl-home-hero { min-height: 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .pl-home-view { animation: none; }
+  .pl-home-rail-btn { transition: none; }
+  .pl-home-card, .pl-home-char { transition: none; }
 }
 

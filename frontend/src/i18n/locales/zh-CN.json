@@ -1352,9 +1352,13 @@
       "tavern_create_failed": "新建对话失败"
     },
     "home": {
+      "rail_label": "内容分区",
+      "rail_scripts": "剧本",
+      "rail_cards": "角色卡",
       "last_played": "上次玩到",
       "continue_play": "继续游玩",
       "featured_chip": "精选 · 在线剧本库",
+      "featured_card_chip": "人气之选 · 在线角色卡库",
       "hot_scripts": "热门剧本",
       "hot_cards": "人气角色卡",
       "go_scripts": "进入剧本库",

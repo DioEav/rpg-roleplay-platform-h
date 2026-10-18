@@ -49,6 +49,8 @@ function ProfilePage() {
   const [importedScriptIds, setImportedScriptIds] = useStatePL({}); // 本会话内已导入的剧本
   const [importingCardIds, setImportingCardIds] = useStatePL({});
   const [importedCardIds, setImportedCardIds] = useStatePL({}); // 本会话内已导入的角色卡
+  // 左栏双视图:scripts(默认)=精选 Hero + 热门剧本;cards=人气角色卡大网格
+  const [homeView, setHomeView] = useStatePL('scripts');
 
   useEffectPL(() => {
     let alive = true;
@@ -117,8 +119,37 @@ function ProfilePage() {
   const feat = featured.length ? featured[featShown] : null;
   const featOwned = !!(feat && (feat.mine || feat.imported || importedScriptIds[feat.id]));
 
+  // 角色卡视图的「人气之选」:hot 序里优先取有立绘的第一张
+  const cardsList = Array.isArray(homeCards) ? homeCards : [];
+  const cardsFeat = cardsList.length
+    ? [...cardsList].sort((a, b) => (b.avatar_path ? 1 : 0) - (a.avatar_path ? 1 : 0))[0]
+    : null;
+  const cardsFeatOwned = !!(cardsFeat && (cardsFeat.mine || cardsFeat.imported || importedCardIds[cardsFeat.id]));
+  const cardsFeatDesc = cardsFeat
+    ? (cardsFeat.personality || cardsFeat.background || cardsFeat.appearance || cardsFeat.identity || '').slice(0, 90)
+    : '';
+
   return (
     <div className="pl-home">
+      {/* 左栏 rail:剧本 / 角色卡 双视图切换(面板式,图标+文字标签;悬停浮起,按压缩放,选中 accent) */}
+      <aside className="pl-home-rail" aria-label={t('platform.home.rail_label', '内容分区')}>
+        <button type="button" className={`pl-home-rail-btn${homeView === 'scripts' ? ' on' : ''}`}
+          aria-label={t('platform.home.rail_scripts', '剧本')}
+          aria-pressed={homeView === 'scripts'}
+          onClick={() => setHomeView('scripts')}>
+          <Icon name="book" size={22} />
+          <span className="pl-home-rail-label">{t('platform.home.rail_scripts', '剧本')}</span>
+        </button>
+        <button type="button" className={`pl-home-rail-btn${homeView === 'cards' ? ' on' : ''}`}
+          aria-label={t('platform.home.rail_cards', '角色卡')}
+          aria-pressed={homeView === 'cards'}
+          onClick={() => setHomeView('cards')}>
+          <Icon name="cards" size={22} />
+          <span className="pl-home-rail-label">{t('platform.home.rail_cards', '角色卡')}</span>
+        </button>
+      </aside>
+
+      <div className="pl-home-main">
       {/* 问候区 + 继续游玩入口 */}
       <div className="pl-home-hello">
         <div>
@@ -138,6 +169,9 @@ function ProfilePage() {
         )}
       </div>
 
+      {/* ── 剧本视图:精选 Hero + 热门剧本 ── */}
+      {homeView === 'scripts' ? (
+      <div className="pl-home-view" key="view-scripts">
       {/* 精选剧本 Hero(海报式大横幅,取自在线剧本库) */}
       {feat && (
         <div className="pl-home-hero">
@@ -266,8 +300,67 @@ function ProfilePage() {
           )}
         </section>
       )}
+      </div>
+      ) : (
 
-      {/* 人气角色卡(在线角色卡库 · hot 序前 8) */}
+      /* ── 角色卡视图:人气之选 Hero + 人气角色卡大网格 ── */
+      <div className="pl-home-view" key="view-cards">
+      {/* 人气之选 Hero(与剧本 Hero 同构,取 hot 序第一张有立绘的角色卡) */}
+      {cardsFeat && (
+        <div className="pl-home-hero">
+          <div
+            className={`pl-home-hero-bg${cardsFeat.avatar_path ? '' : ` ${homeFbClass(cardsFeat.id)}`}`}
+            style={cardsFeat.avatar_path ? { backgroundImage: `url("${cardsFeat.avatar_path}")` } : undefined}
+            aria-hidden="true"
+          />
+          <div className="pl-home-hero-body">
+            <div className="pl-home-hero-info">
+              <span className="pl-home-gchip">
+                <Icon name="cards" size={13} />
+                {cardsFeat.mine ? t('scripts.public.mine_badge', '我的')
+                  : (importedCardIds[cardsFeat.id] || cardsFeat.imported ? t('scripts.public.imported_badge', '已导入')
+                    : t('platform.home.featured_card_chip', '人气之选 · 在线角色卡库'))}
+              </span>
+              <h2 className="pl-home-hero-title">{cardsFeat.name || t('cards.detail.unnamed', '未命名')}</h2>
+              {cardsFeatDesc && <p className="pl-home-hero-desc">{cardsFeatDesc}</p>}
+              <div className="pl-home-hero-chips">
+                <span className="pl-home-gchip">♥ {t('scripts.public.stat_clones', { n: cardsFeat.clone_count || 0 })}</span>
+                {(cardsFeat.tags || []).slice(0, 3).map((tg) => (
+                  <span className="pl-home-gchip" key={tg}>{tg}</span>
+                ))}
+                <span className="pl-home-gchip">by {cardsFeat.owner_name || t('cards.page.online.anon', '匿名')}</span>
+              </div>
+              <div className="pl-home-hero-btns">
+                {cardsFeatOwned ? (
+                  <button className="btn" disabled>
+                    <Icon name="check" size={13} />
+                    {cardsFeat.mine ? t('scripts.public.mine_badge', '我的') : t('scripts.public.imported_badge', '已导入')}
+                  </button>
+                ) : (
+                  <button className="btn primary" disabled={!!importingCardIds[cardsFeat.id]} onClick={() => onCloneCard(cardsFeat)}>
+                    <Icon name="download" size={13} /> {t('cards.page.online.btn_import', '导入')}
+                  </button>
+                )}
+                <button className="btn pl-home-btn-dark" onClick={() => plNavigate('cards-online')}>
+                  {t('platform.home.view_detail', '查看详情')}
+                </button>
+              </div>
+            </div>
+            <div className="pl-home-hero-side">
+              <div className={`pl-home-poster ${homeFbClass(cardsFeat.id)}`}>
+                <AvatarImg
+                  src={cardsFeat.avatar_path || null}
+                  name={cardsFeat.name || '?'}
+                  size={150}
+                  aspectRatio="3/4"
+                  zoomable
+                  className={`pl-home-cover-img-face ${homeFbClass(cardsFeat.id)}`}
+                />
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
       {homeCards !== false && (
         <section className="pl-home-sec">
           <div className="pl-home-sec-head">
@@ -285,7 +378,7 @@ function ProfilePage() {
             </div>
           ) : (
             <div className="pl-home-grid">
-              {homeCards.slice(0, 8).map((c) => {
+              {homeCards.slice(0, 12).map((c) => {
                 // mine 来自后端(user_id 比对),imported 由后端按克隆来源判定 ——
                 // 与剧本卡一致:刷新后仍显示「我的/已导入」,不会重复出现导入按钮。
                 const ownCard = !!c.mine || (user?.id != null && c.user_id != null && Number(c.user_id) === Number(user.id));
@@ -333,6 +426,14 @@ function ProfilePage() {
           )}
         </section>
       )}
+      <div className="pl-home-cards-more">
+        <button className="btn" onClick={() => plNavigate('cards-online')}>
+          <Icon name="cards" size={13} /> {t('platform.home.go_cards', '进入角色卡库')} <Icon name="chevron_right" size={13} />
+        </button>
+      </div>
+      </div>
+      )}
+      </div>
     </div>
   );
 }
