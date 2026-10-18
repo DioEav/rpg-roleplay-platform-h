@@ -1358,6 +1358,8 @@
       "last_played": "上次玩到",
       "continue_play": "继续游玩",
       "featured_chip": "精选 · 在线剧本库",
+      "prev_featured": "上一个",
+      "next_featured": "下一个",
       "featured_card_chip": "人气之选 · 在线角色卡库",
       "hot_scripts": "热门剧本",
       "hot_cards": "人气角色卡",

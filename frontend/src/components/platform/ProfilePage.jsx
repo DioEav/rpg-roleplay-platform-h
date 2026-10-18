@@ -3,7 +3,7 @@
 // 原「最近游玩」表格与新用户引导(提示文案/酒馆输入框)均已移出主页。
 // 豁免说明:移动端 MobileHome.jsx 是刻意平行实现(CLAUDE.md 同面横扫规则),本次改版只覆盖桌面主页。
 import React from 'react';
-import { useState as useStatePL, useEffect as useEffectPL } from 'react';
+import { useState as useStatePL, useEffect as useEffectPL, useRef as useRefPL } from 'react';
 import { useTranslation } from 'react-i18next';
 import { plNavigate } from '../../router.js';
 import { Icon } from '../../game-icons.jsx';
@@ -17,6 +17,29 @@ function homeFbClass(id) {
   let h = 0;
   for (let i = 0; i < s.length; i++) h = (h + s.charCodeAt(i)) % HOME_FB_COUNT;
   return `pl-home-fb-${h + 1}`;
+}
+
+/* 精选轮播:每日 12 点换一批 —— 以「日期+上午/下午」为种子做确定性伪随机抽取 5 个,
+   同半天内所有人、所有刷新看到的都是同一批;每 6s 自动轮到下一个,
+   悬停精选框暂停,系统「减少动态效果」时不自动轮播(圆点仍可手动切换)。 */
+const FEATURED_COUNT = 5;
+const FEATURED_ROTATE_MS = 6000;
+
+function featuredPeriodKey() {
+  const d = new Date();
+  return `${d.getFullYear()}-${d.getMonth() + 1}-${d.getDate()}-${d.getHours() < 12 ? 'am' : 'pm'}`;
+}
+
+function seededShuffle(items, seed) {
+  let h = 2166136261; // FNV-1a 散列字符串 → 种子
+  for (let i = 0; i < seed.length; i++) { h ^= seed.charCodeAt(i); h = Math.imul(h, 16777619); }
+  const rand = () => { h += 0x6D2B79F5; let t = h; t = Math.imul(t ^ (t >>> 15), t | 1); t ^= t + Math.imul(t ^ (t >>> 7), t | 61); return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
+  const arr = [...items];
+  for (let i = arr.length - 1; i > 0; i--) {
+    const j = Math.floor(rand() * (i + 1));
+    [arr[i], arr[j]] = [arr[j], arr[i]];
+  }
+  return arr;
 }
 
 /* ---------------------------- PROFILE -------------------------- */
@@ -44,13 +67,21 @@ function ProfilePage() {
   //    null=加载中(骨架屏);false=加载失败(整块隐藏,不阻塞主页);[]=公开库为空(引导卡)。 ──
   const [homeScripts, setHomeScripts] = useStatePL(null);
   const [homeCards, setHomeCards] = useStatePL(null);
-  const [featIdx, setFeatIdx] = useStatePL(0);
   const [cloningScriptId, setCloningScriptId] = useStatePL(null);
   const [importedScriptIds, setImportedScriptIds] = useStatePL({}); // 本会话内已导入的剧本
   const [importingCardIds, setImportingCardIds] = useStatePL({});
   const [importedCardIds, setImportedCardIds] = useStatePL({}); // 本会话内已导入的角色卡
   // 左栏双视图:scripts(默认)=精选 Hero + 热门剧本;cards=人气角色卡大网格
   const [homeView, setHomeView] = useStatePL('scripts');
+  // 精选轮播游标(剧本/角色卡各一个);悬停时暂停自动轮播
+  const [featIdx, setFeatIdx] = useStatePL(0);
+  const [cardsFeatIdx, setCardsFeatIdx] = useStatePL(0);
+  // 切换方向:next=新内容从右滑入(右箭头/自动轮播),prev=从左滑入(左箭头) —— 驱动方向性动效
+  const [featDir, setFeatDir] = useStatePL('next');
+  const [cardsFeatDir, setCardsFeatDir] = useStatePL('next');
+  const [, setFeaturedPeriod] = useStatePL(featuredPeriodKey()); // 跨 12 点时强制重渲染
+  const featPauseRef = useRefPL(false);
+  const featPeriodRef = useRefPL(featuredPeriodKey());
 
   useEffectPL(() => {
     let alive = true;
@@ -109,25 +140,183 @@ function ProfilePage() {
     }
   };
 
-  // 精选 Hero:hot 序里优先取有封面的前 3 本;无任何公开剧本时不渲染。
-  // featIdx 做钳制:公开库刷新后条目可能变少,避免下标越界/圆点失去选中态。
+  // 精选 Hero:以「今日半日」为种子从公开库确定性抽取 5 个(12 点刷新,一整天/半天内不变);
+  // featShown 做钳制:公开库刷新后条目可能变少,避免下标越界/圆点失去选中态。
+  const period = featuredPeriodKey();
   const pubScripts = Array.isArray(homeScripts) ? homeScripts : [];
-  const featured = pubScripts.length
-    ? [...pubScripts].sort((a, b) => (b.cover_image_url ? 1 : 0) - (a.cover_image_url ? 1 : 0)).slice(0, 3)
-    : [];
+  const featured = pubScripts.length ? seededShuffle(pubScripts, 'home-scripts:' + period).slice(0, FEATURED_COUNT) : [];
   const featShown = featured.length ? Math.min(featIdx, featured.length - 1) : 0;
   const feat = featured.length ? featured[featShown] : null;
   const featOwned = !!(feat && (feat.mine || feat.imported || importedScriptIds[feat.id]));
 
-  // 角色卡视图的「人气之选」:hot 序里优先取有立绘的第一张
+  // 角色卡视图的「人气之选」:同一批种子抽 5 张轮播
   const cardsList = Array.isArray(homeCards) ? homeCards : [];
-  const cardsFeat = cardsList.length
-    ? [...cardsList].sort((a, b) => (b.avatar_path ? 1 : 0) - (a.avatar_path ? 1 : 0))[0]
-    : null;
+  const featuredCards = cardsList.length ? seededShuffle(cardsList, 'home-cards:' + period).slice(0, FEATURED_COUNT) : [];
+  const cardsFeatShown = featuredCards.length ? Math.min(cardsFeatIdx, featuredCards.length - 1) : 0;
+  const cardsFeat = featuredCards.length ? featuredCards[cardsFeatShown] : null;
   const cardsFeatOwned = !!(cardsFeat && (cardsFeat.mine || cardsFeat.imported || importedCardIds[cardsFeat.id]));
-  const cardsFeatDesc = cardsFeat
-    ? (cardsFeat.personality || cardsFeat.background || cardsFeat.appearance || cardsFeat.identity || '').slice(0, 90)
-    : '';
+
+  // 圆点/箭头统一的切换入口:旧精选平移退场(leaving 层)、新精选从对应方向平移入场;
+  // 自动轮播固定视为 next。idxRef 镜像游标,供 interval/退场快照取「当前展示项」。
+  const featIdxRef = useRefPL(0);
+  const cardsFeatIdxRef = useRefPL(0);
+  const [featLeaving, setFeatLeaving] = useStatePL(null);  // {item, owned, dir} 动画结束即卸载
+  const [cardsLeaving, setCardsLeaving] = useStatePL(null);
+  const motionOK = () => !(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
+  const goFeat = (dir, i) => {
+    if (i === featIdxRef.current) return;
+    if (motionOK() && featured[featIdxRef.current]) {
+      setFeatLeaving({ item: featured[featIdxRef.current], owned: featOwned, dir });
+    }
+    setFeatDir(dir);
+    featIdxRef.current = i;
+    setFeatIdx(i);
+  };
+  const goCardsFeat = (dir, i) => {
+    if (i === cardsFeatIdxRef.current) return;
+    if (motionOK() && featuredCards[cardsFeatIdxRef.current]) {
+      setCardsLeaving({ item: featuredCards[cardsFeatIdxRef.current], owned: cardsFeatOwned, dir });
+    }
+    setCardsFeatDir(dir);
+    cardsFeatIdxRef.current = i;
+    setCardsFeatIdx(i);
+  };
+  const goNextFeat = () => goFeat('next', (featIdxRef.current + 1) % Math.max(featured.length, 1));
+  const goPrevFeat = () => goFeat('prev', (featIdxRef.current - 1 + featured.length) % Math.max(featured.length, 1));
+  const goNextCards = () => goCardsFeat('next', (cardsFeatIdxRef.current + 1) % Math.max(featuredCards.length, 1));
+  const goPrevCards = () => goCardsFeat('prev', (cardsFeatIdxRef.current - 1 + featuredCards.length) % Math.max(featuredCards.length, 1));
+  // 数据刷新后条目变少时 featShown 会被钳制,同步镜像游标,避免 interval 取到越界旧值
+  if (featIdxRef.current !== featShown) featIdxRef.current = featShown;
+  if (cardsFeatIdxRef.current !== cardsFeatShown) cardsFeatIdxRef.current = cardsFeatShown;
+
+  // 精选滑层渲染(剧本):模糊背景 + 信息体 + 立绘海报;leaving 层复用同一渲染(不可交互)
+  const renderScriptsSlide = (item, owned) => (
+    <>
+      <div
+        className={`pl-home-hero-bg${item.cover_image_url ? '' : ` ${homeFbClass(item.id)}`}`}
+        style={item.cover_image_url ? { backgroundImage: `url("${item.cover_image_url}")` } : undefined}
+        aria-hidden="true"
+      />
+      <div className="pl-home-hero-body">
+        <div className="pl-home-hero-info">
+          <span className="pl-home-gchip">
+            <Icon name="sparkle" size={13} />
+            {t('platform.home.featured_chip', '精选 · 在线剧本库')}
+          </span>
+          <h2 className="pl-home-hero-title">《{item.title}》</h2>
+          {item.description && <p className="pl-home-hero-desc">{item.description}</p>}
+          <div className="pl-home-hero-chips">
+            <span className="pl-home-gchip">{t('scripts.public.stat_chapters', { n: item.chapter_count || 0 })}</span>
+            <span className="pl-home-gchip">{t('scripts.public.stat_words', { n: ((item.word_count || 0) / 10000).toFixed(0) })}</span>
+            <span className="pl-home-gchip">{t('scripts.public.stat_clones', { n: item.clone_count || 0 })}</span>
+            <span className="pl-home-gchip">by {item.author || item.author_username || t('scripts.public.anon', '匿名')}</span>
+          </div>
+          <div className="pl-home-hero-btns">
+            {owned ? (
+              <button className="btn" disabled>
+                <Icon name="check" size={13} />
+                {item.mine ? t('scripts.public.is_mine', '我的剧本') : t('scripts.public.imported_badge', '已导入')}
+              </button>
+            ) : (
+              <button className="btn primary" disabled={!!cloningScriptId} onClick={() => onCloneScript(item)}>
+                <Icon name="download" size={13} /> {t('scripts.public.import_btn', '导入到我的剧本')}
+              </button>
+            )}
+            <button className="btn pl-home-btn-dark" onClick={() => plNavigate('scripts-library')}>
+              {t('platform.home.view_detail', '查看详情')}
+            </button>
+          </div>
+        </div>
+        <div className="pl-home-hero-side">
+          <div className={`pl-home-poster ${homeFbClass(item.id)}`}>
+            <AvatarImg
+              src={item.cover_image_url || null}
+              name={item.title}
+              size={150}
+              aspectRatio="3/4"
+              zoomable
+              className={homeFbClass(item.id)}
+            />
+          </div>
+        </div>
+      </div>
+    </>
+  );
+
+  // 精选滑层渲染(角色卡):结构同剧本滑层
+  const renderCardsSlide = (item, owned) => (
+    <>
+      <div
+        className={`pl-home-hero-bg${item.avatar_path ? '' : ` ${homeFbClass(item.id)}`}`}
+        style={item.avatar_path ? { backgroundImage: `url("${item.avatar_path}")` } : undefined}
+        aria-hidden="true"
+      />
+      <div className="pl-home-hero-body">
+        <div className="pl-home-hero-info">
+          <span className="pl-home-gchip">
+            <Icon name="cards" size={13} />
+            {t('platform.home.featured_card_chip', '人气之选 · 在线角色卡库')}
+          </span>
+          <h2 className="pl-home-hero-title">{item.name || t('cards.detail.unnamed', '未命名')}</h2>
+          {(item.personality || item.background || item.appearance || item.identity) &&
+            <p className="pl-home-hero-desc">{(item.personality || item.background || item.appearance || item.identity).slice(0, 90)}</p>}
+          <div className="pl-home-hero-chips">
+            <span className="pl-home-gchip">♥ {t('scripts.public.stat_clones', { n: item.clone_count || 0 })}</span>
+            {(item.tags || []).slice(0, 3).map((tg) => (
+              <span className="pl-home-gchip" key={tg}>{tg}</span>
+            ))}
+            <span className="pl-home-gchip">by {item.owner_name || t('cards.page.online.anon', '匿名')}</span>
+          </div>
+          <div className="pl-home-hero-btns">
+            {owned ? (
+              <button className="btn" disabled>
+                <Icon name="check" size={13} />
+                {item.mine ? t('scripts.public.mine_badge', '我的') : t('scripts.public.imported_badge', '已导入')}
+              </button>
+            ) : (
+              <button className="btn primary" disabled={!!importingCardIds[item.id]} onClick={() => onCloneCard(item)}>
+                <Icon name="download" size={13} /> {t('cards.page.online.btn_import', '导入')}
+              </button>
+            )}
+            <button className="btn pl-home-btn-dark" onClick={() => plNavigate('cards-online')}>
+              {t('platform.home.view_detail', '查看详情')}
+            </button>
+          </div>
+        </div>
+        <div className="pl-home-hero-side">
+          <div className={`pl-home-poster ${homeFbClass(item.id)}`}>
+            <AvatarImg
+              src={item.avatar_path || null}
+              name={item.name || '?'}
+              size={150}
+              aspectRatio="3/4"
+              zoomable
+              className={`pl-home-cover-img-face ${homeFbClass(item.id)}`}
+            />
+          </div>
+        </div>
+      </div>
+    </>
+  );
+
+  // 自动轮播:每 6s 平移换下一个(next 方向);悬停精选框暂停;跨 12 点重置并按新一批精选重算
+  useEffectPL(() => {
+    if (window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+    const timer = setInterval(() => {
+      const pk = featuredPeriodKey();
+      if (pk !== featPeriodRef.current) {
+        featPeriodRef.current = pk;
+        goFeat('next', 0);
+        goCardsFeat('next', 0);
+        setFeaturedPeriod(pk);
+        return;
+      }
+      if (featPauseRef.current) return;
+      goNextFeat();
+      goNextCards();
+    }, FEATURED_ROTATE_MS);
+    return () => clearInterval(timer);
+  }, [featured.length, featuredCards.length]);
 
   return (
     <div className="pl-home">
@@ -172,66 +361,39 @@ function ProfilePage() {
       {/* ── 剧本视图:精选 Hero + 热门剧本 ── */}
       {homeView === 'scripts' ? (
       <div className="pl-home-view" key="view-scripts">
-      {/* 精选剧本 Hero(海报式大横幅,取自在线剧本库) */}
+      {/* 精选剧本 Hero(海报式大横幅,取自在线剧本库;箭头/圆点/自动轮播均为左右平移切换) */}
       {feat && (
-        <div className="pl-home-hero">
-          <div
-            className={`pl-home-hero-bg${feat.cover_image_url ? '' : ` ${homeFbClass(feat.id)}`}`}
-            style={feat.cover_image_url ? { backgroundImage: `url("${feat.cover_image_url}")` } : undefined}
-            aria-hidden="true"
-          />
-          <div className="pl-home-hero-body">
-            <div className="pl-home-hero-info">
-              <span className="pl-home-gchip">
-                <Icon name="sparkle" size={13} />
-                {t('platform.home.featured_chip', '精选 · 在线剧本库')}
-              </span>
-              <h2 className="pl-home-hero-title">《{feat.title}》</h2>
-              {feat.description && <p className="pl-home-hero-desc">{feat.description}</p>}
-              <div className="pl-home-hero-chips">
-                <span className="pl-home-gchip">{t('scripts.public.stat_chapters', { n: feat.chapter_count || 0 })}</span>
-                <span className="pl-home-gchip">{t('scripts.public.stat_words', { n: ((feat.word_count || 0) / 10000).toFixed(0) })}</span>
-                <span className="pl-home-gchip">{t('scripts.public.stat_clones', { n: feat.clone_count || 0 })}</span>
-                <span className="pl-home-gchip">by {feat.author || feat.author_username || t('scripts.public.anon', '匿名')}</span>
-              </div>
-              <div className="pl-home-hero-btns">
-                {featOwned ? (
-                  <button className="btn" disabled>
-                    <Icon name="check" size={13} />
-                    {feat.mine ? t('scripts.public.is_mine', '我的剧本') : t('scripts.public.imported_badge', '已导入')}
-                  </button>
-                ) : (
-                  <button className="btn primary" disabled={!!cloningScriptId} onClick={() => onCloneScript(feat)}>
-                    <Icon name="download" size={13} /> {t('scripts.public.import_btn', '导入到我的剧本')}
-                  </button>
-                )}
-                <button className="btn pl-home-btn-dark" onClick={() => plNavigate('scripts-library')}>
-                  {t('platform.home.view_detail', '查看详情')}
-                </button>
-              </div>
+        <div className="pl-home-hero"
+          onMouseEnter={() => { featPauseRef.current = true; }}
+          onMouseLeave={() => { featPauseRef.current = false; }}>
+          <button type="button" className="pl-home-hero-arrow pl-home-hero-arrow-l"
+            aria-label={t('platform.home.prev_featured', '上一个')} onClick={goPrevFeat}>
+            <Icon name="chevron_left" size={18} />
+          </button>
+          <button type="button" className="pl-home-hero-arrow pl-home-hero-arrow-r"
+            aria-label={t('platform.home.next_featured', '下一个')} onClick={goNextFeat}>
+            <Icon name="chevron_right" size={18} />
+          </button>
+          {/* 平移退场的旧内容层(动画结束即卸载) */}
+          {featLeaving && (
+            <div className={`pl-home-hero-slide leaving dir-${featLeaving.dir}`} aria-hidden="true"
+              onAnimationEnd={() => setFeatLeaving(null)}>
+              {renderScriptsSlide(featLeaving.item, featLeaving.owned)}
             </div>
-            <div className="pl-home-hero-side">
-              <div className={`pl-home-poster ${homeFbClass(feat.id)}`}>
-                <AvatarImg
-                  src={feat.cover_image_url || null}
-                  name={feat.title}
-                  size={150}
-                  aspectRatio="3/4"
-                  zoomable
-                  className={homeFbClass(feat.id)}
-                />
-              </div>
-              {featured.length > 1 && (
-                <div className="pl-home-dots">
-                  {featured.map((f, i) => (
-                    <button key={f.id} type="button" className={i === featShown ? 'on' : ''}
-                      aria-label={f.title} aria-pressed={i === featShown}
-                      onClick={() => setFeatIdx(i)} />
-                  ))}
-                </div>
-              )}
-            </div>
+          )}
+          {/* 当前内容层(featDir 决定从左/右平移入场) */}
+          <div className={`pl-home-hero-slide dir-${featDir}`} key={`feat-${featShown}`}>
+            {renderScriptsSlide(feat, featOwned)}
           </div>
+          {featured.length > 1 && (
+            <div className="pl-home-dots">
+              {featured.map((f, i) => (
+                <button key={f.id} type="button" className={i === featShown ? 'on' : ''}
+                  aria-label={f.title} aria-pressed={i === featShown}
+                  onClick={() => goFeat(i > featShown ? 'next' : 'prev', i)} />
+              ))}
+            </div>
+          )}
         </div>
       )}
 
@@ -303,58 +465,39 @@ function ProfilePage() {
 
       /* ── 角色卡视图:人气之选 Hero + 人气角色卡大网格 ── */
       <div className="pl-home-view" key="view-cards">
-      {/* 人气之选 Hero(与剧本 Hero 同构,取 hot 序第一张有立绘的角色卡) */}
+      {/* 人气之选 Hero(与剧本 Hero 同构,每日随机 5 张轮播;箭头/圆点/自动轮播均为左右平移切换) */}
       {cardsFeat && (
-        <div className="pl-home-hero">
-          <div
-            className={`pl-home-hero-bg${cardsFeat.avatar_path ? '' : ` ${homeFbClass(cardsFeat.id)}`}`}
-            style={cardsFeat.avatar_path ? { backgroundImage: `url("${cardsFeat.avatar_path}")` } : undefined}
-            aria-hidden="true"
-          />
-          <div className="pl-home-hero-body">
-            <div className="pl-home-hero-info">
-              <span className="pl-home-gchip">
-                <Icon name="cards" size={13} />
-                {t('platform.home.featured_card_chip', '人气之选 · 在线角色卡库')}
-              </span>
-              <h2 className="pl-home-hero-title">{cardsFeat.name || t('cards.detail.unnamed', '未命名')}</h2>
-              {cardsFeatDesc && <p className="pl-home-hero-desc">{cardsFeatDesc}</p>}
-              <div className="pl-home-hero-chips">
-                <span className="pl-home-gchip">♥ {t('scripts.public.stat_clones', { n: cardsFeat.clone_count || 0 })}</span>
-                {(cardsFeat.tags || []).slice(0, 3).map((tg) => (
-                  <span className="pl-home-gchip" key={tg}>{tg}</span>
-                ))}
-                <span className="pl-home-gchip">by {cardsFeat.owner_name || t('cards.page.online.anon', '匿名')}</span>
-              </div>
-              <div className="pl-home-hero-btns">
-                {cardsFeatOwned ? (
-                  <button className="btn" disabled>
-                    <Icon name="check" size={13} />
-                    {cardsFeat.mine ? t('scripts.public.mine_badge', '我的') : t('scripts.public.imported_badge', '已导入')}
-                  </button>
-                ) : (
-                  <button className="btn primary" disabled={!!importingCardIds[cardsFeat.id]} onClick={() => onCloneCard(cardsFeat)}>
-                    <Icon name="download" size={13} /> {t('cards.page.online.btn_import', '导入')}
-                  </button>
-                )}
-                <button className="btn pl-home-btn-dark" onClick={() => plNavigate('cards-online')}>
-                  {t('platform.home.view_detail', '查看详情')}
-                </button>
-              </div>
+        <div className="pl-home-hero"
+          onMouseEnter={() => { featPauseRef.current = true; }}
+          onMouseLeave={() => { featPauseRef.current = false; }}>
+          <button type="button" className="pl-home-hero-arrow pl-home-hero-arrow-l"
+            aria-label={t('platform.home.prev_featured', '上一个')} onClick={goPrevCards}>
+            <Icon name="chevron_left" size={18} />
+          </button>
+          <button type="button" className="pl-home-hero-arrow pl-home-hero-arrow-r"
+            aria-label={t('platform.home.next_featured', '下一个')} onClick={goNextCards}>
+            <Icon name="chevron_right" size={18} />
+          </button>
+          {/* 平移退场的旧内容层(动画结束即卸载) */}
+          {cardsLeaving && (
+            <div className={`pl-home-hero-slide leaving dir-${cardsLeaving.dir}`} aria-hidden="true"
+              onAnimationEnd={() => setCardsLeaving(null)}>
+              {renderCardsSlide(cardsLeaving.item, cardsLeaving.owned)}
             </div>
-            <div className="pl-home-hero-side">
-              <div className={`pl-home-poster ${homeFbClass(cardsFeat.id)}`}>
-                <AvatarImg
-                  src={cardsFeat.avatar_path || null}
-                  name={cardsFeat.name || '?'}
-                  size={150}
-                  aspectRatio="3/4"
-                  zoomable
-                  className={`pl-home-cover-img-face ${homeFbClass(cardsFeat.id)}`}
-                />
-              </div>
-            </div>
+          )}
+          {/* 当前内容层(cardsFeatDir 决定从左/右平移入场) */}
+          <div className={`pl-home-hero-slide dir-${cardsFeatDir}`} key={`cards-feat-${cardsFeatShown}`}>
+            {renderCardsSlide(cardsFeat, cardsFeatOwned)}
           </div>
+          {featuredCards.length > 1 && (
+            <div className="pl-home-dots">
+              {featuredCards.map((f, i) => (
+                <button key={f.id} type="button" className={i === cardsFeatShown ? 'on' : ''}
+                  aria-label={f.name || t('cards.detail.unnamed', '未命名')} aria-pressed={i === cardsFeatShown}
+                  onClick={() => goCardsFeat(i > cardsFeatShown ? 'next' : 'prev', i)} />
+              ))}
+            </div>
+          )}
         </div>
       )}
       {homeCards !== false && (

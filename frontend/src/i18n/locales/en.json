@@ -1254,6 +1254,8 @@
       "last_played": "Last played",
       "continue_play": "Continue",
       "featured_chip": "Featured · Script library",
+      "prev_featured": "Previous",
+      "next_featured": "Next",
       "featured_card_chip": "Top pick · Character library",
       "hot_scripts": "Popular Scripts",
       "hot_cards": "Popular Characters",

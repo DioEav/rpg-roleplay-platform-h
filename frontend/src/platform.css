@@ -2192,6 +2192,26 @@ button, a, [role="button"], .btn, .iconbtn, summary, label {
 /* 视图切换入场:淡入 + 轻微上移(reduced-motion 时关闭) */
 .pl-home-view { display: grid; gap: 20px; animation: pl-home-view-in .3s ease; }
 @keyframes pl-home-view-in { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: none; } }
+/* 精选轮播切换动效:真正的左右平移 —— 旧内容层向反方向滑出、新内容层滑入覆盖
+   (goFeat 记录方向:next=右箭头/自动轮播,prev=左箭头;leaving 层动画结束即卸载) */
+.pl-home-hero-slide { position: absolute; inset: 0; z-index: 1; display: flex; }
+.pl-home-hero-slide.leaving { pointer-events: none; }
+.pl-home-hero-slide.dir-next { animation: pl-home-slide-in-next .45s ease both; }
+.pl-home-hero-slide.dir-prev { animation: pl-home-slide-in-prev .45s ease both; }
+.pl-home-hero-slide.leaving.dir-next { animation: pl-home-slide-out-next .45s ease both; }
+.pl-home-hero-slide.leaving.dir-prev { animation: pl-home-slide-out-prev .45s ease both; }
+@keyframes pl-home-slide-in-next { from { transform: translateX(100%); } to { transform: none; } }
+@keyframes pl-home-slide-out-next { from { transform: none; } to { transform: translateX(-100%); } }
+@keyframes pl-home-slide-in-prev { from { transform: translateX(-100%); } to { transform: none; } }
+@keyframes pl-home-slide-out-prev { from { transform: none; } to { transform: translateX(100%); } }
+/* 左右箭头:常显的小圆框分布在两侧,悬停放大+变橙,按下缩小 */
+.pl-home-hero-arrow { position: absolute; z-index: 2; top: 50%; transform: translateY(-50%); width: 36px; height: 36px; border-radius: 999px; border: 1px solid rgba(255,255,255,.28); background: rgba(17,20,16,.45); color: #f3ecdf; display: grid; place-items: center; cursor: pointer; backdrop-filter: blur(8px); transition: transform .16s ease, background .16s ease, border-color .16s ease, color .16s ease; }
+.pl-home-hero-arrow:hover { background: var(--accent); border-color: var(--accent); color: #fff; transform: translateY(-50%) scale(1.12); }
+.pl-home-hero-arrow:active { transform: translateY(-50%) scale(.9); }
+.pl-home-hero-arrow-l { left: 12px; }
+.pl-home-hero-arrow-r { right: 12px; }
+/* 圆点固定悬浮在滑层之上(不随内容平移) */
+.pl-home-hero > .pl-home-dots { position: absolute; left: 50%; bottom: 12px; transform: translateX(-50%); z-index: 2; }
 
 /* ── 问候区 ── */
 .pl-home-hello { display: flex; align-items: flex-end; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
@@ -2283,6 +2303,9 @@ div[class*="pl-home-fb-"] { display: grid; place-items: center; font-family: var
 }
 @media (prefers-reduced-motion: reduce) {
   .pl-home-view { animation: none; }
+  .pl-home-hero-slide { animation: none; }
+  .pl-home-hero-slide.leaving { display: none; }
+  .pl-home-hero-arrow { transition: none; }
   .pl-home-rail-btn { transition: none; }
   .pl-home-card, .pl-home-char { transition: none; }
 }
