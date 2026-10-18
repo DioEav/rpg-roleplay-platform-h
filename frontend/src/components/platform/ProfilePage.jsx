@@ -184,9 +184,7 @@ function ProfilePage() {
             <div className="pl-home-hero-info">
               <span className="pl-home-gchip">
                 <Icon name="sparkle" size={13} />
-                {feat.mine ? t('scripts.public.mine_badge', '我的')
-                  : (importedScriptIds[feat.id] ? t('scripts.public.imported_badge', '已导入')
-                    : t('platform.home.featured_chip', '精选 · 在线剧本库'))}
+                {t('platform.home.featured_chip', '精选 · 在线剧本库')}
               </span>
               <h2 className="pl-home-hero-title">《{feat.title}》</h2>
               {feat.description && <p className="pl-home-hero-desc">{feat.description}</p>}
@@ -317,9 +315,7 @@ function ProfilePage() {
             <div className="pl-home-hero-info">
               <span className="pl-home-gchip">
                 <Icon name="cards" size={13} />
-                {cardsFeat.mine ? t('scripts.public.mine_badge', '我的')
-                  : (importedCardIds[cardsFeat.id] || cardsFeat.imported ? t('scripts.public.imported_badge', '已导入')
-                    : t('platform.home.featured_card_chip', '人气之选 · 在线角色卡库'))}
+                {t('platform.home.featured_card_chip', '人气之选 · 在线角色卡库')}
               </span>
               <h2 className="pl-home-hero-title">{cardsFeat.name || t('cards.detail.unnamed', '未命名')}</h2>
               {cardsFeatDesc && <p className="pl-home-hero-desc">{cardsFeatDesc}</p>}
