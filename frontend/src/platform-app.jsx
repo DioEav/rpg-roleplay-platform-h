@@ -185,9 +185,9 @@ const getCSModules = (t) => [
     sub: [
       { text: t('platform.nav.md_editor', { defaultValue: '剧本编辑器' }), href: '#md-editor' },
     ] },
-  // 2026-10:「游玩」面板子项改名 开始游戏→剧本游玩、酒馆→酒馆游玩。
+  // 2026-10:「游玩」面板子项改名 开始游戏→剧本游玩、酒馆→酒馆游玩;月底 剧本游玩 改回 开始游戏。
   // 模块 label 同时用作左栏标题(保持一致);UnifiedSearch / 旧 PL_NAV 的「开始游戏」文案不受影响。
-  { id: 'play', label: t('platform.nav.play_script', { defaultValue: '剧本游玩' }), group: t('platform.nav.group_play'),
+  { id: 'play', label: t('platform.nav.play_script', { defaultValue: '开始游戏' }), group: t('platform.nav.group_play'),
     // NPC 角色卡已移入「剧本」详情面板(NPC 卡属于具体剧本),不再在开始游戏出现。
     // 「冒险模组」(modules)与「游戏设置」(play-settings)两个子页已隐藏:
     // 从左栏导航与合法 page 集合中移除,直链会回落主页(见 entries/platform.jsx PL_IDS)。
