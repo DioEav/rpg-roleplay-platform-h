@@ -4,6 +4,7 @@ import React from 'react';
 import { useState as useStatePL, useEffect as useEffectPL } from 'react';
 import { useTranslation } from 'react-i18next';
 import AvatarImg from '../AvatarImg.jsx';
+import { parseImportedDesc } from '../../lib/script-desc.js';
 import CSHeader from '@cloudscape-design/components/header';
 import CSSpaceBetween from '@cloudscape-design/components/space-between';
 import CSButton from '@cloudscape-design/components/button';
@@ -118,8 +119,14 @@ function ScriptsLibraryView() {
                 <CSBadge key="cl" color="grey">{t('scripts.public.stat_clones', { n: s.clone_count || 0 })}</CSBadge>
               </CSSpaceBetween>
             ) },
-            { id: 'desc', content: (s) => s.description
-              ? <CSBox color="text-body-secondary">{s.description}</CSBox> : null },
+            { id: 'desc', content: (s) => {
+              // 自动生成的导入描述按界面语言本地化(与首页 Hero 同一解析),用户自写描述原样显示
+              const imp = parseImportedDesc(s.description);
+              return s.description
+                ? <CSBox color="text-body-secondary">
+                    {imp ? t('scripts.public.imported_desc', { n: imp.n, defaultValue: `导入剧本 · ${imp.n}章` }) : s.description}
+                  </CSBox> : null;
+            } },
             { id: 'actions', content: (s) => (
               (s.mine || s.imported || importedIds[s.id])
                 ? <CSButton disabled iconName="check">{s.mine ? t('scripts.public.is_mine') : t('scripts.public.imported_badge')}</CSButton>

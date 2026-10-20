@@ -105,7 +105,9 @@ def import_script(
         "storage_path": str(target_path.relative_to(BASE)),
     }
     total_words = sum(len(chapter.get("content") or "") for chapter in chapters)
-    description = f"导入剧本 · {len(chapters)}章 · {report.get('mode_label', report.get('mode'))} · 置信 {report.get('confidence')}"
+    # 描述只留「导入剧本 · N章」:切分模式与置信度仍在 import_report JSONB(详情页读它),
+    # 不再拼进展示串;前端按 lib/script-desc.js 的模式解析、按界面语言本地化(scripts.public.imported_desc)。
+    description = f"导入剧本 · {len(chapters)}章"
 
     with connect() as db:
         script = db.execute(

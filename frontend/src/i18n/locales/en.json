@@ -1871,6 +1871,7 @@
       "stat_chapters": "{{n}} ch.",
       "stat_words": "{{n}}×10k words",
       "stat_clones": "{{n}} imports",
+      "imported_desc": "Imported script · {{n}} chapters",
       "import_btn": "Import to My Scripts"
     },
     "import": {

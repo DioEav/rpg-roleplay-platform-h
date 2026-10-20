@@ -177,7 +177,8 @@ const getCSModules = (t) => [
     pages: ['scripts', 'scripts-import', 'scripts-library'],
     sub: [
       { text: t('platform.nav.cs_my_scripts'),      href: '#scripts' },
-      { text: t('platform.nav.cs_scripts_library'), href: '#scripts-library' },
+      // 「在线剧本库」已移至顶栏直达按钮(2026-10,与「在线角色卡库」并列,见顶栏 nav 后)。
+      // 恢复左栏条目 = 加回本行:{ text: t('platform.nav.cs_scripts_library'), href: '#scripts-library' }。
     ] },
   // VSCode 风 MD 编辑器:剧本知识资产(章节/角色卡/世界书/时间线/canon)三栏内联编辑 + agent 直写。
   { id: 'md-editor', label: t('platform.nav.md_editor', { defaultValue: '剧本编辑器' }), group: t('platform.nav.group_create'),
@@ -198,7 +199,8 @@ const getCSModules = (t) => [
       { text: t('platform.nav.cs_saves'),          href: '#saves' },
       { text: t('platform.nav.cs_branches'),        href: '#saves-branches' },
       { text: t('platform.nav.cs_user_cards'),      href: '#cards' },
-      { text: t('platform.nav.cards_online', { defaultValue: '在线角色卡库' }), href: '#cards-online' },
+      // 「在线角色卡库」已移至顶栏直达按钮(2026-10,与「在线剧本库」并列,见顶栏 nav 后)。
+      // 恢复左栏条目 = 加回本行:{ text: t('platform.nav.cards_online', { defaultValue: '在线角色卡库' }), href: '#cards-online' }。
       // { text: t('platform.nav.modules'),            href: '#modules' },
       // { text: t('platform.nav.cs_play_settings'),   href: '#play-settings' },
     ] },
@@ -726,6 +728,29 @@ function PlatformShellCS({ page, setPage, children, assistant, assistantOpen, on
               );
             })}
           </nav>
+          {/* 两库直达按钮(2026-10):「在线剧本库 / 在线角色卡库」自左栏子导航移出,升为顶栏
+              一级入口。与分组导航之间用竖分割线隔开;按钮用实心 accent 填充(区别于分组按钮的
+              幽灵描边风格)以突出重要性;当前页命中时填充切到更深的 --accent-active。 */}
+          <span aria-hidden="true" style={{ width: 1, height: 18, background: 'var(--line-strong)', flexShrink: 0 }} />
+          {[
+            { id: 'scripts-library', text: t('platform.nav.cs_scripts_library') },
+            { id: 'cards-online',    text: t('platform.nav.cards_online', { defaultValue: '在线角色卡库' }) },
+          ].map((it) => {
+            const active = page === it.id;
+            const libBg = active ? 'var(--accent-active)' : 'var(--accent)';
+            return (
+              <button
+                key={it.id}
+                onClick={() => setPage(it.id)}
+                aria-current={active ? 'page' : undefined}
+                style={{ display: 'inline-flex', alignItems: 'center', height: 30, padding: '0 13px', border: '1px solid transparent', borderRadius: 8, background: libBg, cursor: 'pointer', fontFamily: 'inherit', fontSize: 13.5, fontWeight: 600, letterSpacing: 0.2, color: '#fff', whiteSpace: 'nowrap', flexShrink: 0, transition: 'background 0.15s' }}
+                onMouseEnter={(e) => { if (!active) e.currentTarget.style.background = 'var(--accent-hover)'; }}
+                onMouseLeave={(e) => { e.currentTarget.style.background = libBg; }}
+              >
+                {it.text}
+              </button>
+            );
+          })}
         </div>
         {/* 中右:全局工具 + 账号(搜索统一走命令面板,不再放内联搜索框,避免重复) */}
         <div style={{ flex: 1, minWidth: 0, display: 'flex', alignItems: 'center' }}>

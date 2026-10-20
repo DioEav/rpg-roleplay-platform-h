@@ -8,7 +8,15 @@ import { useTranslation } from 'react-i18next';
 import { plNavigate } from '../../router.js';
 import { Icon } from '../../game-icons.jsx';
 import AvatarImg from '../AvatarImg.jsx';
+import { parseImportedDesc } from '../../lib/script-desc.js';
 import { usePlatformData, useReactiveUser } from './shared.jsx';
+
+/* 自动生成的导入描述(「导入剧本 · N章(· 切分模式 · 置信 X)」)按界面语言本地化展示;
+   用户自写的 description 原样透传。 */
+function homeImportDesc(desc, t) {
+  const imp = parseImportedDesc(desc);
+  return imp ? t('scripts.public.imported_desc', { n: imp.n, defaultValue: `导入剧本 · ${imp.n}章` }) : desc;
+}
 
 /* 封面/头像缺图时的渐变补位色板:按 id 稳定取模选色,同一内容每次渲染同色。 */
 const HOME_FB_COUNT = 5;
@@ -204,7 +212,7 @@ function ProfilePage() {
             {t('platform.home.featured_chip', '精选 · 在线剧本库')}
           </span>
           <h2 className="pl-home-hero-title">《{item.title}》</h2>
-          {item.description && <p className="pl-home-hero-desc">{item.description}</p>}
+          {item.description && <p className="pl-home-hero-desc">{homeImportDesc(item.description, t)}</p>}
           <div className="pl-home-hero-chips">
             <span className="pl-home-gchip">{t('scripts.public.stat_chapters', { n: item.chapter_count || 0 })}</span>
             <span className="pl-home-gchip">{t('scripts.public.stat_words', { n: ((item.word_count || 0) / 10000).toFixed(0) })}</span>

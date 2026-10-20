@@ -1975,6 +1975,7 @@
       "stat_chapters": "{{n}} 章",
       "stat_words": "{{n}} 万字",
       "stat_clones": "{{n}} 次导入",
+      "imported_desc": "导入剧本 · {{n}}章",
       "import_btn": "导入到我的剧本"
     },
     "import": {
