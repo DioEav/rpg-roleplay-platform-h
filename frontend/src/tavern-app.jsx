@@ -374,7 +374,8 @@ export function TavernChatArea({ history, running, saveId, charName, charInitial
                 {(thinkingText || thinkingSpinner) && (
                   <TavernThinkingBlock text={thinkingText} thinking={thinkingSpinner} />
                 )}
-                {/* 正文走 NarrativeBlock;工具卡片由 renderTool 按 anchor 内联到正文对应位置。 */}
+                {/* 正文走 NarrativeBlock;工具卡片由 renderTool 按 anchor 内联到正文对应位置。
+                    forkKind="tavern":分支按钮 = 克隆新对话(rpg-tavern-fork 事件,见 TavernApp 监听)。 */}
                 <NarrativeBlock
                   text={m.content} ts={m.ts}
                   msgIndex={i} saveId={saveId} commitId={commitId}
@@ -384,6 +385,7 @@ export function TavernChatArea({ history, running, saveId, charName, charInitial
                   meta={i === total - 1 ? lastMeta : null}
                   toolOps={toolOps}
                   renderTool={(ops) => <ToolCallBlock ops={ops} />}
+                  forkKind="tavern"
                 />
               </React.Fragment>
             );
@@ -393,6 +395,7 @@ export function TavernChatArea({ history, running, saveId, charName, charInitial
               key={`u-${i}`} text={m.content} ts={m.ts} attachments={m.attachments}
               msgIndex={i} saveId={saveId} commitId={commitId}
               tag={personaName} speakerAvatar={personaAvatar || undefined}
+              forkKind="tavern"
             />
           );
         })}
@@ -517,6 +520,30 @@ export default function TavernApp() {
   }, [applyState, t]);
 
   useEffect(() => { reloadList(); }, [reloadList]);
+
+  // ── 酒馆消息分支按钮(MsgActions forkKind="tavern")派发的克隆分叉 ──
+  // fork = 在所选消息处克隆出新对话(后端 fork 端点已切好 runtime),原对话原样保留在列表。
+  // 与游戏台 continueFrom(同档指针倒回)语义不同,见 routes/tavern.py api_tavern_fork。
+  useEffect(() => {
+    const onFork = async (e) => {
+      const { save_id, message_index } = e.detail || {};
+      if (save_id == null || message_index == null) return;
+      try {
+        const src = (Array.isArray(chats) ? chats.find((c) => c.id === save_id) : null) || activeChat;
+        const title = src && src.title ? t('tavern_app.fork.default_title', { title: src.title }) : undefined;
+        const r = await window.api.tavern.fork(save_id, { message_index, title });
+        if (r && r.ok === false) throw new Error(r.error || r.detail || 'fork failed');
+        window.__apiToast?.(t('tavern_app.fork.toast_ok'), { kind: 'ok', duration: 2400 });
+        await reloadList();
+        const chat = r?.save || { id: r?.new_save_id };
+        if (chat && chat.id) await openChat(chat);
+      } catch (err) {
+        window.__apiToast?.(t('tavern_app.fork.toast_fail'), { kind: 'danger', detail: err?.message });
+      }
+    };
+    window.addEventListener('rpg-tavern-fork', onFork);
+    return () => window.removeEventListener('rpg-tavern-fork', onFork);
+  }, [chats, activeChat, t, reloadList, openChat]);
 
   // 首次进入:自动打开最近的活跃对话(如果有)
   useEffect(() => {

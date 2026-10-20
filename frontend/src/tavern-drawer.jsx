@@ -112,7 +112,13 @@ function CardPickerSheet({ role, onPick, onClose }) {
   const [loading, setLoading] = useState(true);
   useEffect(() => {
     let alive = true;
-    Promise.resolve(window.api.cards.myList())
+    // 按角色位分源:character 选 PC 卡(cards.myList,card_type='pc');
+    // persona 选身份卡(account.personas,card_type='persona')——原来两个位置都拉
+    // myList,身份卡永远不出现在「选择我的角色」里(选卡器只能选到 PC 卡)。
+    const load = role === 'persona'
+      ? window.api.account.personas.list()
+      : window.api.cards.myList();
+    Promise.resolve(load)
       .then((r) => {
         if (!alive) return;
         const list = Array.isArray(r) ? r : (r && (r.items || r.cards)) || [];
@@ -121,7 +127,7 @@ function CardPickerSheet({ role, onPick, onClose }) {
       .catch(() => {})
       .finally(() => { if (alive) setLoading(false); });
     return () => { alive = false; };
-  }, []);
+  }, [role]);
   const title = role === 'character'
     ? t('tavern_app.drawer.choose_character')
     : t('tavern_app.drawer.choose_persona');

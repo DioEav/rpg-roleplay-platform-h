@@ -418,3 +418,140 @@ def create_tavern_save(
     # 封死新存档入口(酒馆):创建即 seed 进 KB(无剧本 T0 → 仅 import_state)+ 打 kb_native 标记。
     _seed_kb_at_creation(save["id"], None, snapshot)
     return expose(save)  # type: ignore[return-value]
+
+
+def fork_tavern_save(
+    user_id: int,
+    src_save_id: int,
+    *,
+    node_id: int | None = None,
+    message_index: int | None = None,
+    title: str | None = None,
+) -> dict[str, Any]:
+    """在指定节点/消息处克隆酒馆对话为【新对话】(fork = 新对话,原对话原样保留)。
+
+    背景:游戏台的分支按钮(branches.continueFrom)对酒馆档是「同档指针倒回」——原对话
+    尾巴变成酒馆 UI 不可达的孤儿分支。酒馆的正确分叉语义是"从此重开一段对话":克隆
+    截断状态为新 game_saves(save_kind='tavern'),源档与源树一个字节都不动。
+
+    切点解析优先级:node_id > message_index(经 tree_ops.resolve_commit_id_by_message,
+    与 rollback_to_message 同一套开场相位判定) > 源档活跃 commit。
+    合约(前端 tavern fork 按 role 折算 index 后传入):新对话包含到所选消息为止——
+    切在角色回复上含该回复,切在玩家输入上止于该输入之前(与游戏台 fork 同口径,
+    那句话留给新对话里重说)。
+
+    截断快照:live 提交的 state_snapshot 自带截至该回合的全量 history,直接取;
+    导入型提交(import_save lane)snapshot={} → 沿提交序重放 player_input/gm_output
+    重建 history,基底用源档行级 state_snapshot。tavern 块按统一卡库最新值刷新
+    (与 activate_save 同口径),FK 列与沉浸开关从源档复制。
+    """
+    init_db()
+    import copy as _copy
+
+    from ..branches._helpers import commit_state
+    from ..branches.activation import _refresh_tavern_cards_from_library
+
+    with connect() as db:
+        src = db.execute(
+            "select * from game_saves where id = %s and user_id = %s and save_kind = 'tavern'",
+            (int(src_save_id), user_id),
+        ).fetchone()
+    if not src:
+        raise ValueError("无权访问该对话，或对话不存在")
+
+    # —— 解析切点 commit ——
+    target: dict[str, Any] | None = None
+    if node_id is not None:
+        with connect() as db:
+            target = db.execute(
+                "select * from branch_commits where id = %s and save_id = %s",
+                (int(node_id), src["id"]),
+            ).fetchone()
+        if not target:
+            raise ValueError("分支节点不存在或不属于该对话")
+    elif message_index is not None:
+        from ..branches import tree_ops
+
+        cid = tree_ops.resolve_commit_id_by_message(user_id, src["id"], int(message_index))
+        if cid:
+            with connect() as db:
+                target = db.execute("select * from branch_commits where id = %s", (cid,)).fetchone()
+    if target is None:
+        active_id = src.get("active_commit_id") or src.get("active_branch_node_id")
+        if active_id:
+            with connect() as db:
+                target = db.execute("select * from branch_commits where id = %s", (int(active_id),)).fetchone()
+
+    # —— 截断快照 ——
+    base = src.get("state_snapshot") if isinstance(src.get("state_snapshot"), dict) else {}
+    snapshot: dict[str, Any] = {}
+    history: list[dict[str, Any]] = []
+    if target is not None:
+        snap = commit_state(target)
+        history = [h for h in (snap.get("history") or []) if isinstance(h, dict)]
+        if history:
+            snapshot = snap
+    if target is not None and not history:
+        # 导入型 lane:提交无 snapshot → 按 id 序重放成 history(开场 first_mes 本就落在
+        # 提交里 seed 的 gm_output,重放自然包含;空 player_input 的开场自动跳过 user 项)
+        with connect() as db:
+            rows = db.execute(
+                "select player_input, gm_output from branch_commits where save_id = %s and id <= %s order by id asc",
+                (src["id"], target["id"]),
+            ).fetchall()
+        for r in rows:
+            pi = str(r.get("player_input") or "").strip()
+            go = str(r.get("gm_output") or "").strip()
+            if pi:
+                history.append({"role": "user", "content": pi})
+            if go:
+                history.append({"role": "assistant", "content": go})
+    if not snapshot:
+        snapshot = _copy.deepcopy(base)
+    snapshot["history"] = history
+    snapshot["turn"] = len(history) // 2
+    tav = snapshot.get("tavern")
+    if not isinstance(tav, dict):
+        tav = {}
+        snapshot["tavern"] = tav
+    tav.setdefault("character_card_id", src.get("tavern_character_card_id"))
+    tav.setdefault("persona_card_id", src.get("tavern_persona_card_id"))
+
+    new_title = (title or "").strip() or f"{src.get('title') or '对话'} · 分支"
+
+    with connect() as db:
+        # 卡块按统一卡库(character_cards)最新值覆盖 —— 与 activate_save 同口径,
+        # 避免克隆出建档时的陈旧 character/persona 副本。
+        _refresh_tavern_cards_from_library(db, user_id, src, snapshot)
+        new = db.execute(
+            """
+            insert into game_saves(user_id, script_id, title, state_path, state_snapshot,
+                                   save_kind, tavern_character_card_id, tavern_persona_card_id, tavern_immersive)
+            values (%s, NULL, %s, %s, %s, 'tavern', %s, %s, %s)
+            returning *
+            """,
+            (user_id, new_title, str(SAVE_FILE), Jsonb(snapshot),
+             src.get("tavern_character_card_id"), src.get("tavern_persona_card_id"),
+             bool(src.get("tavern_immersive"))),
+        ).fetchone()
+    new_id = new["id"]
+
+    # 新树:seed_tree 把截断 history 重放成 root + round 节点(first_mes 安全,见 seed.py)。
+    branches.seed_tree(new_id, str(SAVE_FILE))
+    # 角色卡内嵌世界书 → 新档 worldbook overlay(与 create_tavern_save 同款,尽力而为)
+    if src.get("tavern_character_card_id"):
+        try:
+            from .. import user_cards as _ucards
+
+            card = _ucards.get_user_card(user_id, int(src["tavern_character_card_id"]))
+            meta = (card or {}).get("metadata") or {}
+            n = _ingest_character_book(new_id, meta.get("character_book"))
+            if n:
+                log.info(f"[tavern] fork save={new_id} ingested {n} character_book entries → worldbook overlay")
+        except Exception as exc:
+            log.warning(f"[tavern] fork character_book ingest failed save={new_id}: {type(exc).__name__}: {exc}")
+    try:
+        _seed_kb_at_creation(new_id, None, snapshot)
+    except Exception as exc:
+        log.warning(f"[tavern] fork KB seed failed save={new_id}: {type(exc).__name__}: {exc}")
+    return expose(new)  # type: ignore[return-value]

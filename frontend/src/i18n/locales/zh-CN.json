@@ -885,7 +885,7 @@
       "section_config": "配置",
       "group_create": "创作",
       "group_play": "游玩",
-      "play_script": "开始游戏",
+      "play_script": "剧本游玩",
       "tavern_play": "酒馆游玩",
       "group_system": "系统",
       "group_admin": "管理",
@@ -3886,6 +3886,15 @@
     }
   },
   "cards": {
+    "hub": {
+      "tab_cards": "角色卡",
+      "tab_personas": "身份卡",
+      "persona_title": "身份卡",
+      "persona_desc": "玩家身份卡(persona):酒馆对话的「我的角色」,剧本开局向导中也可选用。",
+      "persona_add": "新建身份",
+      "persona_empty": "还没有身份卡。新建一张,酒馆对话和剧本开局都能选用。",
+      "default_badge": "默认"
+    },
     "list": {
       "user_cards_title": "用户角色卡",
       "user_cards_desc": "跨剧本 / 跨存档共享的用户角色卡。",
@@ -4018,6 +4027,7 @@
       "modal_title_new": "新增",
       "modal_title_edit": "编辑",
       "kind_user": "用户角色卡",
+      "kind_persona": "身份卡",
       "kind_npc": "NPC 角色卡",
       "btn_cancel": "取消",
       "btn_create": "创建",
@@ -4680,6 +4690,12 @@
     }
   },
   "tavern_app": {
+    "fork": {
+      "tip": "在此消息处开启新对话",
+      "default_title": "{{title}} · 分支",
+      "toast_ok": "已开启新对话，原对话保留",
+      "toast_fail": "开启新对话失败"
+    },
     "confirm_modal": {
       "eyebrow_danger": "危险操作",
       "eyebrow_default": "请确认"

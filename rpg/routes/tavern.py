@@ -376,6 +376,45 @@ async def api_tavern_rename(
     return _json({"ok": True, "title": title[:200]})
 
 
+@router.post("/api/tavern/chats/{chat_id}/fork")
+async def api_tavern_fork(
+    chat_id: int,
+    request: Request,
+    api_user: dict[str, Any] = Depends(get_current_user),
+) -> JSONResponse:
+    """body {"message_index"?: int, "node_id"?: int, "title"?: str}
+    → 在所选消息处克隆出新对话(原对话原样保留),并切换 runtime 到新对话。
+
+    与游戏台 branches.continueFrom(同档指针倒回,酒馆档的尾巴会变孤儿分支)不同,
+    这是酒馆的正确分叉语义:fork = 新对话。前端对角色回复传 message_index+1、
+    对玩家输入传原 index → 新对话含角色回复 / 止于玩家输入之前(与游戏台同口径)。
+    """
+    from platform_app import branches, workspace
+    from platform_app.db import connect, init_db
+
+    user_id = _uid(api_user)
+    body = await request.json()
+    message_index = body.get("message_index")
+    node_id = body.get("node_id")
+    title = (body.get("title") or "").strip() or None
+    init_db()
+    with connect() as db:
+        if not _require_tavern_save(db, chat_id, user_id):
+            return _bad("无权操作该对话", 403)
+    try:
+        save = workspace.fork_tavern_save(
+            user_id, chat_id,
+            node_id=int(node_id) if node_id is not None else None,
+            message_index=int(message_index) if message_index is not None else None,
+            title=title,
+        )
+    except ValueError as exc:
+        return _bad(str(exc))
+    branches.activate_save(user_id, int(save["id"]))
+    _invalidate_cache(api_user)
+    return _json({"ok": True, "save": _expose_save(save), "new_save_id": save["id"]})
+
+
 @router.post("/api/tavern/chats/{chat_id}/bind-card")
 async def api_tavern_bind_card(
     chat_id: int,

@@ -404,6 +404,9 @@ async function hydrateGameState() {
       save_id: data.save_id ?? null,
       save_title: data.save_title ?? null,
       turn: data.turn ?? null,
+      // /api/state 只在酒馆档才带 tavern 块 → 零成本识别当前档是否酒馆对话
+      // (消费方:游戏台隐藏半生效的分支入口,见 GameChatMessages hideFork)。
+      isTavern: !!(data && data.tavern),
     };
     return merged;
   } catch (e) {

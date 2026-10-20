@@ -326,8 +326,15 @@ function SavesListView() {
   const reload = React.useCallback(async () => {
     try {
       const r = await window.api.saves.list();
-      const list = Array.isArray(r) ? r : (r?.items || r?.saves || []);
-      setSaves(list.map(window.__normalizeSave || ((x) => x)));
+      // 存档目录 = 剧本档专属;酒馆会话(save_kind='tavern')不进列表 —— 它们的管理
+      // (历史/归档/删除)在酒馆页自带的对话栏,而本页的设置 tab(先知程度/剧情引导)
+      // 与分支 tab 只被剧本 GM 管线消费,对酒馆档是「UI 存在≠生效」的死设置。
+      // 与移动端 mobile/saves/BranchesPage.jsx 同款过滤(normalizeSave 已把 save_kind
+      // 透传到顶层并默认 'game')。
+      const list = (Array.isArray(r) ? r : (r?.items || r?.saves || []))
+        .map(window.__normalizeSave || ((x) => x))
+        .filter((s) => (s && (s.save_kind || 'game')) !== 'tavern');
+      setSaves(list);
     } catch (_) { setSaves([]); }
     try {
       const s = await window.api.scripts.list();

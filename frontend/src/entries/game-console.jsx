@@ -353,7 +353,14 @@ function App() {
               next[k] = Array.isArray(g[k]) ? [] : (typeof g[k] === 'object' ? {} : null);
             }
           }
-          next._raw = { save_id: data.save_id ?? null, save_title: data.save_title ?? null, turn: data.turn ?? null };
+          next._raw = {
+            save_id: data.save_id ?? null,
+            save_title: data.save_title ?? null,
+            turn: data.turn ?? null,
+            // /api/state 只在酒馆档才带 tavern 块 → 据此识别"控制台误载酒馆档",
+            // 隐藏半生效的分支按钮/分支树(fork 对酒馆是同档指针倒回,见 tavern fork)。
+            isTavern: !!(data && data.tavern),
+          };
           return next;
         });
         if (Array.isArray(data.history)) setHistory(data.history);
@@ -1606,6 +1613,7 @@ function App() {
           saveId={(activeSave && activeSave.id) || (game && game._raw && game._raw.save_id) || null}
           onRetry={onRetry} onShowSse={onShowSse}
           memory={(game && game.memory) || null}
+          hideFork={!!(game && game._raw && game._raw.isTavern)}
         /> : (
           retryFailed ? (
             <div className="gc-chat" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%' }}>

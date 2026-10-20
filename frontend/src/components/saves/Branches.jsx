@@ -67,7 +67,11 @@ function BranchesPage() {
       try {
         const r = await window.api.saves.list();
         const list = Array.isArray(r) ? r : (r?.items || r?.saves || []);
-        const normalized = list.map(window.__normalizeSave || ((x) => x));
+        // 分支管理 = 剧本档专属;酒馆会话(save_kind='tavern')是线性聊天,无分支玩法,
+        // 不进存档下拉。与存档列表页 / 移动端 mobile/saves/BranchesPage.jsx 同款过滤。
+        const normalized = list
+          .map(window.__normalizeSave || ((x) => x))
+          .filter(s => (s && (s.save_kind || 'game')) !== 'tavern');
         setSaves(normalized);
         if (normalized.length) {
           setSelectedSave(prev => (
@@ -257,6 +261,10 @@ function ContinuePicker({ open, save, focusedNodeId, onClose }) {
       try {
         const r = await window.api.saves.list();
         list = Array.isArray(r) ? r : (r?.items || r?.saves || []);
+        // 「继续游戏」= 进 Game Console 的剧本档选择器;酒馆会话(save_kind='tavern')
+        // 的继续入口在酒馆页,不进此列表(与存档列表页/移动端同款过滤;
+        // 匿名 mock 兜底无 save_kind → 默认 'game' 照常保留)。
+        list = list.filter(s => (s && (s.save_kind || 'game')) !== 'tavern');
       } catch (_) {
         // 匿名访客 / 401：回退到 mock 保留 designer offline preview
         list = (window.RPG_AUTH && window.RPG_AUTH.authed) ? [] : (window.MOCK_PLATFORM?.saves || []);

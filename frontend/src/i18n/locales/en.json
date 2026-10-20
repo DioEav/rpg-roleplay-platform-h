@@ -781,7 +781,7 @@
       "section_config": "Config",
       "group_create": "Create",
       "group_play": "Play",
-      "play_script": "Start Game",
+      "play_script": "Script Play",
       "tavern_play": "Tavern Play",
       "group_system": "System",
       "group_admin": "Admin",
@@ -3782,6 +3782,15 @@
     }
   },
   "cards": {
+    "hub": {
+      "tab_cards": "Character Cards",
+      "tab_personas": "Personas",
+      "persona_title": "Personas",
+      "persona_desc": "Player persona cards: your identity in tavern chats, also selectable in the new-game wizard.",
+      "persona_add": "New Persona",
+      "persona_empty": "No personas yet. Create one to use it in tavern chats and script starts.",
+      "default_badge": "Default"
+    },
     "list": {
       "user_cards_title": "User Character Cards",
       "user_cards_desc": "Character cards shared across all scripts and saves.",
@@ -3914,6 +3923,7 @@
       "modal_title_new": "New",
       "modal_title_edit": "Edit",
       "kind_user": "User Character Card",
+      "kind_persona": "Persona",
       "kind_npc": "NPC Card",
       "btn_cancel": "Cancel",
       "btn_create": "Create",
@@ -4680,6 +4690,12 @@
     }
   },
   "tavern_app": {
+    "fork": {
+      "tip": "Start a new chat from this message",
+      "default_title": "{{title}} (fork)",
+      "toast_ok": "New chat started; the original is kept",
+      "toast_fail": "Failed to start new chat"
+    },
     "confirm_modal": {
       "eyebrow_danger": "Destructive action",
       "eyebrow_default": "Please confirm"

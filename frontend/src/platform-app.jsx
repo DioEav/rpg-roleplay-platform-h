@@ -186,19 +186,22 @@ const getCSModules = (t) => [
     sub: [
       { text: t('platform.nav.md_editor', { defaultValue: '剧本编辑器' }), href: '#md-editor' },
     ] },
-  // 2026-10:「游玩」面板子项改名 开始游戏→剧本游玩、酒馆→酒馆游玩;月底 剧本游玩 改回 开始游戏。
+  // 2026-10:「游玩」面板子项改名 开始游戏→剧本游玩、酒馆→酒馆游玩;2026-10-20
+  // 用户定名「剧本游玩」(与「酒馆游玩」对仗,不再回改)。
   // 模块 label 同时用作左栏标题(保持一致);UnifiedSearch / 旧 PL_NAV 的「开始游戏」文案不受影响。
-  { id: 'play', label: t('platform.nav.play_script', { defaultValue: '开始游戏' }), group: t('platform.nav.group_play'),
+  { id: 'play', label: t('platform.nav.play_script', { defaultValue: '剧本游玩' }), group: t('platform.nav.group_play'),
     // NPC 角色卡已移入「剧本」详情面板(NPC 卡属于具体剧本),不再在开始游戏出现。
     // 「冒险模组」(modules)与「游戏设置」(play-settings)两个子页已隐藏:
     // 从左栏导航与合法 page 集合中移除,直链会回落主页(见 entries/platform.jsx PL_IDS)。
     // 恢复:把下面注释的两行 sub 与 pages 里的两个 id 解注释,并同步恢复
     // shared.jsx getPLNav 的 modules 条目 + entries/platform.jsx 的两条 route。
-    pages: ['saves', 'saves-branches', 'cards', 'cards-online'],
+    pages: ['saves', 'saves-branches', 'cards-online'],
     sub: [
       { text: t('platform.nav.cs_saves'),          href: '#saves' },
       { text: t('platform.nav.cs_branches'),        href: '#saves-branches' },
-      { text: t('platform.nav.cs_user_cards'),      href: '#cards' },
+      // 「用户角色卡」已升级为独立模块「角色卡」(2026-10-20,与剧本游玩/酒馆游玩同级,
+      // 独立整页无左栏,页内 tab 合并酒馆的 persona 编辑,见下方 cards 模块)。
+      // 恢复 = pages 加回 'cards' + 本行:{ text: t('platform.nav.cs_user_cards'), href: '#cards' }。
       // 「在线角色卡库」已移至顶栏直达按钮(2026-10,与「在线剧本库」并列,见顶栏 nav 后)。
       // 恢复左栏条目 = 加回本行:{ text: t('platform.nav.cards_online', { defaultValue: '在线角色卡库' }), href: '#cards-online' }。
       // { text: t('platform.nav.modules'),            href: '#modules' },
@@ -210,6 +213,15 @@ const getCSModules = (t) => [
     pages: ['tavern'],
     sub: [
       { text: t('platform.nav.tavern_play', { defaultValue: '酒馆游玩' }), href: '#tavern' },
+    ] },
+  // 统一角色卡库(2026-10-20):「用户角色卡」自「游玩」模块子项升级为独立模块,与
+  // 剧本游玩/酒馆游玩同级;独立整页(无左栏,见 standalone)。页内 tab 合并
+  // 「角色卡(PC)」与「我的角色卡(persona,原酒馆抽屉编辑区)」—— 同表 character_cards、
+  // 同套 CardEditFields 表单;酒馆抽屉保留会话内快捷换绑/查看,卡库管理统一归此页。
+  { id: 'cards', label: t('platform.nav.cards', { defaultValue: '角色卡' }), group: t('platform.nav.group_play'),
+    pages: ['cards'],
+    sub: [
+      { text: t('platform.nav.cards', { defaultValue: '角色卡' }), href: '#cards' },
     ] },
   // RATH:离线活世界实验,与「酒馆」平级、同在「游玩/Play」分类下
   // (docs/design/rath_observation_deck_v0.md)。页面是 Platform 内嵌子页 #rath。
@@ -615,9 +627,10 @@ function PlatformShellCS({ page, setPage, children, assistant, assistantOpen, on
 
   // 独立页(无全局左导航,整页铺满):欢迎页 + 酒馆(酒馆自带 2 块式侧栏,
   // 全局左导航会重复;顶部「全部功能」切换器仍可切走)+ MD 编辑器
-  // + 两库(在线剧本库 / 在线角色卡库,2026-10 升为顶栏直达后按独立整页呈现)。
+  // + 两库(在线剧本库 / 在线角色卡库,2026-10 升为顶栏直达后按独立整页呈现)
+  // + 角色卡库(2026-10-20 独立模块,页内 tab 合并 persona 编辑)。
   const standalone = page === 'profile' || page === 'tavern' || page === 'md-editor'
-    || page === 'scripts-library' || page === 'cards-online';
+    || page === 'scripts-library' || page === 'cards-online' || page === 'cards';
   // 两库页是顶栏直达的独立页,不属于任何模块分组:顶栏「创作/游玩」分组按钮与
   // 分组面板里的模块条目都不点亮。模块注册表里 scripts-library / cards-online
   // 仍挂在 scripts / play 的 pages 数组下(_csActiveModule 解析会命中),

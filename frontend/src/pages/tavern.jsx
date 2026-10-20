@@ -195,6 +195,30 @@ export default function TavernPage() {
 
   useEffect(() => { reloadList(); }, [reloadList]);
 
+  // ── 酒馆消息分支按钮(MsgActions forkKind="tavern")派发的克隆分叉 ──
+  // 与 TavernApp 的监听同一套:fork = 克隆新对话(后端已切 runtime),原对话保留在列表。
+  useEffect(() => {
+    const onFork = async (e) => {
+      const { save_id, message_index } = e.detail || {};
+      if (save_id == null || message_index == null) return;
+      try {
+        const src = (Array.isArray(chats) ? chats.find((c) => c.id === save_id) : null) || activeChat;
+        const title = src && src.title ? t('tavern_app.fork.default_title', { title: src.title }) : undefined;
+        const r = await window.api.tavern.fork(save_id, { message_index, title });
+        if (r && r.ok === false) throw new Error(r.error || r.detail || 'fork failed');
+        window.__apiToast?.(t('tavern_app.fork.toast_ok'), { kind: 'ok', duration: 2400 });
+        await reloadList();
+        const chat = r?.save || { id: r?.new_save_id };
+        if (chat && chat.id) await openChat(chat);
+      } catch (err) {
+        window.__apiToast?.(t('tavern_app.fork.toast_fail'), { kind: 'danger', detail: err?.message });
+      }
+    };
+    window.addEventListener('rpg-tavern-fork', onFork);
+    return () => window.removeEventListener('rpg-tavern-fork', onFork);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [chats, activeChat, t, reloadList, openChat]);
+
   // 首次进入:自动打开最近的活跃对话(如果有)。
   // 若首页空态输入框刚转交了一个 pending save(rpg_tavern_pending_first),优先打开它,
   // 让首句能在那个对话里自动发出(而非默认 chats[0])。
@@ -807,6 +831,9 @@ export default function TavernPage() {
           >
             {t('tavern_page.sidebar.select_char')}
           </CSButton>
+          {/* 「角色卡」编辑入口已隐藏(2026-10-20):卡库管理已合并进独立的「角色卡」模块页
+              (platform 游玩组,页内 tab 含 persona 编辑);「选择角色」面板的「新建角色卡」
+              仍可进入本页编辑。恢复 = 解注释下方按钮。
           <CSButton
             variant={view === 'cards' ? 'normal' : 'link'}
             iconName="contact"
@@ -814,7 +841,7 @@ export default function TavernPage() {
             fullWidth
           >
             {t('tavern_page.sidebar.char_cards')}
-          </CSButton>
+          </CSButton> */}
           <CSButton
             variant="link"
             iconName="settings"

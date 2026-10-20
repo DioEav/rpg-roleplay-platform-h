@@ -13,7 +13,9 @@ import { ThinkingPill } from './GameLeftRail.jsx';
 // CSS 变量就近遮蔽了 <html> 上的真值 → 游戏内设置弹窗切字体永远无效。
 // 现在 GM 正文字体统一继承 <html> 的 --narrative-font(启动时 entries/game-console.jsx 从
 // localStorage 初始化,弹窗切换时即时更新),本组件不再干预。
-function ChatArea({ history, runState, runStyle, narrativeSize, hasError, errorMessage, saveId, onRetry, onShowSse, memory }) {
+// hideFork:游戏台误载酒馆档(state._raw.isTavern)时隐藏分支按钮 —— continueFrom 对
+// 酒馆档是半生效的指针倒回,酒馆的正确分叉(fork=新对话)在酒馆页,不在控制台。
+function ChatArea({ history, runState, runStyle, narrativeSize, hasError, errorMessage, saveId, onRetry, onShowSse, memory, hideFork }) {
   const { t } = useTranslation();
   const ref = useRefA(null);
   // task 21：实战存档 history 可能有 100+ 条；一次性渲染整个数组 + 每次 setGame
@@ -93,9 +95,9 @@ function ChatArea({ history, runState, runStyle, narrativeSize, hasError, errorM
             streaming={!m.streaming_done && idx === totalLen - 1 && runState.running}
             toolOps={m._toolOps || m.tool_ops || []}
             renderTool={(ops) => <ToolCallBlock ops={ops} />}
-            memoryText={memoryText} /> :
+            memoryText={memoryText} hideFork={hideFork} /> :
           <PlayerBlock key={`pl-${idx}`} text={m.content} ts={m.ts} attachments={m.attachments}
-            msgIndex={idx} saveId={saveId} commitId={commitId} memoryText={memoryText} />;
+            msgIndex={idx} saveId={saveId} commitId={commitId} memoryText={memoryText} hideFork={hideFork} />;
         })}
 
         {/* 思考指示器统一(2026-06-23):此前等待首 token 时,这里的 gc-waiting-gm 三点气泡

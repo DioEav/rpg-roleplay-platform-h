@@ -866,6 +866,8 @@
       autotitle: (id) => POST(`/api/tavern/chats/${id}/autotitle`, {}),
       // 删除对话
       remove: (id) => DEL(`/api/tavern/chats/${id}`, {}),
+      // 在所选消息处克隆出新对话(原对话保留)body {message_index?, node_id?, title?}
+      fork: (id, body) => POST(`/api/tavern/chats/${id}/fork`, body || {}),
       // 导入 SillyTavern 聊天记录 JSONL:File → multipart;否则 {jsonl, title?}
       importJsonl: (fileOrBody, title) => {
         if (fileOrBody instanceof File || fileOrBody instanceof Blob) {

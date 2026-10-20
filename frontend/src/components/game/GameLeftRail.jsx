@@ -66,10 +66,14 @@ function LeftRail({ collapsed, onToggle, state, runState, onNew, onSave, onSwitc
         </div>
         <div className="gc-rail-quick">
           <button className="btn ghost" onClick={onSave} data-tip={t('game.app.rail.manual_save_tip')}><Icon name="save" size={12} /> {t('common.save')}</button>
-          <button className="btn ghost" onClick={() => setBranchOpen(o => !o)} data-tip={t('game.app.rail.branch_tip')} aria-label={t('game.app.rail.branch_tip')}><Icon name="branch" size={12} /> {t('game.app.rail.branch_btn')}</button>
+          {/* 酒馆档误载进控制台时隐藏分支树入口:树上的激活/继续/删除对酒馆对话全是
+              半生效操作(指针倒回/卡副本不刷新/子树删除语义错误),酒馆没有分支玩法。 */}
+          {!(state && state._raw && state._raw.isTavern) && (
+            <button className="btn ghost" onClick={() => setBranchOpen(o => !o)} data-tip={t('game.app.rail.branch_tip')} aria-label={t('game.app.rail.branch_tip')}><Icon name="branch" size={12} /> {t('game.app.rail.branch_btn')}</button>
+          )}
         </div>
         {/* task 48：传 currentSaveId / state._raw.save_id，BranchTreeRail 走真 /api/branches */}
-        {branchOpen && <BranchTreeRail saveId={currentSaveId || state?._raw?.save_id || null} />}
+        {branchOpen && !(state && state._raw && state._raw.isTavern) && <BranchTreeRail saveId={currentSaveId || state?._raw?.save_id || null} />}
       </div>
 
       {/* 「记忆模式」选择器已整块移除(v1.77.0)。它是**装饰性**的:全仓没有任何一处

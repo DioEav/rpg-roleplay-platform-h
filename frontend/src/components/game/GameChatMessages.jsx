@@ -16,7 +16,12 @@ import { lsGetJSON, lsSetJSON } from '../../lib/storage.js';
 import { copyText } from '../../lib/clipboard.js';
 
 // ----------------------------- CHAT --------------------------------------
-function MsgActions({ text, ts, msgIndex, totalMsgs, commitId, saveId, role, meta, memoryText }) {
+// forkKind="tavern":酒馆分叉 = 克隆出新对话(fork = 新对话,原对话保留),非破坏性。
+// 点击不弹确认,直接派发 rpg-tavern-fork 事件,由酒馆挂载点(tavern-app / pages/tavern)
+// 执行 api.tavern.fork —— 与 onRegenerate 的"只派发事件避免 prop 透传"同一先例。
+// hideFork:彻底不渲染分支按钮(游戏台误载酒馆档时的堵漏,那时 continueFrom 是
+// 半生效的指针倒回,会把原对话尾巴变成酒馆里不可达的孤儿分支)。
+function MsgActions({ text, ts, msgIndex, totalMsgs, commitId, saveId, role, meta, memoryText, forkKind, hideFork }) {
   // task 38：以前 msgIndex / saveId / commitId 全是 undefined，doFork 就发
   // {label} 给后端 → 后端 int(None) 直接 500。现在 NarrativeBlock / PlayerBlock
   // 把 idx + saveId 透传进来，doFork 至少发 {save_id, message_index, label}，
@@ -51,7 +56,11 @@ function MsgActions({ text, ts, msgIndex, totalMsgs, commitId, saveId, role, met
   };
   // task 38：禁用条件——必须有 saveId 或 commitId 之一，否则后端无法定位 commit。
   // 缺信息时按钮 disabled + tooltip 解释，比让用户点进去看 toast 失败强。
-  const canFork = (commitId != null && commitId !== "") || (saveId != null && msgIndex != null);
+  // 酒馆 fork 只走 message_index 路径(合约见 routes/tavern.py fork),不看 commitId。
+  const isTavernFork = forkKind === "tavern";
+  const canFork = isTavernFork
+    ? (saveId != null && msgIndex != null && msgIndex >= 0)
+    : ((commitId != null && commitId !== "") || (saveId != null && msgIndex != null));
   const onFork = () => {
     if (!canFork) {
       window.toast?.(t('game.app.msg.fork_failed'), {
@@ -59,6 +68,14 @@ function MsgActions({ text, ts, msgIndex, totalMsgs, commitId, saveId, role, met
         detail: t('game.app.msg.fork_no_ctx'),
         duration: 2400,
       });
+      return;
+    }
+    if (isTavernFork) {
+      // 索引折算(与后端 resolve_commit_id_by_message 的回合口径对齐):
+      // 角色回复 +1 → 新对话含该回复;玩家输入原值 → 新对话止于该输入之前(那句留给新对话重说)。
+      window.dispatchEvent(new CustomEvent("rpg-tavern-fork", {
+        detail: { save_id: saveId, message_index: role === "assistant" ? msgIndex + 1 : msgIndex },
+      }));
       return;
     }
     setForkOpen(true);
@@ -180,14 +197,16 @@ function MsgActions({ text, ts, msgIndex, totalMsgs, commitId, saveId, role, met
             </div>
           </div>
         )}
+        {hideFork ? null : (
         <button
           className="iconbtn gc-msg-act"
-          data-tip={canFork ? t('game.app.msg.fork_tip') : t('game.app.msg.fork_no_ctx_tip')}
+          data-tip={canFork ? (isTavernFork ? t('tavern_app.fork.tip') : t('game.app.msg.fork_tip')) : t('game.app.msg.fork_no_ctx_tip')}
           data-tip-pos="below"
           disabled={!canFork}
-          aria-label={canFork ? t('game.app.msg.fork_tip') : t('game.app.msg.fork_no_ctx_tip')} onClick={onFork}>
+          aria-label={canFork ? (isTavernFork ? t('tavern_app.fork.tip') : t('game.app.msg.fork_tip')) : t('game.app.msg.fork_no_ctx_tip')} onClick={onFork}>
           <Icon name="fork" size={12} />
         </button>
+        )}
         <button
           className="iconbtn gc-msg-act"
           data-tip={canRegen ? t('game.app.msg.regen_tip') : t('game.app.msg.regen_no_ctx_tip')}
@@ -455,7 +474,7 @@ function InlineMessageEditor({ edit, minHeight = 180 }) {
 
 // 酒馆模式复用:speakerName/speakerAvatar/tag 可选覆盖默认的 GM/主代理 标签。
 // 不传时与 Game Console 行为完全一致(默认 tag="GM", subtitle="主代理")。
-function NarrativeBlock({ text, streaming, ts, msgIndex, saveId, commitId, thinking, speakerName, speakerAvatar, tag, hideMeta, meta, images, toolOps, renderTool, memoryText }) {
+function NarrativeBlock({ text, streaming, ts, msgIndex, saveId, commitId, thinking, speakerName, speakerAvatar, tag, hideMeta, meta, images, toolOps, renderTool, memoryText, forkKind, hideFork }) {
   const { t } = useTranslation();
   const displayText = stripStateOpsForDisplay(text);
   // 内联编辑状态:点击 MsgActions 的编辑按钮时通过事件激活(与 PlayerBlock 共用同一 hook)
@@ -519,13 +538,13 @@ function NarrativeBlock({ text, streaming, ts, msgIndex, saveId, commitId, think
           </>
         )}
       </div>
-      {!streaming && <MsgActions text={displayText} ts={ts || "—"} msgIndex={msgIndex} saveId={saveId} commitId={commitId} role="assistant" meta={meta} memoryText={memoryText} />}
+      {!streaming && <MsgActions text={displayText} ts={ts || "—"} msgIndex={msgIndex} saveId={saveId} commitId={commitId} role="assistant" meta={meta} memoryText={memoryText} forkKind={forkKind} hideFork={hideFork} />}
     </div>);
 
 }
 
 // 酒馆模式复用:speakerName/tag 可选覆盖默认「玩家」标签(persona 名等)。
-function PlayerBlock({ text, ts, attachments, msgIndex, saveId, commitId, speakerName, speakerAvatar, tag, hideMeta, memoryText }) {
+function PlayerBlock({ text, ts, attachments, msgIndex, saveId, commitId, speakerName, speakerAvatar, tag, hideMeta, memoryText, forkKind, hideFork }) {
   const { t } = useTranslation();
   // 玩家发言同样可内联编辑(群反馈:白玖 ——「只是想加一句话,要复制删除粘贴太麻烦」)。
   // 与 GM 正文共用 useInlineMessageEdit;后端 /api/message/edit 本就不限角色。
@@ -566,7 +585,7 @@ function PlayerBlock({ text, ts, attachments, msgIndex, saveId, commitId, speake
           </>
         )}
       </div>
-      <MsgActions text={text} ts={ts} msgIndex={msgIndex} saveId={saveId} commitId={commitId} role="user" memoryText={memoryText} />
+      <MsgActions text={text} ts={ts} msgIndex={msgIndex} saveId={saveId} commitId={commitId} role="user" memoryText={memoryText} forkKind={forkKind} hideFork={hideFork} />
     </div>);
 
 }

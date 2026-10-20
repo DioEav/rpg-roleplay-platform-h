@@ -188,6 +188,134 @@ class TavernSaveLifecycle(unittest.TestCase):
 
 
 @unittest.skipUnless(_first_user_id() is not None, "本地无用户,跳过 DB 集成测试")
+class ForkTavernSave(unittest.TestCase):
+    """fork_tavern_save:克隆截断状态为新对话,源档零改动。
+
+    合约:切点解析复用 resolve_commit_id_by_message(与游戏台 fork/rollback 同一套
+    开场相位判定);新对话包含到所选消息为止——前端对角色回复传 message_index+1、
+    对玩家输入传原 index(与游戏台同口径,玩家那句留给新对话里重说)。
+    """
+
+    def setUp(self):
+        from platform_app import user_cards
+        self.uid = _first_user_id()
+        self._card_ids: list[int] = []
+        self._save_ids: list[int] = []
+        card = user_cards.upsert_user_card(self.uid, {
+            "name": "测试酒馆角色",
+            "identity": "流浪剑客", "personality": "冷淡毒舌",
+            "metadata": {
+                "first_mes": "……找我有事？",
+                "system_prompt": "第一人称，绝不出戏。",
+                "scenario": "雨夜酒馆。",
+            },
+        })
+        self.card_id = card["id"]
+        self._card_ids.append(self.card_id)
+
+    def tearDown(self):
+        from platform_app.db import connect
+        with connect() as db:
+            for sid in self._save_ids:
+                db.execute("delete from game_saves where id=%s", (sid,))
+            for cid in self._card_ids:
+                db.execute("delete from character_cards where id=%s", (cid,))
+
+    def test_fork_at_first_mes_inclusive_and_source_untouched(self):
+        from platform_app import workspace
+        from platform_app.db import connect
+        src = workspace.create_tavern_save(self.uid, self.card_id)
+        self._save_ids.append(src["id"])
+        with connect() as db:
+            src_commits = db.execute(
+                "select count(*) c from branch_commits where save_id=%s", (src["id"],),
+            ).fetchone()["c"]
+            src_active = db.execute(
+                "select coalesce(active_commit_id, active_branch_node_id) cid from game_saves where id=%s",
+                (src["id"],),
+            ).fetchone()["cid"]
+        # first_mes 在 history idx0(assistant);前端 +1 → message_index=1。
+        # resolve(1) → (1-1)//2=0 → 开场 round commit → 新对话含 first_mes(含式合约)。
+        forked = workspace.fork_tavern_save(self.uid, src["id"], message_index=1, title="分支测试")
+        self._save_ids.append(forked["id"])
+        self.assertEqual(forked["save_kind"], "tavern")
+        self.assertIsNone(forked["script_id"])
+        self.assertEqual(forked["title"], "分支测试")
+        self.assertEqual(forked["tavern_character_card_id"], self.card_id)
+        snap = forked["state_snapshot"]
+        hist = snap.get("history") or []
+        self.assertEqual(len(hist), 1)
+        self.assertIn("找我有事", hist[0].get("content", ""))
+        self.assertEqual(snap.get("turn"), 0)
+        # tavern 块按统一卡库最新值刷新(system_prompt 来自卡片 metadata)
+        self.assertEqual((snap.get("tavern") or {}).get("system_prompt"), "第一人称，绝不出戏。")
+        # 新树已 seed:root + 开场 round(turn_index=0)
+        with connect() as db:
+            rows = db.execute(
+                "select kind, turn_index from branch_commits where save_id=%s order by turn_index, id",
+                (forked["id"],),
+            ).fetchall()
+            src_commits_after = db.execute(
+                "select count(*) c from branch_commits where save_id=%s", (src["id"],),
+            ).fetchone()["c"]
+            src_active_after = db.execute(
+                "select coalesce(active_commit_id, active_branch_node_id) cid from game_saves where id=%s",
+                (src["id"],),
+            ).fetchone()["cid"]
+        self.assertTrue(any(r["kind"] == "root" for r in rows))
+        self.assertTrue(any(r["kind"] == "round" and int(r["turn_index"]) == 0 for r in rows))
+        # 源档零改动:commit 数与活跃指针前后一致
+        self.assertEqual(src_commits_after, src_commits)
+        self.assertEqual(src_active_after, src_active)
+
+    def test_fork_at_root_node_gives_empty_history(self):
+        from platform_app import workspace
+        from platform_app.db import connect
+        src = workspace.create_tavern_save(self.uid, self.card_id)
+        self._save_ids.append(src["id"])
+        with connect() as db:
+            root = db.execute(
+                "select id from branch_commits where save_id=%s and kind='root' order by id limit 1",
+                (src["id"],),
+            ).fetchone()
+        forked = workspace.fork_tavern_save(self.uid, src["id"], node_id=int(root["id"]))
+        self._save_ids.append(forked["id"])
+        self.assertEqual(forked["state_snapshot"].get("history") or [], [])
+        self.assertEqual(forked["state_snapshot"].get("turn"), 0)
+
+    def test_fork_default_title_suffix(self):
+        from platform_app import workspace
+        src = workspace.create_tavern_save(self.uid, self.card_id)
+        self._save_ids.append(src["id"])
+        forked = workspace.fork_tavern_save(self.uid, src["id"], message_index=1)
+        self._save_ids.append(forked["id"])
+        self.assertEqual(forked["title"], f"{src['title']} · 分支")
+
+    def test_fork_imported_lane_replays_history(self):
+        """导入型提交(save_io.import_save lane)无 state_snapshot → fork 按
+        player_input/gm_output 重放重建 history。"""
+        from platform_app import save_io, tavern_chats, workspace
+        text = ('{"user_name":"我","character_name":"小红","create_date":""}\n'
+                '{"name":"我","is_user":true,"mes":"你好"}\n'
+                '{"name":"小红","is_user":false,"mes":"嗯？"}')
+        header, commits = tavern_chats.parse_chat_jsonl(text)
+        payload = tavern_chats.chat_to_save_payload(header, commits)
+        res = save_io.import_save(self.uid, payload)
+        src_id = res["save_id"]
+        self._save_ids.append(src_id)
+        # history = [user 你好, gm 嗯？](无开场,offset=0);GM 在 idx1 → +1=2
+        # → turn 1,血缘无 turn 1 → 兜底取 <=1 最近(即唯一 commit)→ 重放两条消息。
+        forked = workspace.fork_tavern_save(self.uid, src_id, message_index=2)
+        self._save_ids.append(forked["id"])
+        hist = forked["state_snapshot"].get("history") or []
+        self.assertEqual(len(hist), 2)
+        self.assertEqual(hist[0].get("role"), "user")
+        self.assertIn("你好", hist[0].get("content", ""))
+        self.assertEqual(hist[1].get("role"), "assistant")
+        self.assertIn("嗯？", hist[1].get("content", ""))
+
+
+@unittest.skipUnless(_first_user_id() is not None, "本地无用户,跳过 DB 集成测试")
 class ImportSaveTavernLane(unittest.TestCase):
     def setUp(self):
         self.uid = _first_user_id()

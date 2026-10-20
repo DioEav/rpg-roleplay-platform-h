@@ -123,6 +123,100 @@ function OnlineCardsView() {
   );
 }
 
+/* 我的角色卡(Persona)— 玩家身份卡库(card_type='persona')。原先是酒馆抽屉
+   (TavernDrawer persona tab)的专属编辑区,2026-10 合并进统一角色卡库页:同一张
+   character_cards 表、同一套 CardEditFields 表单。走专用 /api/me/personas 端点 ——
+   不能走 myUpsert(它硬性限定 card_type='pc',对 persona 行会报「card 不存在或无权访问」)。 */
+function PersonasView() {
+  const { t } = useTranslation();
+  const [cards, setCards] = useStatePL(null);
+  const [editing, setEditing] = useStatePL(null);       // null | 'new' | persona DTO
+  const [deleteTarget, setDeleteTarget] = useStatePL(null);
+
+  const reload = React.useCallback(async () => {
+    try {
+      // personas 端点在 account 命名空间下(cards 下没有 personas 方法)
+      const r = await window.api.account.personas.list();
+      setCards((r && (r.items || r.personas)) || []);
+    } catch (_) { setCards([]); }
+  }, []);
+  React.useEffect(() => { reload(); }, [reload]);
+
+  const onSave = async (vals) => {
+    const isNew = !editing || editing === 'new';
+    try {
+      // is_default 必须回传:upsert_persona 对缺省 is_default 落 false,不改默认的编辑会被误清
+      const isDefault = !isNew && !!(editing.is_default ?? editing._raw?.is_default);
+      await window.api.account.personas.upsert({ ...vals, is_default: isDefault });
+      window.__apiToast?.(isNew ? t('cards.toast.added') : t('cards.toast.saved'), { kind: 'ok' });
+      setEditing(null); reload();
+    } catch (e) {
+      window.__apiToast?.(t('cards.toast.save_fail'), { kind: 'danger', detail: e?.message });
+    }
+  };
+
+  const onDelete = async (c) => {
+    if (!await window.__confirm({ title: t('cards.confirm.delete_title'), message: t('cards.confirm.delete_message', { name: c.name }), danger: true, confirmText: t('cards.confirm.delete_btn') })) return;
+    try {
+      await window.api.account.personas.remove(c.id);
+      window.__apiToast?.(t('cards.toast.deleted', { name: c.name }), { kind: 'ok' });
+      reload();
+    } catch (e) {
+      window.__apiToast?.(t('cards.toast.delete_fail'), { kind: 'danger', detail: e?.message });
+    }
+  };
+
+  return (
+    <>
+      <CSTable
+        variant="container"
+        trackBy="id"
+        items={cards || []}
+        loading={!cards}
+        loadingText={t('cards.list.loading')}
+        empty={<CSBox textAlign="center" color="inherit" padding={{ vertical: 'l' }}>{t('cards.hub.persona_empty')}</CSBox>}
+        header={
+          <CSHeader
+            variant="h2"
+            description={t('cards.hub.persona_desc')}
+            actions={<CSButton variant="primary" iconName="add-plus" onClick={() => setEditing('new')}>{t('cards.hub.persona_add')}</CSButton>}
+          >{t('cards.hub.persona_title')}</CSHeader>
+        }
+        columnDefinitions={[
+          { id: 'name', header: t('cards.list.col_card'), cell: (c) => (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <AvatarImg src={c.avatar_path || null} name={c.name} size={36} shape="rounded" />
+              <div style={{ minWidth: 0 }}>
+                <CSBox fontWeight="bold">
+                  {c.name}
+                  {!!(c.is_default ?? c._raw?.is_default) && <CSBadge color="blue">{t('cards.hub.default_badge')}</CSBadge>}
+                </CSBox>
+                <div style={{ ...ELLIPSIS_1, fontSize: 12.5, color: 'var(--text-quiet, #968f85)' }}>{c.identity || '—'}</div>
+              </div>
+            </div>
+          ) },
+          { id: 'updated', header: t('cards.list.col_updated'), cell: (c) => window.__fmt?.ago(c.updated_at) || c.updated_at || '—' },
+          { id: 'actions', header: '', cell: (c) => (
+            <CSSpaceBetween direction="horizontal" size="xs">
+              <CSButton variant="inline-link" iconName="edit" onClick={() => setEditing(c)}>{t('cards.list.btn_edit')}</CSButton>
+              <CSButton variant="inline-link" iconName="remove" onClick={() => onDelete(c)}>{t('cards.list.menu_delete')}</CSButton>
+            </CSSpaceBetween>
+          ) },
+        ]}
+      />
+      {editing && (
+        <CardEditModal
+          card={editing === 'new' ? null : editing}
+          isNew={editing === 'new'}
+          kind="persona"
+          onClose={() => setEditing(null)}
+          onSave={onSave}
+        />
+      )}
+    </>
+  );
+}
+
 function UserCardsView() {
   const { t } = useTranslation();
   // task 47：登录态零 mock。原 useState(USER_CARDS) 初始就显示 顾承砚/沈知微/阿衡/无名旅人
@@ -478,4 +572,4 @@ function NpcCardsView() {
   );
 }
 
-export { OnlineCardsView, UserCardsView, NpcCardsView };
+export { OnlineCardsView, UserCardsView, NpcCardsView, PersonasView };

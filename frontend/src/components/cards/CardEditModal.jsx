@@ -61,7 +61,7 @@ function CardEditModal({ card, isNew, kind, onClose, onSave, onPromote, targetSc
       <div style={{ position: 'sticky', top: 0, zIndex: 3, background: 'var(--bg-deep)', borderBottom: '1px solid var(--line)' }}>
         <div style={{ maxWidth: 1100, margin: '0 auto', padding: '13px 24px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16 }}>
           <div style={{ fontFamily: "'Noto Serif SC', serif", fontSize: 18, fontWeight: 600, color: 'var(--text)' }}>
-            {isNew ? t('cards.editor.modal_title_new') : t('cards.editor.modal_title_edit')}{kind === 'user' ? t('cards.editor.kind_user') : t('cards.editor.kind_npc')}
+            {isNew ? t('cards.editor.modal_title_new') : t('cards.editor.modal_title_edit')}{kind === 'user' ? t('cards.editor.kind_user') : kind === 'persona' ? t('cards.editor.kind_persona', { defaultValue: '身份卡' }) : t('cards.editor.kind_npc')}
           </div>
           <CSButton iconName="close" variant="link" onClick={onClose}>{t('cards.editor.btn_cancel')}</CSButton>
         </div>
