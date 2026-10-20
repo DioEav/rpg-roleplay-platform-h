@@ -33,6 +33,14 @@ function homeFbClass(id) {
 const FEATURED_COUNT = 5;
 const FEATURED_ROTATE_MS = 6000;
 
+/* 左栏 rail 的内容分区注册表:数据驱动渲染,新增分区(如「酒馆」「成就」)只需加一条
+   { view, icon, labelKey } 并在下方补对应 homeView 分支,按钮渲染/选中态/无障碍全自动。
+   样式尺寸统一由 .pl-home-rail* 控制(platform.css),不需要为新条目写 CSS。 */
+const RAIL_SECTIONS = [
+  { view: 'scripts', icon: 'book',  labelKey: 'platform.home.rail_scripts' },
+  { view: 'cards',   icon: 'cards', labelKey: 'platform.home.rail_cards' },
+];
+
 function featuredPeriodKey() {
   const d = new Date();
   return `${d.getFullYear()}-${d.getMonth() + 1}-${d.getDate()}-${d.getHours() < 12 ? 'am' : 'pm'}`;
@@ -328,22 +336,19 @@ function ProfilePage() {
 
   return (
     <div className="pl-home">
-      {/* 左栏 rail:剧本 / 角色卡 双视图切换(面板式,图标+文字标签;悬停浮起,按压缩放,选中 accent) */}
+      {/* 左栏 rail:内容分区切换(面板式,图标+文字标签;悬停浮起,按压缩放,选中 accent)。
+          条目来自 RAIL_SECTIONS 注册表,新增分区零 JSX 改动。 */}
       <aside className="pl-home-rail" aria-label={t('platform.home.rail_label', '内容分区')}>
-        <button type="button" className={`pl-home-rail-btn${homeView === 'scripts' ? ' on' : ''}`}
-          aria-label={t('platform.home.rail_scripts', '剧本')}
-          aria-pressed={homeView === 'scripts'}
-          onClick={() => setHomeView('scripts')}>
-          <Icon name="book" size={22} />
-          <span className="pl-home-rail-label">{t('platform.home.rail_scripts', '剧本')}</span>
-        </button>
-        <button type="button" className={`pl-home-rail-btn${homeView === 'cards' ? ' on' : ''}`}
-          aria-label={t('platform.home.rail_cards', '角色卡')}
-          aria-pressed={homeView === 'cards'}
-          onClick={() => setHomeView('cards')}>
-          <Icon name="cards" size={22} />
-          <span className="pl-home-rail-label">{t('platform.home.rail_cards', '角色卡')}</span>
-        </button>
+        {RAIL_SECTIONS.map((sec) => (
+          <button type="button" key={sec.view}
+            className={`pl-home-rail-btn${homeView === sec.view ? ' on' : ''}`}
+            aria-label={t(sec.labelKey)}
+            aria-pressed={homeView === sec.view}
+            onClick={() => setHomeView(sec.view)}>
+            <Icon name={sec.icon} size={27} />
+            <span className="pl-home-rail-label">{t(sec.labelKey)}</span>
+          </button>
+        ))}
       </aside>
 
       <div className="pl-home-main">
