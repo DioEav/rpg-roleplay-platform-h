@@ -614,8 +614,15 @@ function PlatformShellCS({ page, setPage, children, assistant, assistantOpen, on
   };
 
   // 独立页(无全局左导航,整页铺满):欢迎页 + 酒馆(酒馆自带 2 块式侧栏,
-  // 全局左导航会重复;顶部「全部功能」切换器仍可切走)。
-  const standalone = page === 'profile' || page === 'tavern' || page === 'md-editor';
+  // 全局左导航会重复;顶部「全部功能」切换器仍可切走)+ MD 编辑器
+  // + 两库(在线剧本库 / 在线角色卡库,2026-10 升为顶栏直达后按独立整页呈现)。
+  const standalone = page === 'profile' || page === 'tavern' || page === 'md-editor'
+    || page === 'scripts-library' || page === 'cards-online';
+  // 两库页是顶栏直达的独立页,不属于任何模块分组:顶栏「创作/游玩」分组按钮与
+  // 分组面板里的模块条目都不点亮。模块注册表里 scripts-library / cards-online
+  // 仍挂在 scripts / play 的 pages 数组下(_csActiveModule 解析会命中),
+  // 不在点亮处排除,独立页上就会误亮对应分组,误导"当前处于创作/游玩模块内"。
+  const libraryPage = page === 'scripts-library' || page === 'cards-online';
 
   return (
     <>
@@ -673,7 +680,7 @@ function PlatformShellCS({ page, setPage, children, assistant, assistantOpen, on
           </CSButtonDropdown> */}
           <nav aria-label={t('platform.menu.all_modules')} style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
             {_csSwitcherItems(reactiveUser.role === 'admin', csModules).map((g) => {
-              const active = g.text === _csActiveModule(page, csModules).group;
+              const active = !libraryPage && g.text === _csActiveModule(page, csModules).group;
               const open = openGroup === g.text;
               // 方框颜色全走主题令牌:静止 --line、展开 --line-strong、激活 --accent;
               // hover 底色 --accent-soft(与「反馈」按钮同一套淡色 hover 语言),三主题自动适配。
@@ -708,7 +715,7 @@ function PlatformShellCS({ page, setPage, children, assistant, assistantOpen, on
                       {g.items.map((it) => {
                         const m = csModules.find((x) => x.id === it.id);
                         if (!m) return null;
-                        const itemActive = m.pages.includes(page);
+                        const itemActive = !libraryPage && m.pages.includes(page);
                         return (
                           <button
                             key={it.id}
