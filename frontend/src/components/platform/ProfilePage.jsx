@@ -585,4 +585,4 @@ function ProfilePage() {
   );
 }
 
-export { ProfilePage };
+export { ProfilePage, homeFbClass };

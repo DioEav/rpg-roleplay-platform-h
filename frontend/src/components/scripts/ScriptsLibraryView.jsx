@@ -4,13 +4,13 @@ import React from 'react';
 import { useState as useStatePL, useEffect as useEffectPL } from 'react';
 import { useTranslation } from 'react-i18next';
 import AvatarImg from '../AvatarImg.jsx';
+import { Icon } from '../../game-icons.jsx';
+import { homeFbClass } from '../platform/ProfilePage.jsx';
 import { parseImportedDesc } from '../../lib/script-desc.js';
 import CSHeader from '@cloudscape-design/components/header';
 import CSSpaceBetween from '@cloudscape-design/components/space-between';
 import CSButton from '@cloudscape-design/components/button';
 import CSBox from '@cloudscape-design/components/box';
-import CSBadge from '@cloudscape-design/components/badge';
-import CSCards from '@cloudscape-design/components/cards';
 import CSTextFilter from '@cloudscape-design/components/text-filter';
 
 /* 在线剧本库 — 浏览并导入其他用户公开分享的剧本。
@@ -75,68 +75,66 @@ function ScriptsLibraryView() {
         actions={<CSButton iconName="refresh" onClick={() => reload(q)}>{t('common.refresh')}</CSButton>}
       >{t('scripts.public.title')}</CSHeader>
 
-      <CSCards
-        items={items}
-        loading={loading}
-        loadingText={t('scripts.public.loading')}
-        trackBy="id"
-        cardsPerRow={[{ cards: 1 }, { minWidth: 480, cards: 2 }, { minWidth: 920, cards: 3 }]}
-        filter={
-          <div style={{ minWidth: 320 }}>
-            <CSTextFilter filteringText={q} filteringPlaceholder={t('scripts.public.search_placeholder')}
-              onChange={({ detail }) => setQ(detail.filteringText)}
-              onDelayedChange={onSearch} />
-          </div>
-        }
-        empty={<CSBox textAlign="center" color="inherit" padding={{ vertical: 'l' }}>
-          {loading ? t('common.loading') : (q ? t('scripts.public.empty_search') : t('scripts.public.empty'))}
-        </CSBox>}
-        cardDefinition={{
-            header: (s) => (
-              <CSSpaceBetween direction="horizontal" size="xs" alignItems="center">
-                <CSBox key="t" variant="h3" padding="n">{s.title}</CSBox>
-                {(s.mine || s.imported || importedIds[s.id]) && <CSBadge key="b" color="green">{s.mine ? t('scripts.public.mine_badge') : t('scripts.public.imported_badge')}</CSBadge>}
-              </CSSpaceBetween>
-            ),
-          sections: [
-            { id: 'cover', content: (s) => s.cover_image_url ? (
-              <AvatarImg
-                src={s.cover_image_url}
-                name={s.title}
-                size={140}
-                shape="rounded"
-                aspectRatio="16/9"
-                zoomable
-              />
-            ) : null },
-            { id: 'author', content: (s) => (
-              <CSBox fontSize="body-s" color="text-body-secondary">{t('scripts.public.shared_by', { author: s.author || s.author_username || t('scripts.public.anon') })}</CSBox>
-            ) },
-            { id: 'stats', content: (s) => (
-              <CSSpaceBetween direction="horizontal" size="xs">
-                <CSBadge key="ch">{t('scripts.public.stat_chapters', { n: (s.chapter_count || 0).toLocaleString() })}</CSBadge>
-                <CSBadge key="wd">{t('scripts.public.stat_words', { n: ((s.word_count || 0) / 10000).toFixed(0) })}</CSBadge>
-                <CSBadge key="cl" color="grey">{t('scripts.public.stat_clones', { n: s.clone_count || 0 })}</CSBadge>
-              </CSSpaceBetween>
-            ) },
-            { id: 'desc', content: (s) => {
-              // 自动生成的导入描述按界面语言本地化(与首页 Hero 同一解析),用户自写描述原样显示
-              const imp = parseImportedDesc(s.description);
-              return s.description
-                ? <CSBox color="text-body-secondary">
-                    {imp ? t('scripts.public.imported_desc', { n: imp.n, defaultValue: `导入剧本 · ${imp.n}章` }) : s.description}
-                  </CSBox> : null;
-            } },
-            { id: 'actions', content: (s) => (
-              (s.mine || s.imported || importedIds[s.id])
-                ? <CSButton disabled iconName="check">{s.mine ? t('scripts.public.is_mine') : t('scripts.public.imported_badge')}</CSButton>
-                : <CSButton variant="primary" iconName="download"
-                    loading={cloningId === s.id} disabled={!!cloningId}
-                    onClick={() => onClone(s)}>{t('scripts.public.import_btn')}</CSButton>
-            ) },
-          ],
-        }}
-      />
+      {/* 搜索框(原 CSCards 的 filter 插件,现独立渲染) */}
+      <div style={{ minWidth: 320, maxWidth: 460 }}>
+        <CSTextFilter filteringText={q} filteringPlaceholder={t('scripts.public.search_placeholder')}
+          onChange={({ detail }) => setQ(detail.filteringText)}
+          onDelayedChange={onSearch} />
+      </div>
+
+      {loading ? (
+        <div className="pl-home-skel" aria-hidden="true"><i /><i /><i /><i /><i /><i /></div>
+      ) : items.length === 0 ? (
+        <CSBox textAlign="center" color="inherit" padding={{ vertical: 'l' }}>
+          {q ? t('scripts.public.empty_search') : t('scripts.public.empty')}
+        </CSBox>
+      ) : (
+        /* 大图封面卡片:与首页热门剧本同构(.pl-home-card),封面整宽置顶,
+           悬停整卡浮起 + 封面放大提亮(动效统一在 platform.css)。 */
+        <div className="pl-home-grid pl-lib-grid">
+          {items.map((s) => {
+            const owned = !!(s.mine || s.imported || importedIds[s.id]);
+            return (
+              <article className="pl-home-card" key={s.id}>
+                <div className={`pl-home-cover${s.cover_image_url ? '' : ` ${homeFbClass(s.id)}`}`}>
+                  <AvatarImg src={s.cover_image_url || null} name={s.title} className="pl-home-cover-img" zoomable />
+                  <span className="pl-home-cov-chip"><Icon name="download" size={11} /> {s.clone_count || 0}</span>
+                </div>
+                <div className="pl-home-card-body">
+                  <div className="pl-home-card-title">
+                    {s.title}
+                    {owned && <span className="pill accent">{s.mine ? t('scripts.public.mine_badge') : t('scripts.public.imported_badge')}</span>}
+                  </div>
+                  <div className="pl-home-card-meta">
+                    {t('scripts.public.stat_chapters', { n: (s.chapter_count || 0).toLocaleString() })}
+                    {' · '}
+                    {t('scripts.public.stat_words', { n: ((s.word_count || 0) / 10000).toFixed(0) })}
+                  </div>
+                  {s.description && (() => {
+                    // 自动生成的导入描述按界面语言本地化(与首页 Hero 同一解析),用户自写描述原样显示
+                    const imp = parseImportedDesc(s.description);
+                    return (
+                      <div className="pl-lib-desc">
+                        {imp ? t('scripts.public.imported_desc', { n: imp.n, defaultValue: `导入剧本 · ${imp.n}章` }) : s.description}
+                      </div>
+                    );
+                  })()}
+                  <div className="pl-home-card-foot">
+                    <span className="pl-home-by">by {s.author || s.author_username || t('scripts.public.anon')}</span>
+                    {owned ? (
+                      <CSButton disabled iconName="check">{s.mine ? t('scripts.public.is_mine') : t('scripts.public.imported_badge')}</CSButton>
+                    ) : (
+                      <CSButton variant="primary" iconName="download"
+                        loading={cloningId === s.id} disabled={!!cloningId}
+                        onClick={() => onClone(s)}>{t('scripts.public.import_btn')}</CSButton>
+                    )}
+                  </div>
+                </div>
+              </article>
+            );
+          })}
+        </div>
+      )}
     </CSSpaceBetween>
   );
 }

@@ -17,6 +17,7 @@ import CSTextFilter from '@cloudscape-design/components/text-filter';
 import CSSegmentedControl from '@cloudscape-design/components/segmented-control';
 import CSSelect from '@cloudscape-design/components/select';
 import { USER_CARDS, NPC_CARDS, _oneLine, ELLIPSIS_1 } from './helpers.js';
+import { homeFbClass } from '../platform/ProfilePage.jsx';
 import { CardGrid } from './CardGrid.jsx';
 import { CardDetailPanel } from './CardDetailPanel.jsx';
 import { CardEditModal } from './CardEditModal.jsx';
@@ -79,37 +80,42 @@ function OnlineCardsView() {
       </div>
 
       {err && <CSAlert type="error" header={t('cards.page.online.load_fail')}>{err}</CSAlert>}
-      {loading && items == null ? <CSBox color="text-body-secondary" padding="m">{t('cards.page.online.loading')}</CSBox>
-        : (items && items.length === 0) ? <CSBox textAlign="center" color="text-body-secondary" padding={{ vertical: 'xl' }}>{t('cards.page.online.empty')}</CSBox>
+      {loading && items == null ? (
+        <div className="pl-home-skel" aria-hidden="true"><i /><i /><i /><i /><i /><i /></div>
+      ) : (items && items.length === 0) ? <CSBox textAlign="center" color="text-body-secondary" padding={{ vertical: 'xl' }}>{t('cards.page.online.empty')}</CSBox>
         : (
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))', gap: 14 }}>
+          /* 大图封面卡片:与首页人气角色卡同构(.pl-home-card),封面整宽置顶(竖版立绘
+             裁切重心偏上),悬停整卡浮起 + 封面放大提亮(动效统一在 platform.css)。 */
+          <div className="pl-home-grid pl-lib-grid">
             {(items || []).map((c) => (
-              <div key={c.id} style={{ border: '1px solid var(--line, #36322d)', borderRadius: 10, padding: 14, background: 'var(--panel, #211f1d)', display: 'grid', gap: 8 }}>
-                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
-                    <AvatarImg src={c.avatar_path || null} name={c.name || '?'} size={40} shape="rounded" />
-                    <strong style={{ fontSize: 15 }}>{c.name || t('cards.detail.unnamed')}</strong>
-                    {c.mine && <CSBadge color="green">{t('cards.page.online.mine_badge')}</CSBadge>}
-                    {!c.mine && c.imported && <CSBadge color="green">{t('cards.page.online.imported_badge')}</CSBadge>}
+              <article className="pl-home-card" key={c.id}>
+                <div className={`pl-home-cover${c.avatar_path ? '' : ` ${homeFbClass(c.id)}`}`}>
+                  <AvatarImg src={c.avatar_path || null} name={c.name || '?'} className="pl-home-cover-img pl-home-cover-img-face" />
+                  <span className="pl-home-cov-chip" title={t('scripts.public.stat_clones', { n: c.clone_count || 0 })}>♥ {c.clone_count || 0}</span>
+                </div>
+                <div className="pl-home-card-body">
+                  <div className="pl-home-card-title">
+                    {c.name || t('cards.detail.unnamed')}
+                    {c.mine && <span className="pill accent">{t('cards.page.online.mine_badge')}</span>}
+                    {!c.mine && c.imported && <span className="pill accent">{t('cards.page.online.imported_badge')}</span>}
                   </div>
-                  <span style={{ fontSize: 11, color: 'var(--text-quiet, #9a948c)' }}>♥ {c.clone_count || 0}</span>
-                </div>
-                {c.identity && <div style={{ fontSize: 12, color: 'var(--accent, #c96442)' }}>{String(c.identity).slice(0, 40)}</div>}
-                <div style={{ fontSize: 12, color: 'var(--text-quiet, #9a948c)', lineHeight: 1.5, minHeight: 36, display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>
-                  {(c.personality || c.background || c.appearance || t('cards.page.online.no_bio')).slice(0, 90)}
-                </div>
-                <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-                  {(c.tags || []).slice(0, 3).map((tg) => <CSBadge key={tg}>{tg}</CSBadge>)}
-                </div>
-                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, marginTop: 2 }}>
-                  <span style={{ fontSize: 11, color: 'var(--muted, #b8b2a8)' }}>by {c.owner_name || t('cards.page.online.anon')}</span>
-                  {(c.mine || c.imported) ? (
-                    <CSButton disabled iconName="check">{c.mine ? t('cards.page.online.mine_badge') : t('cards.page.online.imported_badge')}</CSButton>
-                  ) : (
-                    <CSButton variant="primary" loading={!!importing[c.id]} onClick={() => doImport(c)}>{t('cards.page.online.btn_import')}</CSButton>
+                  {c.identity && <div className="pl-home-card-meta pl-home-char-id">{String(c.identity).slice(0, 40)}</div>}
+                  <div className="pl-lib-desc">{(c.personality || c.background || c.appearance || t('cards.page.online.no_bio')).slice(0, 90)}</div>
+                  {(c.tags || []).length > 0 && (
+                    <div className="pl-home-tags">
+                      {(c.tags || []).slice(0, 3).map((tg) => <span className="pill" key={tg}>{tg}</span>)}
+                    </div>
                   )}
+                  <div className="pl-home-card-foot">
+                    <span className="pl-home-by">by {c.owner_name || t('cards.page.online.anon')}</span>
+                    {(c.mine || c.imported) ? (
+                      <CSButton disabled iconName="check">{c.mine ? t('cards.page.online.mine_badge') : t('cards.page.online.imported_badge')}</CSButton>
+                    ) : (
+                      <CSButton variant="primary" loading={!!importing[c.id]} onClick={() => doImport(c)}>{t('cards.page.online.btn_import')}</CSButton>
+                    )}
+                  </div>
                 </div>
-              </div>
+              </article>
             ))}
           </div>
         )}
