@@ -105,8 +105,8 @@ function CardEditModal({ card, isNew, kind, onClose, onSave, onPromote, targetSc
                 <CSKeyValuePairs columns={1} items={[
                   { label: t('cards.editor.name'), value: form.name.trim() || '—' },
                   { label: t('cards.editor.identity'), value: form.identity.trim() || '—' },
-                  { label: t('cards.editor.scope'), value: form.scope === 'public' ? t('cards.detail.scope_public') : t('cards.detail.scope_private') },
-                  { label: t('cards.editor.enabled'), value: form.enabled ? t('cards.editor.enabled_on') : t('cards.editor.enabled_off') },
+                  // scope(死旋钮)已从摘要移除;enabled 仅 NPC 有真实过滤点,仅 NPC 显示
+                  ...(kind === 'npc' ? [{ label: t('cards.editor.enabled'), value: form.enabled ? t('cards.editor.enabled_on') : t('cards.editor.enabled_off') }] : []),
                 ]} />
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
                   <CSButton variant="primary" disabled={!nameOk || submitting} loading={submitting} onClick={doSave}>

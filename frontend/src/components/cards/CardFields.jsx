@@ -27,16 +27,7 @@ function CardEditFields({ form, u, kind = 'user' }) {
   // 图3:人格 skill 卡 —— 行为由整包 skill 原文驱动(扮演时逐字注入),通用档案字段对它基本无意义。
   // 这类卡的编辑器不再平铺一堆空字段,只留名称/标签,其余原始字段折叠收起。
   const isSkill = String(form.tags || '').split(/[,，]/).map((s) => s.trim()).includes('人格skill');
-  const scopeOpts = isNpc
-    ? [
-        { value: 'script', label: t('cards.editor.scope_script') },
-        { value: 'private', label: t('cards.editor.scope_private') },
-        { value: 'public', label: t('cards.editor.scope_public') },
-      ]
-    : [
-        { value: 'private', label: t('cards.editor.scope_private') },
-        { value: 'public', label: t('cards.editor.scope_public') },
-      ];
+  // scope 下拉已随「注入参数」收敛下架(2026-10-21):scope 无门控消费点,发布走 is_public
   return (
     <CSSpaceBetween size="l">
       {isSkill && (
@@ -99,35 +90,36 @@ function CardEditFields({ form, u, kind = 'user' }) {
         </CSSpaceBetween>
       </CSExpandableSection>
 
+      {/* 注入参数(2026-10-21 按卡型收敛):只保留有真实消费点的旋钮 ——
+          priority(用户卡=卡库列表排序,NPC=GM 注入顺序)、enabled + first_revealed_chapter
+          (仅 NPC:GM 注入硬过滤 + 进度 reveal 闸)。token_budget/importance/scope 为死旋钮
+          (管道加载但无消费点/无门控),按卡型隐藏;表单值仍随 cardFormPayload 原样回存,
+          重新接线恢复显示不会丢已存值。
+          身份卡(persona)整区隐藏:upsert_persona 不存储 priority,列表排序也只用
+          is_default/updated_at —— 区内没有任何对它生效的旋钮。 */}
+      {kind !== 'persona' && (
       <CSExpandableSection variant="container" defaultExpanded={!isSkill}
         headerText={t('cards.editor.section_inject')}
-        headerDescription={t('cards.editor.section_inject_desc')}>
+        headerDescription={t(isNpc ? 'cards.editor.section_inject_desc_npc' : 'cards.editor.section_inject_desc_user')}>
         <CSColumnLayout columns={2}>
-          <CSFormField label={t('cards.editor.importance')} description={t('cards.editor.importance_desc')}>
-            <CSInput type="number" value={String(form.importance)} onChange={({ detail }) => u('importance', detail.value)} />
+          <CSFormField label={t('cards.editor.priority')} description={t('cards.editor.priority_desc')}>
+            <CSInput type="number" value={String(form.priority)} onChange={({ detail }) => u('priority', detail.value)} />
           </CSFormField>
           {isNpc && (
             <CSFormField label={t('cards.editor.first_revealed_chapter')} description={t('cards.editor.first_revealed_chapter_desc')}>
               <CSInput type="number" value={String(form.first_revealed_chapter)} onChange={({ detail }) => u('first_revealed_chapter', detail.value)} />
             </CSFormField>
           )}
-          <CSFormField label={t('cards.editor.token_budget')} description={t('cards.editor.token_budget_desc')}>
-            <CSInput type="number" value={String(form.token_budget)} onChange={({ detail }) => u('token_budget', detail.value)} />
-          </CSFormField>
-          <CSFormField label={t('cards.editor.priority')} description={t('cards.editor.priority_desc')}>
-            <CSInput type="number" value={String(form.priority)} onChange={({ detail }) => u('priority', detail.value)} />
-          </CSFormField>
-          <CSFormField label={t('cards.editor.scope')}>
-            <CSSelect selectedOption={scopeOpts.find((o) => o.value === form.scope) || scopeOpts[0]}
-              options={scopeOpts} onChange={({ detail }) => u('scope', detail.selectedOption.value)} />
-          </CSFormField>
-          <CSFormField label={t('cards.editor.enabled')}>
-            <CSToggle checked={!!form.enabled} onChange={({ detail }) => u('enabled', detail.checked)}>
-              {form.enabled ? t('cards.editor.enabled_on') : t('cards.editor.enabled_off')}
-            </CSToggle>
-          </CSFormField>
+          {isNpc && (
+            <CSFormField label={t('cards.editor.enabled')}>
+              <CSToggle checked={!!form.enabled} onChange={({ detail }) => u('enabled', detail.checked)}>
+                {form.enabled ? t('cards.editor.enabled_on') : t('cards.editor.enabled_off')}
+              </CSToggle>
+            </CSFormField>
+          )}
         </CSColumnLayout>
       </CSExpandableSection>
+      )}
     </CSSpaceBetween>
   );
 }
