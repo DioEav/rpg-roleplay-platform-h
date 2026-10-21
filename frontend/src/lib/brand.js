@@ -26,9 +26,6 @@ export const DOCS_ORIGIN = import.meta.env.VITE_DOCS_ORIGIN || 'https://docs.ste
 // 默认在线后端(自部署/移动端"在线模式"缺省指向)
 export const ONLINE_BASE = import.meta.env.VITE_ONLINE_BASE || 'https://rpg-roleplay.stellatrix.icu';
 
-export const SUPPORT_EMAIL = import.meta.env.VITE_SUPPORT_EMAIL || 'support@stellatrix.icu';
-export const SECURITY_EMAIL = import.meta.env.VITE_SECURITY_EMAIL || 'security@stellatrix.icu';
-
 export const LEGAL_BASE = `${LANDING_BASE}/legal`;
 export const AUP_LINK = `${LEGAL_BASE}/aup#2J`;
 export const ADULT_DISCLAIMER_URL = `${LANDING_BASE}/legal/adult-content-disclaimer`;

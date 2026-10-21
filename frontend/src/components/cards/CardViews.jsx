@@ -4,6 +4,7 @@ import React from 'react';
 import { useState as useStatePL, useEffect as useEffectPL } from 'react';
 import { useTranslation } from 'react-i18next';
 import AvatarImg from '../AvatarImg.jsx';
+import { Icon } from '../../game-icons.jsx';
 import { ResizableSplit } from '../../platform-app.jsx';
 import CSSpaceBetween from '@cloudscape-design/components/space-between';
 import CSHeader from '@cloudscape-design/components/header';
@@ -14,7 +15,6 @@ import CSBox from '@cloudscape-design/components/box';
 import CSBadge from '@cloudscape-design/components/badge';
 import CSTable from '@cloudscape-design/components/table';
 import CSTextFilter from '@cloudscape-design/components/text-filter';
-import CSSegmentedControl from '@cloudscape-design/components/segmented-control';
 import CSSelect from '@cloudscape-design/components/select';
 import { USER_CARDS, NPC_CARDS, _oneLine, ELLIPSIS_1 } from './helpers.js';
 import { homeFbClass } from '../platform/ProfilePage.jsx';
@@ -27,7 +27,7 @@ import TablePagination from '../TablePagination.jsx';
 
 /* 角色卡/身份卡列表默认每页条数(可由分页条切换;接口缺省仍返回全量,
    新建存档向导/酒馆选卡器等全量消费方不受影响) */
-const DEFAULT_PAGE_SIZE = 50;
+const DEFAULT_PAGE_SIZE = 10;
 
 /* 在线角色卡库 — 浏览并完整导入其他用户公开分享的 PC 角色卡。
    GET /api/cards/public · POST /api/cards/public/{id}/clone(完整复制进自己卡库,非指针) */
@@ -37,7 +37,7 @@ function OnlineCardsView() {
   const [qInput, setQInput] = React.useState(''); // 搜索框受控值(逐键更新,不触发请求)
   const [q, setQ] = React.useState('');           // 已应用的搜索词(服务端过滤)
   const [page, setPage] = React.useState(1);
-  const [pageSize, setPageSize] = React.useState(20);
+  const [pageSize, setPageSize] = React.useState(10);
   const [total, setTotal] = React.useState(0);
   const [loading, setLoading] = React.useState(true);
   const [err, setErr] = React.useState('');
@@ -202,37 +202,28 @@ function PersonasView() {
 
   return (
     <>
-      <CSTable
+      {/* 布局与用户角色卡界面一致:标题/搜索/新建都在表格容器之外;SpaceBetween 提供纵向间隔 */}
+      <CSSpaceBetween size="l">
+      <CSHeader key="p-header"
+        variant="h1"
+        description={t('cards.hub.persona_desc')}
+        actions={<CSButton variant="primary" iconName="add-plus" onClick={() => setEditing('new')}>{t('cards.hub.persona_add')}</CSButton>}
+      >{t('cards.hub.persona_title')}</CSHeader>
+      <div key="p-filter" style={{ minWidth: 260 }}>
+        <CSTextFilter filteringText={qInput} filteringPlaceholder={t('cards.list.search_placeholder')}
+          onChange={({ detail }) => setQInput(detail.filteringText)}
+          onDelayedChange={({ detail }) => { setQ(detail.filteringText || ''); setPage(1); }} />
+      </div>
+      <CSTable key="p-table"
         variant="container"
         trackBy="id"
         items={cards || []}
         loading={!cards}
         loadingText={t('cards.list.loading')}
-        filter={
-          <div style={{ minWidth: 260 }}>
-            <CSTextFilter filteringText={qInput} filteringPlaceholder={t('cards.list.search_placeholder')}
-              onChange={({ detail }) => setQInput(detail.filteringText)}
-              onDelayedChange={({ detail }) => { setQ(detail.filteringText || ''); setPage(1); }} />
-          </div>
-        }
-        pagination={
-          <TablePagination
-            total={total} page={page} pageSize={pageSize}
-            onPageChange={setPage}
-            onPageSizeChange={(n) => { setPageSize(n); setPage(1); }} />
-        }
         empty={<CSBox textAlign="center" color="inherit" padding={{ vertical: 'l' }}>{q ? t('cards.empty.no_match') : t('cards.hub.persona_empty')}</CSBox>}
-        header={
-          <CSHeader
-            variant="h2"
-            counter={`(${total})`}
-            description={t('cards.hub.persona_desc')}
-            actions={<CSButton variant="primary" iconName="add-plus" onClick={() => setEditing('new')}>{t('cards.hub.persona_add')}</CSButton>}
-          >{t('cards.hub.persona_title')}</CSHeader>
-        }
         columnDefinitions={[
-          { id: 'name', header: t('cards.list.col_card'), cell: (c) => (
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          { id: 'name', header: t('cards.list.col_card'), widthPercent: 46, cell: (c) => (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, maxWidth: 'min(560px, 46vw)' }}>
               <AvatarImg src={c.avatar_path || null} name={c.name} size={36} shape="rounded" />
               <div style={{ minWidth: 0 }}>
                 <CSBox fontWeight="bold">
@@ -243,15 +234,28 @@ function PersonasView() {
               </div>
             </div>
           ) },
-          { id: 'updated', header: t('cards.list.col_updated'), cell: (c) => window.__fmt?.ago(c.updated_at) || c.updated_at || '—' },
-          { id: 'actions', header: '', cell: (c) => (
-            <CSSpaceBetween direction="horizontal" size="xs">
-              <CSButton variant="inline-link" iconName="edit" onClick={() => setEditing(c)}>{t('cards.list.btn_edit')}</CSButton>
-              <CSButton variant="inline-link" iconName="remove" onClick={() => onDelete(c)}>{t('cards.list.menu_delete')}</CSButton>
-            </CSSpaceBetween>
+          { id: 'tags', header: t('cards.list.col_tags'), widthPercent: 18, cell: (c) => ((c.tags || []).length
+            ? <CSSpaceBetween direction="horizontal" size="xxs">{(c.tags || []).slice(0, 4).map((tg) => <CSBadge key={tg}>{tg}</CSBadge>)}</CSSpaceBetween>
+            : <CSBox color="text-status-inactive">—</CSBox>) },
+          { id: 'updated', header: t('cards.list.col_updated'), widthPercent: 18, cell: (c) => window.__fmt?.ago(c.updated_at) || c.updated_at || '—' },
+          { id: 'actions', header: '', widthPercent: 18, cell: (c) => (
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 6, width: '100%' }}>
+              <button type="button" className="pl-rowact" onClick={() => setEditing(c)}>
+                <Icon name="edit" size={12} /> {t('cards.list.btn_edit')}
+              </button>
+              <button type="button" className="pl-rowact pl-rowact-danger" onClick={() => onDelete(c)}>
+                <Icon name="trash" size={12} /> {t('cards.list.menu_delete')}
+              </button>
+            </div>
           ) },
         ]}
       />
+      </CSSpaceBetween>
+      {/* 分页独立于表格容器之外(表格 pagination 槽会渲染进框内表头上方) */}
+      <TablePagination
+        total={total} page={page} pageSize={pageSize}
+        onPageChange={setPage}
+        onPageSizeChange={(n) => { setPageSize(n); setPage(1); }} />
       {editing && (
         <CardEditModal
           card={editing === 'new' ? null : editing}
@@ -271,7 +275,6 @@ function UserCardsView() {
   // 这套示例卡片，reload 拿到真数据再覆盖。匿名时 reload 失败仍保留 USER_CARDS（designer offline）。
   const IS_ANON = !(window.RPG_AUTH && window.RPG_AUTH.authed);
   const [cards, setCards] = useStatePL(IS_ANON ? USER_CARDS : []);
-  const [filter, setFilter] = useStatePL("all");
   const [q, setQ] = useStatePL("");           // 已应用的搜索词(服务端过滤,延迟提交)
   const [qInput, setQInput] = useStatePL(""); // 搜索框受控值(逐键更新,不触发请求)
   const [page, setPage] = useStatePL(1);
@@ -300,9 +303,7 @@ function UserCardsView() {
         origin: c.origin || t('cards.list.origin_generic'),
         bio: c.description || c.summary || c.bio || c.personality || c.current_status || c.appearance || "",
         tags: c.tags || [],
-        pinned: !!c.pinned,
         is_public: !!c.is_public,
-        uses: c.uses || 0,
         updated: window.__fmt?.ago(c.updated_at) || c.updated_at || "—",
         _raw: c,
       })));
@@ -361,10 +362,9 @@ function UserCardsView() {
     }
   };
 
-  let filtered = cards;
-  // q 已下沉服务端(分页语义下客户端过滤只能看见当前页);置顶筛选保持客户端
-  // (character_cards 无 pinned 列,恒空 — 存量装饰位,行为不变)
-  if (filter === "pinned") filtered = filtered.filter(c => c.pinned);
+  // q 过滤已下沉服务端(分页语义下客户端过滤只能看见当前页)。
+  // 「置顶」筛选已下架(2026-10-21):character_cards 无 pinned 列、无置顶动作,属死装饰位。
+  const pagedCards = cards;
 
   const selected = cards.find((x) => x.id === selectedId) || null;
   const onDuplicate = async (c) => {
@@ -401,13 +401,7 @@ function UserCardsView() {
       variant="container"
       trackBy="id"
       selectionType="single"
-      items={filtered}
-      pagination={
-        <TablePagination
-          total={total} page={page} pageSize={pageSize}
-          onPageChange={setPage}
-          onPageSizeChange={(n) => { setPageSize(n); setPage(1); }} />
-      }
+      items={pagedCards}
       selectedItems={selected ? [selected] : []}
       onSelectionChange={({ detail }) => { const x = detail.selectedItems[0]; if (x) setSelectedId(x.id); }}
       onRowClick={({ detail }) => setSelectedId(detail.item.id)}
@@ -427,7 +421,6 @@ function UserCardsView() {
         { id: 'tags', header: t('cards.list.col_tags'), cell: (c) => (c.tags?.length
           ? <CSSpaceBetween direction="horizontal" size="xxs">{c.tags.slice(0, 4).map((tg) => <CSBadge key={tg}>{tg}</CSBadge>)}</CSSpaceBetween>
           : <CSBox color="text-status-inactive">—</CSBox>) },
-        { id: 'uses', header: t('cards.list.col_uses'), cell: (c) => t('cards.list.uses_count', { count: c.uses }) },
         { id: 'updated', header: t('cards.list.col_updated'), cell: (c) => c.updated },
       ]}
     />
@@ -438,7 +431,6 @@ function UserCardsView() {
       <CSSpaceBetween size="l">
         <CSHeader
           variant="h1"
-          counter={`(${total})`}
           description={t('cards.list.user_cards_desc')}
           actions={
             <CSSpaceBetween direction="horizontal" size="xs">
@@ -448,20 +440,21 @@ function UserCardsView() {
           }
         >{t('cards.list.user_cards_title')}</CSHeader>
 
-        <CSSpaceBetween direction="horizontal" size="xs">
-          <div style={{ minWidth: 260 }}>
-            <CSTextFilter filteringText={qInput} filteringPlaceholder={t('cards.list.search_placeholder')}
-              onChange={({ detail }) => setQInput(detail.filteringText)}
-              onDelayedChange={({ detail }) => { setQ(detail.filteringText || ''); setPage(1); }} />
-          </div>
-          <CSSegmentedControl selectedId={filter}
-            options={[{ id: 'all', text: t('cards.list.filter_all') }, { id: 'pinned', text: t('cards.list.filter_pinned') }]}
-            onChange={({ detail }) => { setFilter(detail.selectedId); setPage(1); }} />
-        </CSSpaceBetween>
+        {/* 搜索框通栏,与身份卡界面一致(纵向 SpaceBetween 内的块级 div 撑满内容宽) */}
+        <div style={{ minWidth: 260 }}>
+          <CSTextFilter filteringText={qInput} filteringPlaceholder={t('cards.list.search_placeholder')}
+            onChange={({ detail }) => setQInput(detail.filteringText)}
+            onDelayedChange={({ detail }) => { setQ(detail.filteringText || ''); setPage(1); }} />
+        </div>
 
         {selected
           ? <ResizableSplit storageKey="cards" top={tableEl} bottom={detailEl} />
           : tableEl}
+        {/* 分页独立于表格容器之外(表格 pagination 槽会渲染进框内表头上方) */}
+        <TablePagination key="cards-page"
+          total={total} page={page} pageSize={pageSize}
+          onPageChange={setPage}
+          onPageSizeChange={(n) => { setPageSize(n); setPage(1); }} />
 
       </CSSpaceBetween>
       {adding && (
@@ -515,9 +508,7 @@ function NpcCardsView() {
             script_id: s.id,
             bio: c.appearance || c.personality || c.summary || c.description || "",
             tags: Array.isArray(c.tags) ? c.tags : [],
-            uses: c.uses || 0,
             updated: window.__fmt?.ago(c.updated_at) || c.updated_at || "—",
-            pinned: !!c.pinned,
             _raw: c,
           }));
         } catch (_) { return []; }

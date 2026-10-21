@@ -32,6 +32,7 @@ import CSContainer from '@cloudscape-design/components/container';
 import CSSpaceBetween from '@cloudscape-design/components/space-between';
 import CSButton from '@cloudscape-design/components/button';
 import CSButtonDropdown from '@cloudscape-design/components/button-dropdown';
+import CSInput from '@cloudscape-design/components/input';
 import CSBox from '@cloudscape-design/components/box';
 import CSBadge from '@cloudscape-design/components/badge';
 import CSStatusIndicator from '@cloudscape-design/components/status-indicator';
@@ -69,6 +70,9 @@ function ScriptDetailPanel({ script: s, savesCount, scriptSaves = [], embedStatu
   const [npcImport, setNpcImport] = useStatePL(false); // 酒馆卡导入弹窗(复用 TavernImportModal)
   // Version history drawer
   const [historyOpen, setHistoryOpen] = useStatePL(false);
+  // 剧本改名(照存档目录交互:标题变行内输入 + 保存/取消;仅原作者,订阅剧本只读由后端 403 兜底)
+  const [renaming, setRenaming] = useStatePL(false);
+  const [renameVal, setRenameVal] = useStatePL('');
   // Fork inline confirmation state
   const [forkBusy, setForkBusy] = useStatePL(false);
   const [forkConfirm, setForkConfirm] = useStatePL(false);
@@ -82,12 +86,26 @@ function ScriptDetailPanel({ script: s, savesCount, scriptSaves = [], embedStatu
     // pendingTab effect 与本 reset effect 在 s.id 变化时会同帧触发,
     // 后者若无条件 setTab('overview') 会盖掉前者设的目标 tab。
     if (!pendingTab) setTab('overview');
-    setHistoryOpen(false); setForkConfirm(false);
+    setHistoryOpen(false); setForkConfirm(false); setRenaming(false);
     setCoverUrl(s.cover_image_url || null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [s.id]);
 
   const isOwner = currentUserId && s.owner_id === currentUserId;
+
+  // 剧本改名(POST /api/scripts/{id}/rename,严格 owner):成功后父级 reload 刷新列表与标题
+  const doRename = async () => {
+    const val = renameVal.trim();
+    if (!val || val === s.title) { setRenaming(false); return; }
+    try {
+      await window.api.scripts.rename(s.id, val);
+      window.__apiToast?.(t('scripts.toast.renamed'), { kind: 'ok', duration: 2000 });
+      setRenaming(false);
+      onReload && onReload();
+    } catch (e) {
+      window.__apiToast?.(t('scripts.toast.rename_fail'), { kind: 'danger', detail: e?.message });
+    }
+  };
 
   // NPC 列表「静默重拉」——**不清空**旧列表,拿到新数据再整体换掉。
   // 此前所有刷新点都写 setNpc(null) 借 == null 触发下面那个拉取 effect,代价是中间有一帧
@@ -326,7 +344,7 @@ function ScriptDetailPanel({ script: s, savesCount, scriptSaves = [], embedStatu
     )}
     <CSContainer header={
       <CSHeader variant="h2"
-        actions={
+        actions={!renaming && (
           <CSSpaceBetween direction="horizontal" size="xs">
             {isOwner && (
               <CSButton iconName="gen-ai" onClick={() => setCoverStudioOpen(true)}>{t('scripts.page.change_cover')}</CSButton>
@@ -354,11 +372,21 @@ function ScriptDetailPanel({ script: s, savesCount, scriptSaves = [], embedStatu
             >{t('scripts.my.play_game')}</CSButtonDropdown>
             <CSButton iconName="file" onClick={() => onChapters(s)}>{t('scripts.my.view_chapters')}</CSButton>
             <CSButton iconName="status-info" onClick={() => onReview(s)}>{t('scripts.my.kb_review')}</CSButton>
-            <CSButton iconName="settings" onClick={() => setHistoryOpen(v => !v)}>{t('scripts.version.history_btn')}</CSButton>
+            {/* 共享(发布/取消公开)自「更多」提为一级按钮(2026-10-21),紧跟设定核对 */}
+            <CSButton iconName={s.is_public ? 'lock-private' : 'share'} onClick={() => onToggleVisibility(s)}>
+              {s.is_public ? t('scripts.my.action_unpublish') : t('scripts.my.action_publish')}
+            </CSButton>
+            {/* 重命名(照存档目录交互:标题变行内输入;仅原作者,订阅剧本只读) */}
+            {isOwner && (
+              <CSButton iconName="edit" onClick={() => { setRenameVal(s.title); setRenaming(true); }}>
+                {t('scripts.my.action_rename', { defaultValue: '重命名' })}
+              </CSButton>
+            )}
+            {/* 「版本历史」入口已隐藏(2026-10-21):低频功能,操作行降噪。恢复 = 解注释下方按钮。
+            <CSButton iconName="settings" onClick={() => setHistoryOpen(v => !v)}>{t('scripts.version.history_btn')}</CSButton> */}
             <CSButtonDropdown expandToViewport
               items={[
                 { id: 'export', text: t('scripts.my.action_export'), iconName: 'download' },
-                { id: 'visibility', text: s.is_public ? t('scripts.my.action_unpublish') : t('scripts.my.action_publish'), iconName: s.is_public ? 'lock-private' : 'share' },
                 s.is_subscribed
                   ? { id: 'unsubscribe', text: t('scripts.my.action_unsubscribe'), iconName: 'remove' }
                   : { id: 'delete', text: t('scripts.my.action_delete'), iconName: 'remove' },
@@ -366,13 +394,23 @@ function ScriptDetailPanel({ script: s, savesCount, scriptSaves = [], embedStatu
               onItemClick={({ detail }) => {
                 const id = detail.id;
                 if (id === 'export') onExport(s);
-                else if (id === 'visibility') onToggleVisibility(s);
                 else if (id === 'delete') onDelete(s);
                 else if (id === 'unsubscribe') onUnsubscribe && onUnsubscribe(s);
               }}>{t('scripts.my.more')}</CSButtonDropdown>
           </CSSpaceBetween>
-        }
-      >{s.title}</CSHeader>
+        )}
+      >{renaming
+        ? <CSSpaceBetween direction="horizontal" size="xs">
+            <CSInput
+              value={renameVal}
+              onChange={({ detail }) => setRenameVal(detail.value)}
+              onKeyDown={(e) => { if (e.detail.key === 'Enter') doRename(); }}
+              autoFocus
+            />
+            <CSButton variant="primary" onClick={doRename}>{t('common.save')}</CSButton>
+            <CSButton variant="link" onClick={() => setRenaming(false)}>{t('common.cancel')}</CSButton>
+          </CSSpaceBetween>
+        : s.title}</CSHeader>
     }>
       {/* Fork alert — non-owner script */}
       {!isOwner && s.owner_id && (

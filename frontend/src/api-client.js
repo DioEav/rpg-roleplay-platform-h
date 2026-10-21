@@ -478,7 +478,8 @@
 
     // ---------- Scripts ----------
     scripts: {
-      list: () => GET(`${API_PREFIX}/scripts`),
+      // params 可选:{ q, limit, offset } —— 缺省全量(向导/详情面板依赖),剧本管理页传分页
+      list: (params) => GET(`${API_PREFIX}/scripts`, params),
       createBlank: (title) => POST(`${API_PREFIX}/scripts/blank`, { title: title || '' }),  // 作者优先:从零空白剧本
       addChapter: (sid, title) => POST(`${API_PREFIX}/scripts/${sid}/add-chapter`, { title: title || '' }),
       preview: (body) => POST(`${API_PREFIX}/scripts/preview`, body, { signal: timeoutSignal(90000) }),
@@ -660,7 +661,8 @@
 
     // ---------- Saves & branches ----------
     saves: {
-      list: () => GET(`${API_PREFIX}/saves`),
+      // params 可选:{ q, sort, limit, offset } —— 缺省全量(ContinuePicker/Branches 等依赖),存档目录页传分页
+      list: (params) => GET(`${API_PREFIX}/saves`, params),
       // 建档后端同步做快照构建 + seed_tree/anchor_seed/KB T0 seed(大剧本/远程DB可超 15s,
       // 旧默认超时导致「网络异常：signal timed out」且重试会建重复档)—— 给足 3 分钟。
       create: (body) => POST(`${API_PREFIX}/saves`, body, { signal: timeoutSignal(180000) }),

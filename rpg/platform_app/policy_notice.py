@@ -53,7 +53,6 @@ _APP_CONFIG_NOTICES_KEY = "policy_pending_notices"
 LANDING_BASE = os.environ.get(
     "LANDING_BASE", "https://play.stellatrix.icu"
 ).rstrip("/") + "/legal"
-SUPPORT_EMAIL = os.environ.get("SUPPORT_EMAIL", "support@stellatrix.icu")
 
 # 各 slug 的人类可读名称（双语）
 _POLICY_NAMES: dict[str, dict[str, str]] = {
@@ -307,7 +306,6 @@ def _build_email(
             f"变更摘要:\n{summary}\n\n"
             f"生效时间: {effective_display}\n\n"
             f"查看完整政策: {url}\n\n"
-            f"如有疑问,请联系 {SUPPORT_EMAIL}\n\n"
             f"---\n"
             f"[EN] Meadhall RPG is updating its {name_en} ({new_version}).\n"
             f"Summary: {summary}\n"
@@ -322,7 +320,6 @@ def _build_email(
             f"Summary of changes:\n{summary}\n\n"
             f"Effective date: {effective_display}\n\n"
             f"Read the full policy: {url}\n\n"
-            f"For questions, contact {SUPPORT_EMAIL}\n\n"
             f"---\n"
             f"[ZH] Meadhall RPG 即将更新{name_zh}({new_version})。\n"
             f"变更摘要: {summary}\n"

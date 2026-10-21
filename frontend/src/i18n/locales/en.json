@@ -15,6 +15,7 @@
   "common": {
     "pagination": {
       "total": "{{n}} items",
+      "range": "Rows {{from}}–{{to}}",
       "per_page": "Per page",
       "unit": "",
       "nav_label": "Pagination",
@@ -1859,6 +1860,7 @@
       "action_publish": "Share to Public Library",
       "action_unpublish": "Remove from Public Library",
       "action_export": "Export Pack (zip)",
+      "action_rename": "Rename",
       "action_delete": "Delete Script",
       "action_unsubscribe": "Remove from My List"
     },
@@ -2201,6 +2203,7 @@
       "worldlines_heading": "Canon Worldlines ({{count}})"
     },
     "toast": {
+      "rename_fail": "Rename failed",
       "deleted": "Deleted",
       "delete_fail": "Delete failed",
       "pack_import_ok": "Script pack imported",
@@ -2642,6 +2645,7 @@
       "col_played": "Last Played",
       "col_status": "Status",
       "status_active": "Active",
+      "status_last_played": "Last played",
       "status_inactive": "Inactive",
       "continue_btn": "Continue",
       "empty_no_saves": "No saves yet — click New Game to start",
@@ -3810,14 +3814,10 @@
       "btn_add_npc": "New NPC",
       "col_card": "Character Card",
       "col_tags": "Tags",
-      "col_uses": "Uses",
       "col_updated": "Updated",
       "filter_all": "All",
-      "filter_pinned": "Pinned",
       "search_placeholder": "Search name / identity / tags",
       "search_npc_placeholder": "Search NPC",
-      "pinned": "Pinned",
-      "uses_count": "{{count}} uses",
       "all_scripts": "All scripts",
       "script_n": "Script #{{id}}",
       "tone_neutral": "Neutral",

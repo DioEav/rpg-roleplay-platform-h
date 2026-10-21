@@ -1,5 +1,4 @@
 import React from 'react';
-import { SECURITY_EMAIL } from '../lib/brand.js';
 
 export class ErrorBoundary extends React.Component {
   state = { hasError: false, error: null, errorInfo: null };
@@ -15,7 +14,7 @@ export class ErrorBoundary extends React.Component {
       return (
         <div style={{padding: 40, maxWidth: 600, margin: '40px auto', fontFamily: 'system-ui'}}>
           <h1 style={{color: 'var(--accent)'}}>页面出错了 / Something went wrong</h1>
-          <p>页面渲染失败。请刷新重试;若反复出现,联系 <a href={`mailto:${SECURITY_EMAIL}`}>{SECURITY_EMAIL}</a>。</p>
+          <p>页面渲染失败。请刷新重试。</p>
           <details style={{marginTop: 20, opacity: 0.6}}>
             <summary>开发者信息(技术细节)</summary>
             <pre style={{whiteSpace: 'pre-wrap', wordBreak: 'break-all', fontSize: 12}}>

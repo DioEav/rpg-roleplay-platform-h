@@ -20,11 +20,11 @@ import CSContainer from '@cloudscape-design/components/container';
 import CSSpaceBetween from '@cloudscape-design/components/space-between';
 import CSButton from '@cloudscape-design/components/button';
 import CSButtonDropdown from '@cloudscape-design/components/button-dropdown';
+import TablePagination from '../TablePagination.jsx';
 import CSBox from '@cloudscape-design/components/box';
 import CSBadge from '@cloudscape-design/components/badge';
 import CSStatusIndicator from '@cloudscape-design/components/status-indicator';
 import CSTextFilter from '@cloudscape-design/components/text-filter';
-import CSPagination from '@cloudscape-design/components/pagination';
 
 function ScriptsListView() {
   // task 19: 永远以 /api/scripts 真实回包为准；空列表也覆盖 mock，不再混 MOCK_PLATFORM.scripts。
@@ -52,8 +52,10 @@ function ScriptsListView() {
   // "状态"列下拉跳转用:点 "去补 worldbook" → 选中剧本 + 详情面板默认到 world tab
   const [pendingTab, setPendingTab] = useStatePL(null);
   const [query, setQuery] = useStatePL("");
+  const [queryInput, setQueryInput] = useStatePL(""); // 搜索框受控值(逐键更新,不触发请求)
   const [scriptPage, setScriptPage] = useStatePL(1);
-  const SCRIPT_PAGE_SIZE = 50;
+  const [scriptPageSize, setScriptPageSize] = useStatePL(10);
+  const [scriptTotal, setScriptTotal] = useStatePL(0);
 
   // 收敛处置②:triggerEmbed(POST /api/scripts/{id}/embed,后端自认废弃 alias)已删——
   // 触发入口收敛到知识库中心(ScriptDetailPanel → rebuild/embeddings)。这里只保留
@@ -84,12 +86,20 @@ function ScriptsListView() {
     return () => clearInterval(iv);
   }, [embedStatus]);
 
+  // 服务端分页 + q 过滤(标题/uid/public_id);queryInput 逐键更新,延迟提交才发请求
   const reload = React.useCallback(async () => {
     try {
-      const r = await window.api.scripts.list();
+      const r = await window.api.scripts.list({
+        q: query || undefined,
+        limit: scriptPageSize,
+        offset: (scriptPage - 1) * scriptPageSize,
+      });
       const list = Array.isArray(r) ? r : (r?.items || r?.scripts || []);
+      // 当前页被删空/搜索收窄后停在越界页时回退一页
+      if (!list.length && scriptPage > 1) { setScriptPage(scriptPage - 1); return; }
       const normed = list.map(window.__normalizeScript || ((x) => x));
       setScripts(normed);
+      setScriptTotal(r?.total ?? normed.length);
       // task 51: 拉每个剧本的 embed 进度,UI 显示已建索引的剧本(check icon)
       // 失败不影响列表加载(各自 catch)
       Promise.all(normed.map(async (s) => {
@@ -106,7 +116,7 @@ function ScriptsListView() {
     } finally {
       setLoaded(true);
     }
-  }, []);
+  }, [query, scriptPage, scriptPageSize]);
   useEffectPL(() => {
     reload();
     const refresh = () => reload();
@@ -270,15 +280,8 @@ function ScriptsListView() {
     await onNewGame(s);
   };
 
-  const visibleScripts = query
-    ? scripts.filter((s) => (`${s.title} ${s.uid}`).toLowerCase().includes(query.toLowerCase()))
-    : scripts;
-
-  // 分页切片(每页 50 条)
-  const scriptPageCount = Math.max(1, Math.ceil(visibleScripts.length / SCRIPT_PAGE_SIZE));
-  const pagedScripts = visibleScripts.slice((scriptPage - 1) * SCRIPT_PAGE_SIZE, scriptPage * SCRIPT_PAGE_SIZE);
-  // 查询变化时重置到第 1 页
-  React.useEffect(() => { setScriptPage(1); }, [query]);
+  // q 过滤已下沉服务端(分页语义下客户端过滤只能看见当前页)
+  const pagedScripts = scripts;
 
   const selected = scripts.find((x) => x.id === selectedId) || null;
 
@@ -334,11 +337,6 @@ function ScriptsListView() {
       onSelectionChange={({ detail }) => { const x = detail.selectedItems[0]; if (x) setSelectedId(x.id); }}
       onRowClick={({ detail }) => setSelectedId(detail.item.id)}
       empty={<CSBox textAlign="center" color="inherit" padding={{ vertical: 'l' }}>{query ? t('scripts.my.empty_search') : t('scripts.my.empty')}</CSBox>}
-      pagination={
-        scriptPageCount > 1
-          ? <CSPagination currentPageIndex={scriptPage} pagesCount={scriptPageCount} onChange={({ detail }) => setScriptPage(detail.currentPageIndex)} />
-          : undefined
-      }
       columnDefinitions={[
         { id: 'title', header: t('scripts.my.col_script'), cell: (s) => (
           isInternalPlaceholder(s) ? (
@@ -446,7 +444,7 @@ function ScriptsListView() {
       <input ref={importPackRef} type="file" accept=".zip" style={{ display: 'none' }} onChange={(e) => onImportPackFile(e.target.files?.[0])} />
       <CSHeader
         variant="h1"
-        counter={`(${scripts.length})`}
+        counter={`(${scriptTotal})`}
         description={t('scripts.my.description')}
         actions={
           <CSSpaceBetween direction="horizontal" size="xs">
@@ -457,13 +455,20 @@ function ScriptsListView() {
       >{t('scripts.my.title')}</CSHeader>
 
       <div style={{ maxWidth: 360 }}>
-        <CSTextFilter filteringText={query} filteringPlaceholder={t('scripts.my.search_placeholder')}
-          onChange={({ detail }) => setQuery(detail.filteringText)} />
+        <CSTextFilter filteringText={queryInput} filteringPlaceholder={t('scripts.my.search_placeholder')}
+          onChange={({ detail }) => setQueryInput(detail.filteringText)}
+          onDelayedChange={({ detail }) => { setQuery(detail.filteringText || ''); setScriptPage(1); }} />
       </div>
 
       {selected
         ? <ResizableSplit storageKey="scripts" top={tableEl} bottom={detailEl} />
         : tableEl}
+
+      {/* 分页独立于表格容器之外(表格 pagination 槽会渲染进框内表头上方) */}
+      <TablePagination
+        total={scriptTotal} page={scriptPage} pageSize={scriptPageSize}
+        onPageChange={setScriptPage}
+        onPageSizeChange={(n) => { setScriptPageSize(n); setScriptPage(1); }} />
 
       <ChaptersModal script={chaptersOpen} onClose={() => setChaptersOpen(null)} onChanged={reload} />
       {importOpen && (

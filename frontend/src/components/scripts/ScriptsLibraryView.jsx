@@ -23,7 +23,7 @@ function ScriptsLibraryView() {
   const [q, setQ] = useStatePL("");           // 已应用的搜索词(服务端过滤,延迟提交)
   const [qInput, setQInput] = useStatePL(""); // 搜索框受控值
   const [page, setPage] = useStatePL(1);
-  const [pageSize, setPageSize] = useStatePL(20);
+  const [pageSize, setPageSize] = useStatePL(10);
   const [total, setTotal] = useStatePL(0);
   const [cloningId, setCloningId] = useStatePL(null);
   const [importedIds, setImportedIds] = useStatePL({}); // 本会话内已导入的 source id
@@ -80,7 +80,6 @@ function ScriptsLibraryView() {
     <CSSpaceBetween size="l">
       <CSHeader
         variant="h1"
-        counter={`(${total})`}
         description={t('scripts.public.description')}
         actions={<CSButton iconName="refresh" onClick={() => reload()}>{t('common.refresh')}</CSButton>}
       >{t('scripts.public.title')}</CSHeader>

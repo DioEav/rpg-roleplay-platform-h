@@ -118,7 +118,8 @@ def scripts(user_id: int) -> list[dict[str, Any]]:
         return [expose(row) for row in db.execute("select * from scripts where owner_id = %s order by updated_at desc, id desc limit 200", (user_id,)).fetchall()]
 
 
-def scripts_page(user_id: int, limit: int | str | None = None, cursor: str | None = None) -> dict[str, Any]:
+def scripts_page(user_id: int, limit: int | str | None = None, cursor: str | None = None,
+                 q: str | None = None, offset: int | None = None) -> dict[str, Any]:
     """列表 API:**显式列字段**,跳过 import_report jsonb (实测 script 11 这一行
     65 MB,select * 直接把列表 API 拖到 15s + 2.3MB 响应)。完整字段走 detail endpoint。
 
@@ -126,13 +127,31 @@ def scripts_page(user_id: int, limit: int | str | None = None, cursor: str | Non
 
     task 74: union owned + subscribed(公开剧本订阅,immutable knowledge,不复制数据,
     只挂指针)。前端通过 item.is_subscribed 区分是否本人拥有(决定能否编辑)。
+
+    分页两态:cursor(旧式,缺省,全量消费方走默认)或 offset+q(剧本管理页页码式,
+    total 恒为过滤后总数)。q 搜索覆盖标题 / uid(数字 id) / public_id。
     """
     ensure_default(user_id)
     page_limit = limit_value(limit)
     before_id = cursor_id(cursor)
+    where = [
+        "(s.owner_id = %s or s.id in (select script_id from user_script_subscriptions where user_id = %s))",
+    ]
+    params: list[Any] = [user_id, user_id]
+    if before_id:
+        where.append("s.id < %s")
+        params.append(before_id)
+    if q:
+        where.append("(s.title ILIKE %s OR s.id::text ILIKE %s OR s.public_id::text ILIKE %s)")
+        like = f"%{q}%"
+        params.extend([like, like, like])
+    where_sql = " and ".join(where)
     with connect() as db:
-        rows = db.execute(
-            """
+        total = db.execute(
+            f"select count(*)::int as n from scripts s where {where_sql}",
+            tuple(params),
+        ).fetchone()["n"]
+        sql = f"""
             select s.id, s.owner_id, s.title, s.description, s.source_path, s.created_at, s.updated_at,
                    s.public_id, s.row_version, s.chapter_count, s.word_count, s.content_fingerprint,
                    s.shareable, s.extracted_through_chapter, s.extraction_seeded,
@@ -147,18 +166,23 @@ def scripts_page(user_id: int, limit: int | str | None = None, cursor: str | Non
                    (s.import_report->>'confidence')::float as confidence,
                    (s.owner_id != %s) as is_subscribed
             from scripts s
-            where (
-              s.owner_id = %s
-              or s.id in (select script_id from user_script_subscriptions where user_id = %s)
-            )
-              and (%s::bigint is null or s.id < %s)
+            where {where_sql}
             order by s.id desc
-            limit %s
-            """,
-            (user_id, user_id, user_id, before_id, before_id, page_limit + 1),
-        ).fetchall()
+        """
+        # SELECT 段的 is_subscribed 占位在 SQL 文本里位于 where 之前 → 绑定顺序 [user_id, *where, 分页]
+        if offset is not None:
+            rows = db.execute(
+                sql + " limit %s offset %s",
+                tuple([user_id] + params + [page_limit, max(0, int(offset))]),
+            ).fetchall()
+        else:
+            rows = db.execute(
+                sql + " limit %s",
+                tuple([user_id] + params + [page_limit + 1]),
+            ).fetchall()
         readiness = _readiness_for_scripts(db, [int(r["id"]) for r in rows])
     payload = page_payload(rows, page_limit)
+    payload["total"] = total
     for item in payload["items"]:
         item["readiness"] = readiness.get(int(item["id"])) or _empty_readiness()
     return payload
@@ -281,11 +305,34 @@ def saves(user_id: int) -> list[dict[str, Any]]:
         ).fetchall()]
 
 
-def saves_page(user_id: int, limit: int | str | None = None, cursor: str | None = None) -> dict[str, Any]:
+def saves_page(user_id: int, limit: int | str | None = None, cursor: str | None = None,
+               q: str | None = None, sort: str = "played", offset: int | None = None) -> dict[str, Any]:
+    """存档列表。分页两态:cursor(旧式,缺省,ContinuePicker 等全量消费方走默认)或
+    offset+q+sort(存档目录页页码式,total 恒为过滤后总数)。
+    q 搜索覆盖存档标题 + 所属剧本标题;sort: played(默认)/name/created。"""
     ensure_default(user_id)
     page_limit = limit_value(limit)
     before_id = cursor_id(cursor)
+    where = ["game_saves.user_id = %s"]
+    params: list[Any] = [user_id]
+    if before_id:
+        where.append("game_saves.id < %s")
+        params.append(before_id)
+    if q:
+        where.append("(game_saves.title ILIKE %s OR s.title ILIKE %s)")
+        like = f"%{q}%"
+        params.extend([like, like])
+    where_sql = " and ".join(where)
+    order_by = {
+        "name": "game_saves.title ASC, game_saves.id ASC",
+        "created": "game_saves.created_at DESC NULLS LAST, game_saves.id DESC",
+    }.get(sort, "coalesce(game_saves.last_played_at, game_saves.updated_at) DESC NULLS LAST, game_saves.id DESC")
     with connect() as db:
+        total = db.execute(
+            f"select count(*)::int as n from game_saves "
+            f"left join scripts s on s.id = game_saves.script_id where {where_sql}",
+            tuple(params),
+        ).fetchone()["n"]
         rows = db.execute(
             f"""
             select {_SAVE_LIST_COLUMNS},
@@ -312,13 +359,14 @@ def saves_page(user_id: int, limit: int | str | None = None, cursor: str | None 
                    )) as current
             from game_saves
             left join scripts s on s.id = game_saves.script_id
-            where game_saves.user_id = %s and (%s::bigint is null or game_saves.id < %s)
-            order by game_saves.id desc
-            limit %s
-            """,
-            (user_id, before_id, before_id, page_limit + 1),
+            where {where_sql}
+            order by {order_by}
+            """ + (" limit %s offset %s" if offset is not None else " limit %s"),
+            tuple(params + [page_limit + 1] if offset is None else params + [page_limit, max(0, int(offset))]),
         ).fetchall()
-    return page_payload(rows, page_limit)
+    payload = page_payload(rows, page_limit)
+    payload["total"] = total
+    return payload
 
 
 def save_detail(user_id: int, save_id: int) -> dict[str, Any]:

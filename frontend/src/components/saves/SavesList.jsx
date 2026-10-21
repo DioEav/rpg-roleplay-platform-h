@@ -27,7 +27,7 @@ import CSSelect from '@cloudscape-design/components/select';
 import CSModal from '@cloudscape-design/components/modal';
 import CSInput from '@cloudscape-design/components/input';
 import CSAlert from '@cloudscape-design/components/alert';
-import CSPagination from '@cloudscape-design/components/pagination';
+import TablePagination from '../TablePagination.jsx';
 
 const _saveSortOpts = (t) => [
   { value: 'played', label: t('saves.list.sort_played') },
@@ -316,16 +316,22 @@ function SavesListView() {
   const [renaming, setRenaming] = useStatePL(false);
   const [renameVal, setRenameVal] = useStatePL('');
   const [exportTarget, setExportTarget] = useStatePL(null); // save obj for bundle export modal
-  const [query, setQuery] = useStatePL('');
+  const [query, setQuery] = useStatePL('');     // 已应用的搜索词(服务端过滤,延迟提交)
+  const [queryInput, setQueryInput] = useStatePL(''); // 搜索框受控值(逐键更新,不触发请求)
   const [sortBy, setSortBy] = useStatePL('played'); // played | name | created
   const [savePage, setSavePage] = useStatePL(1);
-  const SAVE_PAGE_SIZE = 50;
+  const [savePageSize, setSavePageSize] = useStatePL(10);
+  const [saveTotal, setSaveTotal] = useStatePL(0);
   const flash = useFlash();
   const importInputRef = React.useRef(null);
 
   const reload = React.useCallback(async () => {
     try {
-      const r = await window.api.saves.list();
+      // 服务端分页 + q(存档标题/剧本标题)+ sort(played/name/created)
+      const r = await window.api.saves.list({
+        q: query || undefined, sort: sortBy,
+        limit: savePageSize, offset: (savePage - 1) * savePageSize,
+      });
       // 存档目录 = 剧本档专属;酒馆会话(save_kind='tavern')不进列表 —— 它们的管理
       // (历史/归档/删除)在酒馆页自带的对话栏,而本页的设置 tab(先知程度/剧情引导)
       // 与分支 tab 只被剧本 GM 管线消费,对酒馆档是「UI 存在≠生效」的死设置。
@@ -334,7 +340,10 @@ function SavesListView() {
       const list = (Array.isArray(r) ? r : (r?.items || r?.saves || []))
         .map(window.__normalizeSave || ((x) => x))
         .filter((s) => (s && (s.save_kind || 'game')) !== 'tavern');
+      // 当前页被删空/搜索收窄后停在越界页时回退一页
+      if (!list.length && savePage > 1) { setSavePage(savePage - 1); return; }
       setSaves(list);
+      setSaveTotal(r?.total ?? list.length);
     } catch (_) { setSaves([]); }
     try {
       const s = await window.api.scripts.list();
@@ -456,29 +465,16 @@ function SavesListView() {
     setDeleting(false);
   };
 
-  // 搜索 + 排序
-  const visibleSaves = React.useMemo(() => {
-    const q = query.trim().toLowerCase();
-    let xs = saves;
-    if (q) {
-      xs = saves.filter((s) => {
-        const sc = scripts.find((x) => x.id === s.script_id);
-        return (s.title || '').toLowerCase().includes(q) || (sc?.title || '').toLowerCase().includes(q);
-      });
-    }
-    const ts = (v) => (v ? new Date(v).getTime() || 0 : 0);
-    const sorted = [...xs];
-    if (sortBy === 'name') sorted.sort((a, b) => (a.title || '').localeCompare(b.title || '', 'zh'));
-    else if (sortBy === 'created') sorted.sort((a, b) => ts(b.created_ts) - ts(a.created_ts));
-    else sorted.sort((a, b) => ts(b.last_played_ts) - ts(a.last_played_ts));
-    return sorted;
-  }, [saves, scripts, query, sortBy]);
+  // 搜索(q)与排序(sort)已下沉服务端,前端不再内存过滤/排序
+  const pagedSaves = saves;
 
-  // 分页切片(每页 50 条)
-  const savePageCount = Math.max(1, Math.ceil(visibleSaves.length / SAVE_PAGE_SIZE));
-  const pagedSaves = visibleSaves.slice((savePage - 1) * SAVE_PAGE_SIZE, savePage * SAVE_PAGE_SIZE);
-  // 过滤条件变化时重置到第 1 页
-  React.useEffect(() => { setSavePage(1); }, [query, sortBy]);
+  // 状态列:「激活」= 运行时指针(user_runtime,每用户单行,酒馆/剧本档共用)指向的档。
+  // 指针落在酒馆对话或已删档上时,本列表(纯剧本档)里没有任何 current → 全灰难读;
+  // 此时把最近游玩的剧本档标为「上次游玩」,避免整列未激活的误导。
+  const tsOf = (v) => (v ? new Date(v).getTime() || 0 : 0);
+  const anyCurrent = saves.some((s) => s.current);
+  const lastPlayedId = anyCurrent || !saves.length ? null
+    : saves.reduce((a, b) => (tsOf(b.last_played_ts) > tsOf(a.last_played_ts) ? b : a)).id;
 
   const scriptTitle = (s) => (scripts.find((x) => x.id === s.script_id)?.title || t('saves.list.unknown_script'));
   const saveSortOpts = _saveSortOpts(t);
@@ -490,14 +486,15 @@ function SavesListView() {
       <CSHeader
         key="header"
         variant="h1"
-        counter={`(${saves.length})`}
+        counter={`(${saveTotal})`}
         description={t('saves.list.description')}
         actions={
           <CSSpaceBetween direction="horizontal" size="xs">
             {/* accept .json (legacy) and .zip (self-contained bundle) — backend auto-detects */}
             <input key="upload-input" ref={importInputRef} type="file" accept=".json,.zip,application/json,application/zip" style={{ display: 'none' }}
               onChange={(e) => { onImportFile(e.target.files?.[0]); e.target.value = ''; }} />
-            <CSButton key="btn-import" iconName="upload" onClick={() => importInputRef.current?.click()}>{t('saves.list.btn_import')}</CSButton>
+            {/* 「导入存档」入口已隐藏(2026-10-21)。恢复 = 解注释下方按钮(hidden file input 保留)。
+            <CSButton key="btn-import" iconName="upload" onClick={() => importInputRef.current?.click()}>{t('saves.list.btn_import')}</CSButton> */}
             <CSButton key="btn-new" iconName="add-plus" onClick={() => setCreateOpen(true)}>{t('saves.list.btn_new')}</CSButton>
             <CSButton key="btn-continue" variant="primary" iconName="caret-right-filled" disabled={!saves.length}
               onClick={() => window.__openContinue?.(saves[0])}>{t('saves.list.btn_continue')}</CSButton>
@@ -507,11 +504,12 @@ function SavesListView() {
 
       <CSSpaceBetween key="toolbar" direction="horizontal" size="xs">
         <div key="filter" style={{ minWidth: 280 }}>
-          <CSTextFilter filteringText={query} filteringPlaceholder={t('saves.list.search_placeholder')}
-            onChange={({ detail }) => setQuery(detail.filteringText)} />
+          <CSTextFilter filteringText={queryInput} filteringPlaceholder={t('saves.list.search_placeholder')}
+            onChange={({ detail }) => setQueryInput(detail.filteringText)}
+            onDelayedChange={({ detail }) => { setQuery(detail.filteringText || ''); setSavePage(1); }} />
         </div>
         <CSSelect key="sort" selectedOption={saveSortOpts.find((o) => o.value === sortBy)}
-          options={saveSortOpts} onChange={({ detail }) => setSortBy(detail.selectedOption.value)} />
+          options={saveSortOpts} onChange={({ detail }) => { setSortBy(detail.selectedOption.value); setSavePage(1); }} />
       </CSSpaceBetween>
 
       {/* table + detail:Cloudscape SpaceBetween 在 React 18 会 flatten Fragment 导致 children 失 key,
@@ -531,16 +529,15 @@ function SavesListView() {
           { id: 'player', header: t('saves.list.col_player'), cell: (s) => s._raw?.player_name || '—' },
           { id: 'nodes', header: t('saves.list.col_nodes'), cell: (s) => s.branch_count },
           { id: 'played', header: t('saves.list.col_played'), cell: (s) => s.last_played_at },
-          { id: 'status', header: t('saves.list.col_status'), cell: (s) => s.current ? <CSBadge color="green">{t('saves.list.status_active')}</CSBadge> : <CSStatusIndicator type="stopped">{t('saves.list.status_inactive')}</CSStatusIndicator> },
+          { id: 'status', header: t('saves.list.col_status'), cell: (s) => s.current
+            ? <CSBadge color="green">{t('saves.list.status_active')}</CSBadge>
+            : s.id === lastPlayedId
+              ? <CSBadge color="grey">{t('saves.list.status_last_played')}</CSBadge>
+              : <CSStatusIndicator type="stopped">{t('saves.list.status_inactive')}</CSStatusIndicator> },
           { id: 'go', header: '', cell: (s) => <CSButton variant="inline-link" iconName="caret-right-filled" onClick={() => window.__openContinue?.(s)}>{t('saves.list.continue_btn')}</CSButton> },
         ]}
         items={pagedSaves}
         empty={<CSBox textAlign="center" color="inherit" padding={{ vertical: 'l' }}>{query ? t('saves.list.empty_filtered') : t('saves.list.empty_no_saves')}</CSBox>}
-        pagination={
-          savePageCount > 1
-            ? <CSPagination currentPageIndex={savePage} pagesCount={savePageCount} onChange={({ detail }) => setSavePage(detail.currentPageIndex)} />
-            : undefined
-        }
       />
       );
       const savesDetailEl = selected ? (
@@ -553,7 +550,9 @@ function SavesListView() {
                   <CSButton variant="primary" iconName="caret-right-filled" onClick={() => window.__openContinue?.(selected)}>{t('saves.detail.btn_continue')}</CSButton>
                   {!selected.current && <CSButton onClick={() => onActivate(selected)}>{t('saves.detail.btn_activate')}</CSButton>}
                   <CSButton onClick={() => { setRenameVal(selected.title); setRenaming(true); }}>{t('saves.detail.btn_rename')}</CSButton>
-                  <CSButton onClick={() => setExportTarget(selected)}>{t('saves.detail.btn_export')}</CSButton>
+                  {/* 「导出」(自包含包)入口已隐藏(2026-10-21),ExportBundleModal 保留。
+                      恢复 = 解注释下方按钮。
+                  <CSButton onClick={() => setExportTarget(selected)}>{t('saves.detail.btn_export')}</CSButton> */}
                   <CSButton onClick={() => setDeleteTarget(selected)}>{t('saves.detail.btn_delete')}</CSButton>
                 </CSSpaceBetween>
               }
@@ -599,6 +598,12 @@ function SavesListView() {
         ? <ResizableSplit key="table-area" storageKey="saves" top={savesTableEl} bottom={savesDetailEl} />
         : React.cloneElement(savesTableEl, { key: 'table-area' });
       })()}
+
+      {/* 分页独立于表格容器之外(表格 pagination 槽会渲染进框内表头上方) */}
+      <TablePagination key="saves-page"
+        total={saveTotal} page={savePage} pageSize={savePageSize}
+        onPageChange={setSavePage}
+        onPageSizeChange={(n) => { setSavePageSize(n); setSavePage(1); }} />
 
       <NewGameModal key="new-modal" open={createOpen} onClose={() => setCreateOpen(false)} onConfirm={onCreate} />
       <ExportBundleModal key="export-bundle-modal" open={!!exportTarget} save={exportTarget} onClose={() => setExportTarget(null)} />

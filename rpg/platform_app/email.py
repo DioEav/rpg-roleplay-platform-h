@@ -10,7 +10,6 @@ RESEND_API_KEY: str = os.environ.get("RESEND_API_KEY", "")
 RESEND_FROM: str = os.environ.get(
     "RESEND_FROM", "Meadhall Labs <noreply@stellatrix.icu>"
 )
-SUPPORT_EMAIL: str = os.environ.get("SUPPORT_EMAIL", "support@stellatrix.icu")
 
 
 class EmailSendError(Exception):
@@ -354,7 +353,6 @@ def build_policy_notice_email(
             f"变更摘要:\n{summary}\n\n"
             f"生效时间: {effective_display}\n\n"
             f"查看完整政策: {url}\n\n"
-            f"如有疑问,请联系 {SUPPORT_EMAIL}\n\n"
             f"---\n"
             f"[EN] Meadhall is updating its {name_en} ({new_version}).\n"
             f"Summary: {summary}\n"
@@ -370,7 +368,6 @@ def build_policy_notice_email(
             f"Summary of changes:\n{summary}\n\n"
             f"Effective date: {effective_display}\n\n"
             f"Read the full policy: {url}\n\n"
-            f"For questions, contact {SUPPORT_EMAIL}\n\n"
             f"---\n"
             f"[ZH] 蜜酒厅即将更新{name_zh}({new_version})。\n"
             f"变更摘要: {summary}\n"
@@ -401,7 +398,7 @@ def build_policy_notice_email(
         title=title,
         lead_html=lead,
         main_html=main,
-        footer_html=f"如有疑问，请联系 {SUPPORT_EMAIL}。<br>For questions, contact {SUPPORT_EMAIL}.",
+        footer_html="",
     )
     return subject, text, html
 

@@ -18,9 +18,11 @@ from ._shared import router
 @router.get("/api/scripts")
 # 同步 def:scripts_page 在协程里阻塞事件循环 → 启动六路请求被迫串行。线程池并行。
 # 回归锁同 tests/unit/test_boot_endpoints_sync.py。
-def api_scripts(limit: int | None = None, cursor: str | None = None, user=Depends(require_user)):
+def api_scripts(limit: int | None = None, cursor: str | None = None, q: str | None = None,
+                offset: int | None = None, user=Depends(require_user)):
+    """分页两态:cursor(缺省,全量消费方)或 offset+q(剧本管理页,响应带 total)。"""
     from ... import workspace
-    return json_response({"ok": True, **workspace.scripts_page(user["id"], limit, cursor)})
+    return json_response({"ok": True, **workspace.scripts_page(user["id"], limit, cursor, q=q or None, offset=offset)})
 
 
 # phase_backend: 旧 POST /api/scripts/{id}/embed 移到 api/imports.py 作为

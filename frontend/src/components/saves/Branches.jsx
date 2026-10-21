@@ -12,6 +12,8 @@ import { plNavigate } from '../../router.js';
 import { ConfirmModal } from '../../platform-app.jsx';
 import { BranchGraph } from '../../branch-graph.jsx';
 import { NewGameModal } from './NewGame.jsx';
+// 与偏好界面 SetSelect 同款下拉组件(圆角/悬停/下拉面板观感组件级一致)
+import CSSelect from '@cloudscape-design/components/select';
 
 /* ---------------------------- BRANCHES ------------------------- */
 const BRANCH_DATA = {
@@ -184,10 +186,18 @@ function BranchesPage() {
             </span>
           </h2>
           <div className="pl-sec-tools">
-            <select value={selectedSave || ""} onChange={(e) => setSelectedSave(Number(e.target.value))}
-              style={{height: 28, fontSize: 12, padding: "0 10px"}}>
-              {saves.map(s => <option key={s.id} value={s.id}>{s.title}</option>)}
-            </select>
+            {/* 存档下拉 = 偏好界面同款 Cloudscape CSSelect(圆角/悬停/下拉面板组件级一致);
+                云原生触发器撑满容器,外包 span 限宽 */}
+            <span style={{ display: 'inline-flex', width: 200 }}>
+              <CSSelect
+                selectedOption={(() => {
+                  const sel = saves.find(s => s.id === selectedSave);
+                  return sel ? { value: String(sel.id), label: sel.title } : null;
+                })()}
+                options={saves.map(s => ({ value: String(s.id), label: s.title }))}
+                onChange={({ detail }) => setSelectedSave(Number(detail.selectedOption.value))}
+              />
+            </span>
             <button className="btn ghost" onClick={reloadTree}><Icon name="refresh" size={12} /> {t('saves.branches.btn_refresh')}</button>
             <button className="btn primary"
               disabled={!selectedSave}

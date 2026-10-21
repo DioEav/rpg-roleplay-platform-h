@@ -119,6 +119,7 @@
   "common": {
     "pagination": {
       "total": "共 {{n}} 条",
+      "range": "第 {{from}}–{{to}} 条",
       "per_page": "每页",
       "unit": "条",
       "nav_label": "分页",
@@ -1963,6 +1964,7 @@
       "action_publish": "公开分享到剧本库",
       "action_unpublish": "取消公开分享",
       "action_export": "导出剧本包 (zip)",
+      "action_rename": "重命名",
       "action_delete": "删除剧本",
       "action_unsubscribe": "移出我的列表"
     },
@@ -2305,6 +2307,7 @@
       "worldlines_heading": "规范世界线({{count}})"
     },
     "toast": {
+      "rename_fail": "重命名失败",
       "deleted": "已删除",
       "delete_fail": "删除失败",
       "pack_import_ok": "剧本包导入成功",
@@ -2746,6 +2749,7 @@
       "col_played": "最后游玩",
       "col_status": "状态",
       "status_active": "在玩",
+      "status_last_played": "上次游玩",
       "status_inactive": "未激活",
       "continue_btn": "继续",
       "empty_no_saves": "还没有存档,点右上「开始新游戏」开始",
@@ -3914,14 +3918,10 @@
       "btn_add_npc": "新增 NPC",
       "col_card": "角色卡",
       "col_tags": "标签",
-      "col_uses": "使用",
       "col_updated": "更新",
       "filter_all": "全部",
-      "filter_pinned": "置顶",
       "search_placeholder": "搜索名称 / 身份 / 标签",
       "search_npc_placeholder": "搜索 NPC",
-      "pinned": "已置顶",
-      "uses_count": "{{count}} 次",
       "all_scripts": "所有剧本",
       "script_n": "剧本 #{{id}}",
       "tone_neutral": "中立",

@@ -105,7 +105,6 @@ function CardGrid({ cards, onEdit, kind, filter, empty, onDeleted, onDuplicate, 
           <CSSpaceBetween direction="horizontal" size="xs" alignItems="center">
             <AvatarImg src={(c._raw?.avatar_path) || c.avatar_path || null} name={c.name} size={56} shape="rounded" zoomable />
             <CSBox key="name" variant="h3" padding="n">{c.name}</CSBox>
-            {c.pinned && <CSBadge key="pin" color="blue">{t('cards.list.pinned')}</CSBadge>}
             {(c._raw?.is_public ?? c.is_public) && kind !== 'npc' && (
               <CSBadge key="pub" color="green">{t('cards.list.published', { defaultValue: '已公开' })}</CSBadge>
             )}
@@ -124,7 +123,7 @@ function CardGrid({ cards, onEdit, kind, filter, empty, onDeleted, onDuplicate, 
             : null) },
           { id: 'foot', content: (c) => (
             <CSBox fontSize="body-s" color="text-status-inactive">
-              {(kind === 'npc' ? c.save : c.origin)} · {t('cards.list.uses_count', { count: c.uses })} · {c.updated}
+              {(kind === 'npc' ? c.save : c.origin)} · {c.updated}
             </CSBox>
           ) },
           { id: 'actions', content: (c) => (

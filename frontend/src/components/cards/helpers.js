@@ -116,27 +116,26 @@ function cardSnippet(c, n = 160) {
 const USER_CARDS = [
   { id: "uc1", name: "顾承砚", role: "漂流的史官", tone: "—", origin: "雾港未尽 · 默认主角",
     bio: "南陵旧学世家出身，因雾港事件获得在三个王朝间穿越的能力。能记录但难以改变。",
-    tags: ["史官", "记录者", "穿越"], pinned: true, uses: 14, updated: "12 分钟前" },
+    tags: ["史官", "记录者", "穿越"], updated: "12 分钟前" },
   { id: "uc2", name: "沈知微", role: "雾港医师", tone: "中立",  origin: "雾港未尽",
-    bio: "雾港医馆的女医师，掌握『若残页足三，则可推时』的旧学。",
-    tags: ["医师", "知情人", "女"], pinned: false, uses: 6, updated: "今天" },
+    bio: "雾港医馆的女医师，掌握『若残页足三，则可推时』的旧学。", tags: ["医师", "知情人", "女"], updated: "今天" },
   { id: "uc3", name: "阿衡", role: "灯塔守人之女", tone: "亲近", origin: "通用",
-    bio: "年十四，性格倔强，会替父亲守灯塔。", tags: ["少女", "灯塔"], pinned: false, uses: 2, updated: "3 天前" },
+    bio: "年十四，性格倔强，会替父亲守灯塔。", tags: ["少女", "灯塔"], updated: "3 天前" },
   { id: "uc4", name: "无名旅人", role: "—", tone: "中立", origin: "通用",
-    bio: "默认观察者视角，不参与剧情核心。", tags: ["观察者", "通用"], pinned: false, uses: 8, updated: "上周" },
+    bio: "默认观察者视角，不参与剧情核心。", tags: ["观察者", "通用"], updated: "上周" },
 ];
 
 const NPC_CARDS = [
   { id: "n1", name: "韩司直", role: "南陵巡检", tone: "戒备", save: "雾港·主线·顾承砚",
-    bio: "南陵驻雾港巡检，正在追查史官残页线索。", tags: ["巡检", "敌意", "权威"], uses: 9, updated: "12 分钟前" },
+    bio: "南陵驻雾港巡检，正在追查史官残页线索。", tags: ["巡检", "敌意", "权威"], updated: "12 分钟前" },
   { id: "n2", name: "童守人", role: "灯塔守人", tone: "失踪", save: "雾港·主线·顾承砚",
-    bio: "灯塔守人，与南陵童氏同源，昨夜失踪。", tags: ["失踪", "线索"], uses: 3, updated: "今天" },
+    bio: "灯塔守人，与南陵童氏同源，昨夜失踪。", tags: ["失踪", "线索"], updated: "今天" },
   { id: "n3", name: "税吏甲", role: "码头税吏", tone: "敌意", save: "雾港·主线·顾承砚",
-    bio: "正在码头打听史官的下落。", tags: ["敌意", "次要"], uses: 4, updated: "今天" },
+    bio: "正在码头打听史官的下落。", tags: ["敌意", "次要"], updated: "今天" },
   { id: "n4", name: "陈渡海", role: "船工", tone: "中立", save: "雾港·支线·沈知微视角",
-    bio: "雾港老船工，知道海路的人。", tags: ["导引"], uses: 2, updated: "昨天" },
+    bio: "雾港老船工，知道海路的人。", tags: ["导引"], updated: "昨天" },
   { id: "n5", name: "尚书令", role: "南陵权臣", tone: "高位", save: "南陵旧灯录·开场",
-    bio: "南陵当权派，掌握光绪十三年的卷宗。", tags: ["权臣", "高位"], uses: 1, updated: "上周" },
+    bio: "南陵当权派，掌握光绪十三年的卷宗。", tags: ["权臣", "高位"], updated: "上周" },
 ];
 
 export { _oneLine, ELLIPSIS_1, clampLines, cardFormInit, cardFormPayload, npcToUserCardBody, cardSnippet, USER_CARDS, NPC_CARDS };
