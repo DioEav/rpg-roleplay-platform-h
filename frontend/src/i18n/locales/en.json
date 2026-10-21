@@ -13,6 +13,15 @@
     "theme_light_b_desc": "Cool white-green with a bamboo accent"
   },
   "common": {
+    "pagination": {
+      "total": "{{n}} items",
+      "per_page": "Per page",
+      "unit": "",
+      "nav_label": "Pagination",
+      "prev": "Previous page",
+      "next": "Next page",
+      "page_n": "Page {{n}}"
+    },
     "save": "Save",
     "cancel": "Cancel",
     "delete": "Delete",

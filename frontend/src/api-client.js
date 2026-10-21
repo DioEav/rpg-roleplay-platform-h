@@ -385,7 +385,8 @@
       getGmStyle: () => GET(`${API_PREFIX}/me/gm-style`),
       setGmStyle: (gm_style) => POST(`${API_PREFIX}/me/gm-style`, { gm_style }),
       personas: {
-        list: () => GET(`${API_PREFIX}/me/personas`),
+        // params 可选:{ q, limit, offset } —— 缺省全量,身份卡页传分页
+        list: (params) => GET(`${API_PREFIX}/me/personas`, params),
         get: (id) => GET(`${API_PREFIX}/me/personas/` + encodeURIComponent(id)),
         upsert: (body) => POST(`${API_PREFIX}/me/personas`, body),
         remove: (id) => POST(`${API_PREFIX}/me/personas/` + encodeURIComponent(id) + "/delete", {}),
@@ -737,7 +738,8 @@
 
     // ---------- Character cards (user + script) ----------
     cards: {
-      myList: () => GET(`${API_PREFIX}/me/character-cards`),
+      // params 可选:{ q, limit, offset } —— 缺省全量(向导/选卡器依赖),角色卡库页传分页
+      myList: (params) => GET(`${API_PREFIX}/me/character-cards`, params),
       myGet: (id) => GET(`${API_PREFIX}/me/character-cards/` + id),
       myUpsert: (body) => POST(`${API_PREFIX}/me/character-cards`, body),
       myDelete: (id) => POST(`${API_PREFIX}/me/character-cards/` + id + "/delete", {}),

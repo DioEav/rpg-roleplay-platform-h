@@ -13,10 +13,12 @@ from ._shared import router
 
 # ── 用户级 persona / character card（独立于剧本存档）─────────────
 @router.get("/api/me/personas")
-async def api_my_personas(user=Depends(require_user)):
-    """列出本人所有玩家身份卡（杭雁菱穿越者 / 林知意信使 / ...）"""
+async def api_my_personas(q: str | None = None, limit: int | None = None, offset: int = 0,
+                          user=Depends(require_user)):
+    """列出本人所有玩家身份卡（杭雁菱穿越者 / 林知意信使 / ...）。
+    limit 缺省全量(选卡器/开局向导依赖);角色卡库页传 limit/offset 分页。"""
     from ... import user_cards
-    return json_response(user_cards.list_personas(user["id"]))
+    return json_response(user_cards.list_personas(user["id"], q=q or None, limit=limit, offset=offset))
 
 
 @router.post("/api/me/personas")
@@ -46,11 +48,14 @@ async def api_delete_persona(persona_id: int, user=Depends(require_user)):
 
 
 @router.get("/api/me/character-cards")
-async def api_my_character_cards(q: str | None = None, enabled: str | None = None, user=Depends(require_user)):
-    """用户自创的 NPC 卡库，可挂任何剧本/存档"""
+async def api_my_character_cards(q: str | None = None, enabled: str | None = None,
+                                 limit: int | None = None, offset: int = 0,
+                                 user=Depends(require_user)):
+    """用户自创的 NPC 卡库，可挂任何剧本/存档。limit 缺省全量(向导/选卡器依赖)。"""
     from ... import user_cards
     enabled_only = enabled == "1"
-    return json_response(user_cards.list_user_cards(user["id"], q=q or None, enabled_only=enabled_only))
+    return json_response(user_cards.list_user_cards(
+        user["id"], q=q or None, enabled_only=enabled_only, limit=limit, offset=offset))
 
 
 @router.post("/api/me/character-cards")

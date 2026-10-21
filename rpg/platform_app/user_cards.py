@@ -130,16 +130,33 @@ def build_persona_prompt(card: dict[str, Any]) -> str:
 # ══════════════════════════════════════════════════════════════════════
 #  USER PERSONAS（玩家身份卡，card_type='persona'）
 # ══════════════════════════════════════════════════════════════════════
-def list_personas(user_id: int) -> dict[str, Any]:
+def list_personas(user_id: int, q: str | None = None,
+                  limit: int | None = None, offset: int = 0) -> dict[str, Any]:
+    """身份卡列表。limit=None 返回全量(新建存档向导/选卡器等消费方依赖全量);
+    分页方(角色卡库页)传 limit/offset,total 恒为过滤后总数(与页内条数无关)。"""
     init_db()
+    where = ["user_id = %s", "card_type = 'persona'"]
+    params: list[Any] = [user_id]
+    if q:
+        where.append("(lower(name) like %s or lower(identity) like %s or lower(background) like %s "
+                     "or lower(appearance) like %s or lower(personality) like %s)")
+        like = f"%{q.lower()}%"
+        params.extend([like] * 5)
+    where_sql = " and ".join(where)
     with connect() as db:
-        rows = db.execute(
-            "select * from character_cards where user_id = %s and card_type = 'persona' "
-            "order by is_default desc, updated_at desc, id desc",
-            (user_id,),
-        ).fetchall()
+        total = db.execute(
+            f"select count(*)::int as n from character_cards where {where_sql}",
+            tuple(params),
+        ).fetchone()["n"]
+        sql = (f"select * from character_cards where {where_sql} "
+               "order by is_default desc, updated_at desc, id desc")
+        query_params = list(params)
+        if limit is not None:
+            sql += " limit %s offset %s"
+            query_params.extend([int(limit), int(offset)])
+        rows = db.execute(sql, tuple(query_params)).fetchall()
     items = [card_to_dto(r, persona_role_alias=True) for r in rows]
-    return {"ok": True, "items": items, "total": len(items)}
+    return {"ok": True, "items": items, "total": total}
 
 
 def get_persona(user_id: int, persona_id: int) -> dict[str, Any] | None:
@@ -344,24 +361,37 @@ def _maybe_enqueue_persona_image(
 # ══════════════════════════════════════════════════════════════════════
 #  USER CHARACTER CARDS(用户自创 PC 卡, card_type='pc')
 # ══════════════════════════════════════════════════════════════════════
-def list_user_cards(user_id: int, q: str | None = None, enabled_only: bool = False) -> dict[str, Any]:
+def list_user_cards(user_id: int, q: str | None = None, enabled_only: bool = False,
+                    limit: int | None = None, offset: int = 0) -> dict[str, Any]:
+    """PC 卡列表。limit=None 返回全量(新建存档向导/酒馆选卡器等消费方依赖全量);
+    分页方(角色卡库页)传 limit/offset,total 恒为过滤后总数。q 搜索覆盖卡片可见文本
+    (名称/身份/背景/外貌/性格/标签),与旧客户端过滤同量级(不含 secrets,防按秘密搜出)。"""
     init_db()
     where = ["user_id = %s", "card_type = 'pc'"]
     params: list[Any] = [user_id]
     if enabled_only:
         where.append("enabled = true")
     if q:
-        where.append("(lower(name) like %s or lower(identity) like %s)")
+        where.append("(lower(name) like %s or lower(identity) like %s or lower(background) like %s "
+                     "or lower(appearance) like %s or lower(personality) like %s "
+                     "or lower(tags::text) like %s)")
         like = f"%{q.lower()}%"
-        params.extend([like, like])
+        params.extend([like] * 6)
+    where_sql = " and ".join(where)
     with connect() as db:
-        rows = db.execute(
-            f"select * from character_cards where {' and '.join(where)} "
-            "order by priority desc, updated_at desc, id desc",
+        total = db.execute(
+            f"select count(*)::int as n from character_cards where {where_sql}",
             tuple(params),
-        ).fetchall()
+        ).fetchone()["n"]
+        sql = (f"select * from character_cards where {where_sql} "
+               "order by priority desc, updated_at desc, id desc")
+        query_params = list(params)
+        if limit is not None:
+            sql += " limit %s offset %s"
+            query_params.extend([int(limit), int(offset)])
+        rows = db.execute(sql, tuple(query_params)).fetchall()
     items = [card_to_dto(r) for r in rows]
-    return {"ok": True, "items": items, "total": len(items)}
+    return {"ok": True, "items": items, "total": total}
 
 
 def get_user_card(user_id: int, card_id: int) -> dict[str, Any] | None:

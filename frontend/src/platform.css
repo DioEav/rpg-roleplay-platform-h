@@ -2329,3 +2329,32 @@ div[class*="pl-home-fb-"] { display: grid; place-items: center; font-family: var
   .pl-home-poster, .pl-home-hero-bg { transition: none; }
 }
 
+/* ── TablePagination 通用分页条(components/TablePagination.jsx) ──
+   总数 + 每页条数下拉 + 页码按钮窗(首末恒显/当前 ±1/省略号折叠)。
+   全部走主题令牌,三主题自动适配。 */
+.pl-tbp { display: flex; align-items: center; justify-content: flex-end; gap: 14px; padding: 8px 2px 2px; flex-wrap: wrap; }
+.pl-tbp-total { font-size: 12.5px; color: var(--text-quiet, #968f85); font-variant-numeric: tabular-nums; }
+.pl-tbp-size { display: inline-flex; align-items: center; gap: 6px; font-size: 12.5px; color: var(--text-quiet, #968f85); }
+/* 下拉 = 偏好界面同款 Cloudscape CSSelect(组件级一致,圆角/悬停/面板样式不再手搓);
+   容器宽度贴合档位数字(过宽会在"条"字前余出空当) */
+.pl-tbp-select-wrap { display: inline-flex; width: 64px; }
+.pl-tbp-nav { display: inline-flex; align-items: center; gap: 4px; }
+.pl-tbp-btn {
+  min-width: 32px; height: 32px; padding: 0 7px;
+  display: inline-flex; align-items: center; justify-content: center;
+  font-size: 12.5px; font-family: var(--font-mono); font-variant-numeric: tabular-nums;
+  color: var(--text-quiet); background: transparent;
+  border: 1px solid transparent; border-radius: 7px; cursor: pointer;
+  transition: background-color .12s ease, color .12s ease, border-color .12s ease;
+}
+.pl-tbp-btn.bordered { border-color: var(--line); background: var(--panel); }
+.pl-tbp-btn:hover:not(:disabled):not(.on) { background: var(--accent-soft); color: var(--accent); border-color: var(--line-strong); }
+.pl-tbp-btn:focus-visible { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+.pl-tbp-btn.on { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; }
+.pl-tbp-btn:disabled { opacity: .35; cursor: default; }
+.pl-tbp-dots { min-width: 20px; text-align: center; color: var(--muted); font-size: 12.5px; user-select: none; }
+@media (prefers-reduced-motion: reduce) {
+  .pl-tbp-btn { transition: none; }
+}
+
+
