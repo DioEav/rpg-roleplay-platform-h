@@ -120,7 +120,7 @@ async def api_public_scripts(q: str | None = None, limit: int = 30, offset: int 
 
     order=latest(默认) 按发布时间倒序;order=hot 按导入数(clone_count)倒序。
     """
-    limit = max(1, min(int(limit or 30), 60))
+    limit = max(1, min(int(limit or 30), 100))
     offset = max(0, int(offset or 0))
     order_by = (
         "s.clone_count DESC NULLS LAST, s.published_at DESC NULLS LAST, s.id DESC"
@@ -134,6 +134,11 @@ async def api_public_scripts(q: str | None = None, limit: int = 30, offset: int 
         like = f"%{q}%"
         params += [like, like]
     with connect() as db:
+        # 真·总数(过滤后):分页条"共 N 条"与页数由它驱动;has_more 保留兼容旧消费方
+        total = db.execute(
+            f"SELECT COUNT(*)::int AS n FROM scripts s WHERE {where}",
+            tuple(params),
+        ).fetchone()["n"]
         rows = db.execute(
             f"""
             SELECT s.id, s.title, s.description, s.chapter_count, s.word_count,
@@ -157,7 +162,7 @@ async def api_public_scripts(q: str | None = None, limit: int = 30, offset: int 
     items = rows[:limit]
     for it in items:
         it["mine"] = (it.pop("owner_id") == user["id"])
-    return json_response({"ok": True, "items": items, "has_more": has_more,
+    return json_response({"ok": True, "items": items, "total": total, "has_more": has_more,
                           "limit": limit, "offset": offset})
 
 

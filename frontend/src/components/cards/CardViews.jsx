@@ -34,21 +34,33 @@ const DEFAULT_PAGE_SIZE = 50;
 function OnlineCardsView() {
   const { t } = useTranslation();
   const [items, setItems] = React.useState(null);
-  const [q, setQ] = React.useState('');
+  const [qInput, setQInput] = React.useState(''); // 搜索框受控值(逐键更新,不触发请求)
+  const [q, setQ] = React.useState('');           // 已应用的搜索词(服务端过滤)
+  const [page, setPage] = React.useState(1);
+  const [pageSize, setPageSize] = React.useState(20);
+  const [total, setTotal] = React.useState(0);
   const [loading, setLoading] = React.useState(true);
   const [err, setErr] = React.useState('');
   const [importing, setImporting] = React.useState({});
 
-  const load = React.useCallback(async (query) => {
+  // 服务端分页 + q 过滤(名称/身份/全名)
+  const load = React.useCallback(async () => {
     setLoading(true); setErr('');
     try {
-      const r = await window.api.cards.publicList(query ? { q: query } : undefined);
-      setItems((r && r.items) || []);
+      const r = await window.api.cards.publicList({
+        q: q || undefined, limit: pageSize, offset: (page - 1) * pageSize,
+      });
+      const list = (r && r.items) || [];
+      // 当前页被删空/搜索收窄后停在越界页时回退一页
+      if (!list.length && page > 1) { setPage(page - 1); return; }
+      setItems(list);
+      setTotal(r?.total ?? list.length);
     } catch (e) { setErr(e?.message || t('cards.page.online.load_fail')); setItems([]); }
     finally { setLoading(false); }
-  }, [t]);
+  }, [q, page, pageSize, t]);
 
-  React.useEffect(() => { load(''); }, [load]);
+  React.useEffect(() => { load(); }, [load]);
+  const submitSearch = () => { setQ(qInput); setPage(1); };
 
   const doImport = async (c) => {
     setImporting((p) => ({ ...p, [c.id]: true }));
@@ -60,7 +72,7 @@ function OnlineCardsView() {
       } else {
         window.__apiToast?.(t('cards.page.online.import_ok'), { kind: 'ok', duration: 2200, detail: t('cards.page.online.import_ok_detail', { name: c.name }) });
       }
-      load(q);  // 刷新热度 / 导入状态
+      load();  // 刷新热度 / 导入状态(分页参数由 useCallback 闭包携带)
     } catch (e) {
       window.__apiToast?.(t('cards.page.online.import_fail'), { kind: 'danger', detail: e?.payload?.error || e?.message });
     } finally {
@@ -78,10 +90,10 @@ function OnlineCardsView() {
 
       <div style={{ display: 'flex', gap: 8, maxWidth: 460 }}>
         <div style={{ flex: 1 }}>
-          <CSInput value={q} onChange={({ detail }) => setQ(detail.value)} placeholder={t('cards.page.online.search_placeholder')}
-            onKeyDown={(e) => { if (e.detail.key === 'Enter') load(q); }} type="search" />
+          <CSInput value={qInput} onChange={({ detail }) => setQInput(detail.value)} placeholder={t('cards.page.online.search_placeholder')}
+            onKeyDown={(e) => { if (e.detail.key === 'Enter') submitSearch(); }} type="search" />
         </div>
-        <CSButton onClick={() => load(q)}>{t('cards.page.online.btn_search')}</CSButton>
+        <CSButton onClick={submitSearch}>{t('cards.page.online.btn_search')}</CSButton>
       </div>
 
       {err && <CSAlert type="error" header={t('cards.page.online.load_fail')}>{err}</CSAlert>}
@@ -124,6 +136,10 @@ function OnlineCardsView() {
             ))}
           </div>
         )}
+      <TablePagination
+        total={total} page={page} pageSize={pageSize}
+        onPageChange={setPage}
+        onPageSizeChange={(n) => { setPageSize(n); setPage(1); }} />
     </CSSpaceBetween>
   );
 }

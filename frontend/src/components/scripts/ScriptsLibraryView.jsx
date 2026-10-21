@@ -6,6 +6,7 @@ import { useTranslation } from 'react-i18next';
 import AvatarImg from '../AvatarImg.jsx';
 import { Icon } from '../../game-icons.jsx';
 import { homeFbClass } from '../platform/ProfilePage.jsx';
+import TablePagination from '../TablePagination.jsx';
 import { parseImportedDesc } from '../../lib/script-desc.js';
 import CSHeader from '@cloudscape-design/components/header';
 import CSSpaceBetween from '@cloudscape-design/components/space-between';
@@ -19,25 +20,34 @@ function ScriptsLibraryView() {
   const { t } = useTranslation();
   const [items, setItems] = useStatePL([]);
   const [loading, setLoading] = useStatePL(true);
-  const [q, setQ] = useStatePL("");
+  const [q, setQ] = useStatePL("");           // 已应用的搜索词(服务端过滤,延迟提交)
+  const [qInput, setQInput] = useStatePL(""); // 搜索框受控值
+  const [page, setPage] = useStatePL(1);
+  const [pageSize, setPageSize] = useStatePL(20);
+  const [total, setTotal] = useStatePL(0);
   const [cloningId, setCloningId] = useStatePL(null);
   const [importedIds, setImportedIds] = useStatePL({}); // 本会话内已导入的 source id
 
-  const reload = React.useCallback(async (query) => {
+  // 服务端分页 + q 过滤(标题/简介)
+  const reload = React.useCallback(async () => {
     setLoading(true);
     try {
-      const r = await window.api.scripts.publicList(query ? { q: query } : undefined);
-      setItems(Array.isArray(r?.items) ? r.items : []);
+      const r = await window.api.scripts.publicList({
+        q: q || undefined, limit: pageSize, offset: (page - 1) * pageSize,
+      });
+      const list = Array.isArray(r?.items) ? r.items : [];
+      // 当前页被删空/搜索收窄后停在越界页时回退一页
+      if (!list.length && page > 1) { setPage(page - 1); return; }
+      setItems(list);
+      setTotal(r?.total ?? list.length);
     } catch (e) {
       window.__apiToast?.(t('scripts.public.load_fail'), { kind: "danger", detail: e?.message });
       setItems([]);
     } finally {
       setLoading(false);
     }
-  }, []);
-  useEffectPL(() => { reload(""); }, [reload]);
-
-  const onSearch = () => reload(q);
+  }, [q, page, pageSize, t]);
+  useEffectPL(() => { reload(); }, [reload]);
 
   const onClone = async (s) => {
     setCloningId(s.id);
@@ -70,16 +80,16 @@ function ScriptsLibraryView() {
     <CSSpaceBetween size="l">
       <CSHeader
         variant="h1"
-        counter={`(${items.length})`}
+        counter={`(${total})`}
         description={t('scripts.public.description')}
-        actions={<CSButton iconName="refresh" onClick={() => reload(q)}>{t('common.refresh')}</CSButton>}
+        actions={<CSButton iconName="refresh" onClick={() => reload()}>{t('common.refresh')}</CSButton>}
       >{t('scripts.public.title')}</CSHeader>
 
-      {/* 搜索框(原 CSCards 的 filter 插件,现独立渲染) */}
+      {/* 搜索框(服务端过滤,延迟提交) */}
       <div style={{ minWidth: 320, maxWidth: 460 }}>
-        <CSTextFilter filteringText={q} filteringPlaceholder={t('scripts.public.search_placeholder')}
-          onChange={({ detail }) => setQ(detail.filteringText)}
-          onDelayedChange={onSearch} />
+        <CSTextFilter filteringText={qInput} filteringPlaceholder={t('scripts.public.search_placeholder')}
+          onChange={({ detail }) => setQInput(detail.filteringText)}
+          onDelayedChange={({ detail }) => { setQ(detail.filteringText || ''); setPage(1); }} />
       </div>
 
       {loading ? (
@@ -135,6 +145,10 @@ function ScriptsLibraryView() {
           })}
         </div>
       )}
+      <TablePagination
+        total={total} page={page} pageSize={pageSize}
+        onPageChange={setPage}
+        onPageSizeChange={(n) => { setPageSize(n); setPage(1); }} />
     </CSSpaceBetween>
   );
 }

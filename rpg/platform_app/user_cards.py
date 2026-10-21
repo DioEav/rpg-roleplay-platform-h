@@ -597,7 +597,7 @@ def list_public_cards(q: str | None = None, limit: int = 30, offset: int = 0,
       - imported:本人是否已导入过该卡(按 cloned_from_card_id 判定,历史数据回落到 slug 规则)
     """
     init_db()
-    limit = limit_value(limit, default=30, maximum=60)
+    limit = limit_value(limit, default=30, maximum=100)
     offset = max(0, int(offset))
     order_by = (
         "c.clone_count desc nulls last, c.published_at desc nulls last, c.id desc"
@@ -630,8 +630,13 @@ def list_public_cards(q: str | None = None, limit: int = 30, offset: int = 0,
         f"where {' and '.join(where)} "
         f"order by {order_by} limit %s offset %s"
     )
-    params = head_params + params + [limit, offset]
+    base_params = list(params)  # q 参数(count 与列表共用;head_params 只属于 SELECT 段)
+    params = head_params + base_params + [limit, offset]
     with connect() as db:
+        total = db.execute(
+            f"select count(*)::int as n from character_cards c where {' and '.join(where)}",
+            tuple(base_params),
+        ).fetchone()["n"]
         rows = db.execute(sql, tuple(params)).fetchall()
     items = []
     for r in rows:
@@ -644,7 +649,7 @@ def list_public_cards(q: str | None = None, limit: int = 30, offset: int = 0,
         dto["mine"] = bool(r.get("mine"))
         dto.pop("secrets", None)  # 列表不暴露作者私密设定(导入后才得完整卡)
         items.append(dto)
-    return {"ok": True, "items": items, "total": len(items), "limit": limit, "offset": offset}
+    return {"ok": True, "items": items, "total": total, "limit": limit, "offset": offset}
 
 
 def clone_public_card(user_id: int, card_id: int) -> dict[str, Any]:
