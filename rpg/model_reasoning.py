@@ -1080,6 +1080,33 @@ def build_openai_params(spec: dict[str, Any], level: str) -> dict[str, Any]:
     return _extra_param(spec, level)
 
 
+_RESPONSES_EFFORT = {
+    "minimal": "minimal", "low": "low", "medium": "medium", "high": "high",
+    "extra": "high", "max": "high", "xhigh": "high",
+}
+
+
+def build_responses_params(spec: dict[str, Any], level: str) -> dict[str, Any]:
+    """返回可直接展开进 responses.create 的思考参数字典。
+
+    Responses 使用 `reasoning={"effort": ...}`，不接受 Chat 的 reasoning_effort /
+    extra_body.thinking；预算型方言(anthropic_budget / gemini_budget)与自定义 JSON
+    无法无损映射，返回 {}（不传 = 模型默认），由 400 退参自愈兜底。
+    """
+    if not spec.get("supported") or level == "auto":
+        return {}
+    if spec.get("dialect") in ("anthropic_budget", "gemini_budget", "custom_json", "none"):
+        return {}
+    if level == "off":
+        # Responses 没有可靠的「完全关闭」字段；用 minimal 表达最小思考。
+        return {"reasoning": {"effort": "minimal"}}
+    raw = (spec.get("effort_values") or {}).get(level)
+    effort = _RESPONSES_EFFORT.get(str(raw).lower()) if raw else None
+    if not effort:
+        effort = _RESPONSES_EFFORT.get(str(level).lower())
+    return {"reasoning": {"effort": effort}} if effort else {}
+
+
 # ── 原生 backend wire 构造 ──────────────────────────────────────────────────
 
 def build_anthropic_thinking(spec: dict[str, Any], level: str) -> dict[str, Any] | None:

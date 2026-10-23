@@ -70,7 +70,8 @@ function ModelPopover({ current, onPick, align = "left", gameState, onClose, tri
     if (source !== 'user') return;
     // 存档级切换也要刷新当前 tab gameState,让底部标签立刻看到新模型。
     try { window.dispatchEvent(new CustomEvent("game-state-refresh")); } catch (_) {}
-    onPick && onPick(modelReal);
+    // 带上 provider:底层标签按 (api_id, model) 精确解析,同名模型不会串到别的渠道。
+    onPick && onPick(modelReal, apiId);
   };
 
   return (

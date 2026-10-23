@@ -25,6 +25,7 @@ usage 是 {"input_tokens", "output_tokens", "cached_input_tokens",
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
 from typing import Any
 
 from core.logging import get_logger
@@ -39,6 +40,25 @@ def _no_redirect_urlopen(req, *, timeout):
     from core.outbound import safe_urlopen
 
     return safe_urlopen(req, timeout=timeout)
+
+
+def _openai_compat_headers(api_id: str, base_url: str, key: str,
+                           user_id: int | None) -> dict[str, str]:
+    """OpenAI 兼容原始 urllib 请求的统一请求头。
+
+    必须与 GM/SDK 路径共用 `openai_default_headers_for`:
+      · 浏览器 UA —— 穿透按 SDK 签名拦截的 Cloudflare/WAF;
+      · provider 专属头 —— OpenCode Go(opencode.ai/zen/go)的 chat 请求强制要求
+        `x-opencode-session`,缺失直接 400 MissingSessionID。
+    历史 bug:这里只带 Authorization → 同一 key/模型「主 GM 能聊、harness 子代理 400」。
+    """
+    from core.outbound_ua import openai_default_headers_for
+
+    return {
+        "Content-Type": "application/json",
+        "Authorization": f"Bearer {key}",
+        **openai_default_headers_for(base_url, user_id=user_id, api_id=api_id),
+    }
 
 
 def call_agent_json(
@@ -501,6 +521,13 @@ def _openai_compat_json_mode(
     base_url = cred.get("base_url_override") or _api_base_url(api_id)
     if not base_url:
         raise RuntimeError(f"未知 base_url for {api_id}")
+    # provider 显式选择 Responses 时，在已取得 credential 的这一层自分发；
+    # 函数签名保持不变，调用方（extractor/verifier/command/recorder）无需改动。
+    if _effective_api_format(api_id, user_id, cred) == "responses":
+        return _responses_json_mode(
+            api_id, model, system_prompt, user_prompt, user_id, timeout_sec, max_tokens,
+            extra_body=extra_body, _cred=cred, _base_url=base_url,
+        )
     body_dict = {
         "model": model,
         "messages": [
@@ -519,10 +546,7 @@ def _openai_compat_json_mode(
         base_url.rstrip("/") + "/chat/completions",
         data=body,
         method="POST",
-        headers={
-            "Content-Type": "application/json",
-            "Authorization": f"Bearer {cred['key']}",
-        },
+        headers=_openai_compat_headers(api_id, base_url, cred["key"], user_id),
     )
     try:
         with _no_redirect_urlopen(req, timeout=timeout_sec) as resp:
@@ -551,15 +575,14 @@ def _openai_compat_json_mode(
         req = urllib.request.Request(
             base_url.rstrip("/") + "/chat/completions",
             data=body, method="POST",
-            headers={"Content-Type": "application/json",
-                     "Authorization": f"Bearer {cred['key']}"},
+            headers=_openai_compat_headers(api_id, base_url, cred["key"], user_id),
         )
         with _no_redirect_urlopen(req, timeout=timeout_sec) as resp:
             payload = json.loads(resp.read().decode("utf-8"))
         choice = (payload.get("choices") or [{}])[0]
         text = choice.get("message", {}).get("content") or ""
         if not text and not payload.get("choices"):
-            raise RuntimeError(f"provider 响应结构异常: {str(payload)[:200]}")
+            raise RuntimeError(f"provider 响应结构异常: {str(payload)[:200]}") from exc
         usage = _openai_usage(payload.get("usage") or {})
         return text or "", usage
 
@@ -603,6 +626,12 @@ def _openai_function_call(
     base_url = cred.get("base_url_override") or _api_base_url(api_id)
     if not base_url:
         raise RuntimeError(f"未知 base_url for {api_id}")
+    if _effective_api_format(api_id, user_id, cred) == "responses":
+        return _responses_function_call(
+            api_id, model, system_prompt, user_prompt, tool_schema,
+            user_id, timeout_sec, max_tokens, no_think=no_think,
+            _cred=cred, _base_url=base_url,
+        )
     tool_name = tool_schema.get("name", "emit_payload")
     body_dict = {
         "model": model,
@@ -629,10 +658,7 @@ def _openai_function_call(
     req = urllib.request.Request(
         base_url.rstrip("/") + "/chat/completions",
         data=body, method="POST",
-        headers={
-            "Content-Type": "application/json",
-            "Authorization": f"Bearer {cred['key']}",
-        },
+        headers=_openai_compat_headers(api_id, base_url, cred["key"], user_id),
     )
     try:
         with _no_redirect_urlopen(req, timeout=timeout_sec) as resp:
@@ -687,6 +713,224 @@ def _openai_usage(u: dict) -> dict:
         if isinstance(u.get("completion_tokens_details"), dict) else 0,
         "total_tokens": input_tokens + output_tokens,
     }
+
+
+def _responses_usage(u: dict) -> dict:
+    """Responses usage → 与 _openai_usage 相同的内部形状。
+
+    兼容第三方网关仍返回 Chat 字段(prompt_tokens/completion_tokens)的情况。
+    """
+    if not isinstance(u, dict):
+        return {}
+    input_tokens = int(u.get("input_tokens") or u.get("prompt_tokens") or 0)
+    output_tokens = int(u.get("output_tokens") or u.get("completion_tokens") or 0)
+    in_details = u.get("input_tokens_details") or u.get("prompt_tokens_details") or {}
+    out_details = u.get("output_tokens_details") or u.get("completion_tokens_details") or {}
+    cached = int(in_details.get("cached_tokens") or 0) if isinstance(in_details, dict) else 0
+    reasoning = int(out_details.get("reasoning_tokens") or 0) if isinstance(out_details, dict) else 0
+    return {
+        "input_tokens": input_tokens,
+        "output_tokens": output_tokens,
+        "cached_input_tokens": cached,
+        "reasoning_tokens": reasoning,
+        "total_tokens": int(u.get("total_tokens") or (input_tokens + output_tokens)),
+    }
+
+
+def _responses_output_text(payload: dict) -> str:
+    if not isinstance(payload, dict):
+        return ""
+    text = payload.get("output_text")
+    if text:
+        return str(text)
+    parts = []
+    for item in payload.get("output") or []:
+        if not isinstance(item, dict) or item.get("type") != "message":
+            continue
+        for part in item.get("content") or []:
+            if isinstance(part, dict) and part.get("type") in ("output_text", "text"):
+                parts.append(str(part.get("text") or ""))
+    return "".join(parts)
+
+
+def _responses_function_arguments(payload: dict, tool_name: str) -> str | None:
+    for item in (payload.get("output") or []) if isinstance(payload, dict) else []:
+        if (isinstance(item, dict) and item.get("type") == "function_call"
+                and item.get("name") == tool_name):
+            return str(item.get("arguments") or "{}")
+    return None
+
+
+def _effective_api_format(api_id: str, user_id: int | None, cred: dict) -> str:
+    """已拿到 credential 后的格式解析：凭据覆盖 > 目录默认 > chat。"""
+    try:
+        from model_registry import resolve_api_format
+        return resolve_api_format(api_id, user_id, credential=cred)
+    except Exception:
+        return "chat_completions"
+
+
+def _responses_no_think(extra_body: dict | None) -> dict:
+    """把 Chat 方言的 thinking.disabled 映射为 Responses 的最小 effort。"""
+    if not isinstance(extra_body, dict):
+        return {}
+    thinking = extra_body.get("thinking")
+    if isinstance(thinking, dict) and thinking.get("type") == "disabled":
+        return {"reasoning": {"effort": "minimal"}}
+    return {}
+
+
+def _responses_post(api_id: str, base_url: str, cred: dict, body: dict,
+                    timeout_sec: int, user_id: int | None) -> dict:
+    import urllib.request
+
+    # provider 专属头(OpenCode Go 的 x-opencode-session)按 base_url 作用域注入；
+    # 其它 provider 只多一个 UA，与 Chat 路径一致。
+    headers = _openai_compat_headers(api_id, base_url, cred["key"], user_id)
+    req = urllib.request.Request(
+        base_url.rstrip("/") + "/responses",
+        data=json.dumps(body).encode("utf-8"),
+        method="POST",
+        headers=headers,
+    )
+    with _no_redirect_urlopen(req, timeout=timeout_sec) as resp:
+        return json.loads(resp.read().decode("utf-8"))
+
+
+def _responses_json_mode(
+    api_id: str,
+    model: str,
+    system_prompt: str,
+    user_prompt: str,
+    user_id: int | None,
+    timeout_sec: int,
+    max_tokens: int,
+    extra_body: dict | None = None,
+    json_hint: str = "JSON object",
+    _cred: dict | None = None,
+    _base_url: str | None = None,
+) -> tuple[str, dict]:
+    """Responses 协议的 JSON 模式（子代理 / extractor / verifier / command 共用）。
+
+    400 时按「结构化输出 → 思考 → store」分组剥离；非 400 原样上抛。
+    """
+    import urllib.error
+
+    from platform_app.user_credentials import (
+        resolve_api_key,
+        resolved_auth_token,
+        resolved_is_usable,
+    )
+    cred = _cred or resolve_api_key(user_id, api_id)
+    if not resolved_is_usable(cred):
+        raise RuntimeError(f"无 {api_id} 凭证可用于 agent harness")
+    cred = {**cred, "key": resolved_auth_token(cred)}
+    base_url = _base_url or cred.get("base_url_override") or _api_base_url(api_id)
+    if not base_url:
+        raise RuntimeError(f"未知 base_url for {api_id}")
+    body: dict = {
+        "model": model,
+        "instructions": system_prompt + f"\n\n严格只输出 JSON 对象 {json_hint},不要 markdown,不要解释。",
+        "input": user_prompt,
+        "max_output_tokens": max(16, int(max_tokens or 0)),
+        "temperature": 0,
+        "text": {"format": {"type": "json_object"}},
+        "store": False,
+    }
+    body.update(_responses_no_think(extra_body))
+
+    try:
+        payload = _responses_post(api_id, base_url, cred, body, timeout_sec, user_id)
+    except urllib.error.HTTPError as exc:
+        if exc.code != 400:
+            raise
+        # 逐组剥离：采样 → 结构化输出 → 思考 → store。部分思考模型拒 temperature;
+        # 部分网关拒 text.format/ reasoning; 逐组保留其它设置,尽量保住结构化输出。
+        for keys in (("temperature",), ("text",), ("reasoning",), ("store",)):
+            if not any(k in body for k in keys):
+                continue
+            for k in keys:
+                body.pop(k, None)
+            try:
+                payload = _responses_post(api_id, base_url, cred, body, timeout_sec, user_id)
+                break
+            except urllib.error.HTTPError as exc2:
+                if exc2.code != 400:
+                    raise
+                continue
+        else:
+            raise
+    return _responses_output_text(payload), _responses_usage(payload.get("usage") or {})
+
+
+def _responses_function_call(
+    api_id: str,
+    model: str,
+    system_prompt: str,
+    user_prompt: str,
+    tool_schema: dict,
+    user_id: int | None,
+    timeout_sec: int,
+    max_tokens: int,
+    no_think: bool = False,
+    _cred: dict | None = None,
+    _base_url: str | None = None,
+) -> tuple[str, dict]:
+    """Responses 协议的强制 function-call（史官 / 其它 tool_schema 子代理）。
+
+    返回 (arguments JSON 文本, usage)。tools 形态被拒时降级到 JSON 模式。
+    """
+    import urllib.error
+
+    from platform_app.user_credentials import (
+        resolve_api_key,
+        resolved_auth_token,
+        resolved_is_usable,
+    )
+    cred = _cred or resolve_api_key(user_id, api_id)
+    if not resolved_is_usable(cred):
+        raise RuntimeError(f"无 {api_id} 凭证可用于 agent harness")
+    cred = {**cred, "key": resolved_auth_token(cred)}
+    base_url = _base_url or cred.get("base_url_override") or _api_base_url(api_id)
+    if not base_url:
+        raise RuntimeError(f"未知 base_url for {api_id}")
+    tool_name = tool_schema.get("name", "emit_payload")
+    body: dict = {
+        "model": model,
+        "instructions": system_prompt,
+        "input": user_prompt,
+        "max_output_tokens": max(16, int(max_tokens or 0)),
+        "temperature": 0,
+        "tools": [{
+            "type": "function",
+            "name": tool_name,
+            "description": tool_schema.get("description", ""),
+            "parameters": tool_schema.get("input_schema")
+                          or {"type": "object", "properties": {}},
+        }],
+        "tool_choice": {"type": "function", "name": tool_name},
+        "store": False,
+    }
+    if no_think:
+        body.update({"reasoning": {"effort": "minimal"}})
+    try:
+        payload = _responses_post(api_id, base_url, cred, body, timeout_sec, user_id)
+    except urllib.error.HTTPError as exc:
+        # 与 Chat 路径同判据：只有「请求形态被拒」才降级；401/429/5xx/超时上抛。
+        if exc.code not in {400, 403, 404, 405, 422}:
+            raise
+        log.warning(f"[_harness] {api_id} 拒绝 Responses tools 请求(HTTP {exc.code}),"
+                    f"降级到 json_object 兼容模式")
+        return _responses_json_mode(
+            api_id, model, system_prompt, user_prompt, user_id, timeout_sec, max_tokens,
+            extra_body=({"thinking": {"type": "disabled"}} if no_think else None),
+            _cred=cred, _base_url=base_url,
+        )
+    args = _responses_function_arguments(payload, tool_name)
+    usage = _responses_usage(payload.get("usage") or {})
+    if args is not None:
+        return args, usage
+    return _responses_output_text(payload) or "{}", usage
 
 
 def _api_base_url(api_id: str) -> str:

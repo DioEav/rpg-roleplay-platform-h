@@ -372,6 +372,25 @@ def _call_openai_compat_json_mode(
     base_url = cred.get("base_url_override") or _api_base_url(api_id)
     if not base_url:
         raise RuntimeError(f"未知 base_url for {api_id}")
+    # Responses 协议：复用 _harness 的统一实现（含 400 退参），
+    # 保持本函数签名/返回语义不变（ops 数组后处理照旧）。
+    from agents._harness import (
+        _effective_api_format,
+        _openai_compat_headers,
+        _responses_json_mode,
+    )
+    if _effective_api_format(api_id, user_id, cred) == "responses":
+        text, _usage = _responses_json_mode(
+            api_id, model, system_prompt, user_prompt, user_id, timeout_sec, 800,
+            json_hint=json_hint, _cred=cred, _base_url=base_url,
+        )
+        try:
+            obj = json.loads(text)
+            if isinstance(obj, dict) and "ops" in obj:
+                return json.dumps(obj["ops"], ensure_ascii=False)
+        except Exception:
+            pass
+        return text
     body_dict = {
         "model": model,
         "messages": [
@@ -387,10 +406,8 @@ def _call_openai_compat_json_mode(
         base_url.rstrip("/") + "/chat/completions",
         data=body,
         method="POST",
-        headers={
-            "Content-Type": "application/json",
-            "Authorization": f"Bearer {cred['key']}",
-        },
+        # 与 GM/harness 同源请求头:UA + provider 专属头(OpenCode Go 缺 session 会 400)。
+        headers=_openai_compat_headers(api_id, base_url, cred["key"], user_id),
     )
     try:
         with safe_urlopen(req, timeout=timeout_sec) as resp:
@@ -416,12 +433,13 @@ def _call_openai_compat_json_mode(
         req = urllib.request.Request(
             base_url.rstrip("/") + "/chat/completions",
             data=body, method="POST",
-            headers={"Content-Type": "application/json", "Authorization": f"Bearer {cred['key']}"},
+            # 退参重发同样要带 provider 专属头,否则 session 缺失会再吃一次 400。
+            headers=_openai_compat_headers(api_id, base_url, cred["key"], user_id),
         )
         with safe_urlopen(req, timeout=timeout_sec) as resp:
             payload = json.loads(resp.read().decode("utf-8"))
         if not payload.get("choices"):
-            raise RuntimeError(f"provider 响应结构异常: {str(payload)[:200]}")
+            raise RuntimeError(f"provider 响应结构异常: {str(payload)[:200]}") from exc
         return (payload.get("choices") or [{}])[0].get("message", {}).get("content") or ""
 
 

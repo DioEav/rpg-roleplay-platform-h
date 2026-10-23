@@ -113,6 +113,8 @@ function ModelsSection() {
         key_hint: c.key_hint || "",
         enabled: c.enabled !== false,
         base_url_override: c.base_url_override || "",
+        // 凭据级格式覆盖（'' = 继承目录默认）。用于编辑弹窗回显与「只改格式」保存。
+        api_format: c.api_format || "",
         proxy_url: c.proxy_url || "",
       };
     }
@@ -135,6 +137,8 @@ function ModelsSection() {
         // 的合成值,不能拿它回写:那会把 catalog 默认地址固化成用户级 override,此后管理员改
         // catalog 的地址这个用户将不再跟随(开关这类只改启用态的写入必须原样回传这个字段)。
         base_url_override: cred.base_url_override || "",
+        // 凭据覆盖优先于目录默认；都为空 → chat（与后端 resolve_api_format 一致）。
+        api_format: cred.api_format || api.api_format || "chat_completions",
         key_set: !!cred.has_key,
         auth_mode: cred.auth_mode || 'api_key',
         configured: !!cred.configured,
@@ -157,6 +161,7 @@ function ModelsSection() {
       .map(([cid, c]) => ({
         id: cid, credential_id: cid, kind: "openai_compat", name: cid,
         base_url: c.base_url_override, base_url_override: c.base_url_override || "",
+        api_format: c.api_format || "chat_completions",
         key_set: !!c.has_key, key_hint: c.key_hint || '',
         auth_mode: c.auth_mode || 'api_key', configured: true,
         status: c.enabled === false ? "disabled" : "configured",
@@ -634,11 +639,17 @@ function ModelsSection() {
           const credentialId = normalizeApiId(payload.id);
           const catalogId = catalogApiIdForCredential(credentialId);
           const cfg = PROVIDERS_CONFIG.find((p) => catalogApiIdForCredential(p.id) === catalogId || normalizeApiId(p.id) === credentialId);
-          const kind = catalogId === "vertex_ai"
+          const existing = apis.find(a => a.id === catalogId);
+          // 保留已有 kind：旧实现每次保存都用 provider id 重算，会把管理员/接口写入的
+          // kind 覆盖回 openai_compat。格式只改 api_format，不动 kind。
+          const kind = existing?.kind || (catalogId === "vertex_ai"
             ? "vertex_ai"
             : catalogId === "anthropic"
               ? "anthropic"
-              : "openai_compat";
+              : "openai_compat");
+          const apiFormat = payload.api_format || existing?.api_format || "chat_completions";
+          const prevFormat = existing?.api_format || "chat_completions";
+          const formatChanged = !addingApi && !!existing && apiFormat !== prevFormat;
           // 中转站: 普通用户也可添加自定义 OpenAI 兼容端点 — 后端 me.py 放行未知
           // provider(必带 base_url) + set_credential 的 _validate_base_url 做 SSRF 防护。
           try {
@@ -647,12 +658,13 @@ function ModelsSection() {
             // 普通用户场景:provider 是项目内置的,catalog 已有 → 直接走 credentials.set。
             // 若管理员新加 provider(addingApi=true)或者改 base_url/proxy 这类全局字段,
             // 才尝试 upsertApi。普通用户不保存未知 api_id,避免后续同步模型报 api_id 不存在。
-            const existing = apis.find(a => a.id === catalogId);
             // proxy(连接方式/代理 URL)现在是 per-user 凭据字段,走 credentials.set,不再塞全局 catalog。
             const needsCatalogWrite = isAdminUser && (
               addingApi
               || !existing
               || (payload.base_url && payload.base_url !== existing.base_url)
+              // 自建中转站只存在于该用户 overlay,不能因为改格式就把它写进全局目录。
+              || (!existing._custom && apiFormat !== prevFormat)
             );
             if (needsCatalogWrite) {
               try {
@@ -661,6 +673,7 @@ function ModelsSection() {
                   display_name: payload.name || cfg?.name || catalogId,
                   base_url: payload.base_url,
                   kind,
+                  api_format: apiFormat,
                 });
               } catch (e) {
                 if (e?.status === 403) {
@@ -685,6 +698,7 @@ function ModelsSection() {
                   base_url_override: payload.base_url || '',
                   proxy: payload.proxy === 'http_proxy' ? (payload.proxy_url || '').trim() : '',
                   no_auth: noAuth,
+                  api_format: apiFormat,
                 });
               } catch (e) {
                 window.__apiToast?.(t('settings.edit_api.key_save_fail'), { kind: "warn", detail: e?.message, duration: 4000 });
@@ -696,6 +710,23 @@ function ModelsSection() {
                 await window.api.credentials.set({
                   api_id: credentialId, api_key: '',
                   base_url_override: payload.base_url || '', keep_key: true,
+                  api_format: apiFormat,
+                });
+              } catch (e) {
+                window.__apiToast?.(t('settings.edit_api.key_save_fail'), { kind: "warn", detail: e?.message, duration: 4000 });
+                throw e;
+              }
+            } else if (formatChanged && existing?.configured) {
+              // 只改协议格式:不重填 key、不改地址,保留已存密钥与 proxy,只更新 api_format。
+              // 没有这个分支时,「只切换 Chat/Responses」不会触发任何 credentials.set ——
+              // 用户选完刷新就丢（免鉴权凭据同样用 configured 判定,不受 key_set 限制）。
+              try {
+                await window.api.credentials.set({
+                  api_id: credentialId, api_key: '',
+                  // 只改格式：沿用用户已有的 override（不要用合成后的 base_url 把
+                  // catalog 默认地址固化成用户级 override）。
+                  base_url_override: existing.base_url_override || undefined,
+                  keep_key: true, api_format: apiFormat,
                 });
               } catch (e) {
                 window.__apiToast?.(t('settings.edit_api.key_save_fail'), { kind: "warn", detail: e?.message, duration: 4000 });

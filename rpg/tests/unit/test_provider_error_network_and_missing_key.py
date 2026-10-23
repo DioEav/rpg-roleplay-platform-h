@@ -71,6 +71,30 @@ class TestOrderingGuard(unittest.TestCase):
         self.assertIsNone(classify_provider_error(KeyError("player")))
 
 
+class TestUrllibHTTPErrorIsNotConnectionFailure(unittest.TestCase):
+    """urllib.error.HTTPError 继承 URLError,但带 status = 对面已回响应,不是「连不上」。
+
+    回归:OpenCode Go 的 400 MissingSessionID 曾被 MRO 命中 URLError → 误报
+    「连不上接口地址,请检查 base_url」,把用户支去查一个没坏的东西。
+    """
+
+    def test_http_400_without_feature_marker_is_not_network(self):
+        import urllib.error
+        exc = urllib.error.HTTPError(
+            "https://opencode.ai/zen/go/v1/chat/completions",
+            400, "Bad Request", {}, None,
+        )
+        known = classify_provider_error(exc)
+        self.assertTrue(known is None or known[0] != "network",
+                        f"带 HTTP 400 的异常被误判成连接失败: {known}")
+
+    def test_urllib_connection_error_without_status_still_network(self):
+        import urllib.error
+        exc = urllib.error.URLError(ConnectionRefusedError(61, "Connection refused"))
+        known = classify_provider_error(exc)
+        self.assertEqual((known or [None])[0], "network")
+
+
 class TestNoTestBookLeakInPrompts(unittest.TestCase):
     """自测书(阿衡/北港·灯塔/1937/沈知微)的专名不得出现在任何进 LLM 的 prompt 里。
 

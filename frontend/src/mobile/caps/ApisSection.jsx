@@ -16,6 +16,8 @@ function ApisSection({ toast }) {
   const [err, setErr] = useState('');
   const [editProv, setEditProv] = useState(null); // provider being edited
   const [keyVal, setKeyVal] = useState('');
+  const [baseUrlVal, setBaseUrlVal] = useState('');
+  const [formatVal, setFormatVal] = useState('chat_completions');
   const [saveBusy, setSaveBusy] = useState(false);
   const [testResult, setTestResult] = useState(null); // { id, ok, message }
 
@@ -32,7 +34,7 @@ function ApisSection({ toast }) {
       }
       setCreds(credMap);
 
-      const apis = (modelsRes && modelsRes.apis) || [];
+      const apis = (modelsRes && (modelsRes.models?.apis || modelsRes.apis)) || [];
       setProviders(apis.filter(a => a.id !== 'local' && a.id !== 'builtin'));
     } catch (e) {
       setErr(e?.message || t('mobile.caps.error.load_failed'));
@@ -44,16 +46,37 @@ function ApisSection({ toast }) {
   useEffect(() => { load(); }, [load]);
 
   const openEdit = (prov) => {
+    const cred = creds[prov.id] || creds[prov.id?.toLowerCase()] || null;
     setEditProv(prov);
     setKeyVal('');
+    setBaseUrlVal(cred?.base_url_override || prov.base_url || '');
+    setFormatVal(cred?.api_format || prov.api_format || 'chat_completions');
     setTestResult(null);
   };
 
+  const providerSupportsFormat = (prov) => {
+    const kind = prov?.kind || prov?.api_kind || '';
+    return kind !== 'anthropic' && kind !== 'vertex_ai' && prov?.id !== 'AgentPlatform';
+  };
+
   const handleSave = async () => {
-    if (!keyVal.trim()) { toast(t('mobile.caps.apis.form.key_required'), 'warn'); return; }
+    const cred = creds[editProv.id] || creds[editProv.id?.toLowerCase()] || null;
+    const existing = !!(cred?.has_credential || cred?.has_key || cred?.key_set || cred?.configured);
+    if (!keyVal.trim() && !existing) {
+      toast(t('mobile.caps.apis.form.key_required'), 'warn');
+      return;
+    }
     setSaveBusy(true);
     try {
-      await window.api.credentials.set({ api_id: editProv.id, api_key: keyVal.trim() });
+      // 只改地址/格式时不重填 Key：必须走 keep_key，否则空 key 会触发删除语义。
+      const payload = {
+        api_id: editProv.id,
+        api_key: keyVal.trim(),
+        base_url_override: baseUrlVal.trim() || undefined,
+      };
+      if (!keyVal.trim() && existing) payload.keep_key = true;
+      if (providerSupportsFormat(editProv)) payload.api_format = formatVal;
+      await window.api.credentials.set(payload);
       toast(t('mobile.caps.apis.toast.key_saved'), 'ok');
       setEditProv(null);
       load();
@@ -86,7 +109,10 @@ function ApisSection({ toast }) {
   };
 
   const credOf = (prov) => creds[prov.id] || creds[prov.id?.toLowerCase()] || null;
-  const isSet = (prov) => !!(credOf(prov)?.key_set);
+  const isSet = (prov) => {
+    const c = credOf(prov);
+    return !!(c?.has_credential || c?.has_key || c?.key_set || c?.configured);
+  };
 
   return (
     <>
@@ -164,9 +190,31 @@ function ApisSection({ toast }) {
               style={{ fontSize: 16 }}
             />
           </MField>
+          <MField label={t('mobile.caps.apis.form.base_url')} desc={t('mobile.caps.apis.form.base_url_desc')}>
+            <input
+              className="pl-input"
+              placeholder="https://your-relay.example.com/v1"
+              value={baseUrlVal}
+              onChange={e => setBaseUrlVal(e.target.value)}
+              style={{ fontSize: 16 }}
+            />
+          </MField>
+          {providerSupportsFormat(editProv || {}) && (
+            <MField label={t('mobile.caps.apis.form.api_format')} desc={t('mobile.caps.apis.form.api_format_desc')}>
+              <select
+                className="pl-input"
+                value={formatVal}
+                onChange={e => setFormatVal(e.target.value)}
+                style={{ fontSize: 16 }}
+              >
+                <option value="chat_completions">{t('settings.edit_api.api_format_chat')}</option>
+                <option value="responses">{t('settings.edit_api.api_format_responses')}</option>
+              </select>
+            </MField>
+          )}
           <div className="sheet-actions" style={{ marginTop: 8 }}>
             <button className="sheet-btn" onClick={() => setEditProv(null)}>{t('common.cancel')}</button>
-            <button className="sheet-btn primary" onClick={handleSave} disabled={saveBusy || !keyVal.trim()}>
+            <button className="sheet-btn primary" onClick={handleSave} disabled={saveBusy || (!keyVal.trim() && !isSet(editProv || {}))}>
               {saveBusy ? t('mobile.caps.apis.form.saving') : t('common.save')}
             </button>
           </div>

@@ -99,12 +99,12 @@ function EditApiModal({ open, api, isNew, isAdminUser = false, onClose, onConfir
   // 编辑时供应商固定,只改 base_url / key。key 写入后不回显。
   const CUSTOM = '__custom__';
   const [provider, setProvider] = useStatePL('');   // 选中的 provider id(新增用)
-  const [form, setForm] = useStatePL({ id: "", name: "", base_url: "", api_key: "", proxy: "direct", proxy_url: "", no_auth: false });
+  const [form, setForm] = useStatePL({ id: "", name: "", base_url: "", api_format: "chat_completions", api_key: "", proxy: "direct", proxy_url: "", no_auth: false });
   React.useEffect(() => {
     if (!open) return;
-    if (isNew) { setProvider(''); setForm({ id: "", name: "", base_url: "", api_key: "", proxy: "direct", proxy_url: "", no_auth: false }); }
+    if (isNew) { setProvider(''); setForm({ id: "", name: "", base_url: "", api_format: "chat_completions", api_key: "", proxy: "direct", proxy_url: "", no_auth: false }); }
     // 编辑时回显免鉴权开关(auth_mode 由 list_credentials 带出),否则用户一保存就被重置成"要 Key"
-    else if (api) { setProvider(api.id); setForm({ id: api.id, name: api.name, base_url: api.base_url, api_key: "", proxy: api.proxy || "direct", proxy_url: api.proxy_url || "", no_auth: api.auth_mode === 'none' }); }
+    else if (api) { setProvider(api.id); setForm({ id: api.id, name: api.name, base_url: api.base_url, api_format: api.api_format || "chat_completions", api_key: "", proxy: api.proxy || "direct", proxy_url: api.proxy_url || "", no_auth: api.auth_mode === 'none' }); }
   }, [open, api, isNew]);
   if (!open) return null;
 
@@ -131,6 +131,13 @@ function EditApiModal({ open, api, isNew, isAdminUser = false, onClose, onConfir
     if (p) setForm((f) => ({ ...f, id: p.id, name: p.name, base_url: p.defaultBase || "" }));
   };
   const isCustom = provider === CUSTOM;
+  const formatOptions = [
+    { value: 'chat_completions', label: t('settings.edit_api.api_format_chat') },
+    { value: 'responses', label: t('settings.edit_api.api_format_responses') },
+  ];
+  // Agent Platform / Anthropic 走各自的原生协议，不暴露 OpenAI 家族的格式选择。
+  const isNativeProvider = ['AgentPlatform', 'anthropic'].includes(provider)
+    || ['vertex_ai', 'anthropic'].includes(api?.kind);
   // Agent Platform (vertex_ai / AgentPlatform) 走 SA JSON — 不需要 base_url，api_key 是 JSON 字符串
   const selectedProviderCfg = PROVIDERS_CONFIG.find((x) => x.id === provider);
   const isAgentPlatform = selectedProviderCfg?.special === 'agent_platform' || api?.kind === 'vertex_ai';
@@ -219,6 +226,17 @@ function EditApiModal({ open, api, isNew, isAdminUser = false, onClose, onConfir
                 <CSFormField label={t('settings.edit_api.base_url')}>
                   <CSInput value={form.base_url} onChange={({ detail }) => setForm((f) => ({ ...f, base_url: detail.value }))} placeholder="https://your-relay.example.com/v1" />
                 </CSFormField>
+                {!isNativeProvider && (
+                  <CSFormField
+                    label={t('settings.edit_api.api_format')}
+                    description={t('settings.edit_api.api_format_desc')}>
+                    <CSSelect
+                      selectedOption={formatOptions.find((o) => o.value === form.api_format) || formatOptions[0]}
+                      options={formatOptions}
+                      onChange={({ detail }) => setForm((f) => ({ ...f, api_format: detail.selectedOption.value }))}
+                    />
+                  </CSFormField>
+                )}
                 {/* 本地/自托管模型(Ollama / vLLM / llama.cpp / LM Studio)多数没有 API Key 概念。
                     做成显式开关而不是「留空即免鉴权」:留空在本站的既有语义是「保留原 key」
                     或「删除凭据」,再让它兼任「免鉴权」会三义混淆。勾上后 Key 变成可选 —— 填了

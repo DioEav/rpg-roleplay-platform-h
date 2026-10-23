@@ -9,6 +9,14 @@ Version scheme: **SemVer** `MAJOR.MINOR.PATCH[-channel.N][+build]` since `v0.5.0
 
 ## [Unreleased]
 
+### Added
+- **OpenAI Responses 协议支持（按 provider/凭据 opt-in）。** 新增 `api_format`（`chat_completions` 默认 / `responses`），优先级为凭据覆盖 > 目录默认 > chat，只作用于 OpenAI 家族，`kind` 与旧调用路径不变。
+  - 新增 `agents/gm/backends/responses.py`：实现 `call/call_structured/stream/stream_with_mcp_loop/probe/last_usage`，默认 `store=False` 无状态，工具续跑用 `function_call_output` + `call_id`，思考控制映射为 `reasoning.effort`。
+  - `agents/gm/backends/_client.py`：Chat/Responses 共用 BYOK、base_url_override、超时、代理、SSRF、UA 与 OpenCode `x-opencode-session` 头。
+  - `agents/_harness.py`、`extractor`、`command_agent`、`recorder` 在取得 credential 后按格式自分发；史官、司命、模块模型、酒馆 AI 回复、导入/卡牌等子代理路径同步生效，函数签名不变。
+  - 迁移 v109 新增 `model_apis.api_format` 与 `user_api_credentials.api_format`（空 = 继承）；桌面/移动端添加 API Key 弹框可选 Chat Completions / Responses。
+  - 探活遇到 `ModelProtocolUnsupported` 时提示「该模型不支持当前 API 格式，请切换到另一种格式的 API 条目」。
+
 ## [1.88.1] - 2026-09-21 (@ a22d2639d)
 
 ### Fixed

@@ -32,6 +32,16 @@
 4. **文件归属互斥**：每个 agent 只改自己名下文件，**绝不碰他人文件**。整合由主代理做。
 5. **可启动性铁律**：`DEFAULT_MODEL_CATALOG` 砍骨架时，**保留 vertex_ai 真实可用 chat 模型 + 全部 embedding 模型**，`selected` 仍指向一个真实可用的 vertex flash 模型——否则 fresh/未 sync 实例的系统代理无默认模型可用、GM 直接挂。其它 provider 的 chat `models` 清空为 `[]`，靠用户 sync 填。
 
+### API 格式（Chat Completions / Responses）
+
+OpenAI 家族新增 `api_format`，不改 `kind`（`kind` 仍只表达 provider 路由族）：
+- 取值：`chat_completions`（默认）/ `responses`；空串仅出现在凭据层，表示继承目录默认。
+- 优先级：`user_api_credentials.api_format` > `model_apis.api_format` > `chat_completions`；只对 `kind in {openai, openai_compat}` 生效。
+- 路由：`GameMaster` 按解析结果选 `_OpenAICompatBackend` 或 `_ResponsesBackend`；`agents/_harness.py` 的两个 OpenAI helper 在拿到 credential 后自分发，保持既有函数签名。
+- Responses 请求契约：`instructions` + `input`、平铺 `tools`、`function_call_output`/`call_id`、`max_output_tokens`、`reasoning.effort`、`text.format`；默认 `store=False`（无状态，每回合发全量历史）。
+- 兼容：旧凭据 `api_format=''` → 目录默认（chat），行为与改造前完全一致；`kind` 白名单、模型同步、定价、BYOK 均不变。
+- 明确不在范围：embeddings、生图（Chat image modality），以及 Anthropic-only 的 `call_agent_tool_loop`。
+
 ### 文件归属与改动（4 路并发）
 
 **Agent A — registry-core**　owns: `rpg/model_aliases.py`(NEW), `rpg/model_registry.py`

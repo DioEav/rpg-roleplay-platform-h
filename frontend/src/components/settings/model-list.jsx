@@ -70,6 +70,9 @@ function ApiDetailPanel({ api, onEdit, onVisibility, onValidate, onDeleteKey, on
         description={<span style={{ display: 'inline-flex', gap: 10, flexWrap: 'wrap', alignItems: 'center' }}>
           <span className="mono">{api.id}</span>
           <span style={{ color: 'var(--muted)' }}>{t('settings.models.base_url_label')}: <span className="mono">{api.base_url || '—'}</span></span>
+          {!['anthropic', 'vertex_ai'].includes(api.kind) && (
+            <span style={{ color: 'var(--muted)' }}>{t('settings.models.api_format_label')}: <span className="mono">{api.api_format === 'responses' ? t('settings.edit_api.api_format_responses') : t('settings.edit_api.api_format_chat')}</span></span>
+          )}
           <span style={{ color: 'var(--muted)' }}>{t('settings.models.key_label')}: <span className="mono">•••• {api.key_hint || t('settings.models.key_set_hint')}</span></span>
         </span>}
         actions={

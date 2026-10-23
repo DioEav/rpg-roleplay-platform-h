@@ -13,6 +13,7 @@ import CSBox from '@cloudscape-design/components/box';
 import CSButton from '@cloudscape-design/components/button';
 import CSFormField from '@cloudscape-design/components/form-field';
 import CSInput from '@cloudscape-design/components/input';
+import CSSelect from '@cloudscape-design/components/select';
 import CSStatusIndicator from '@cloudscape-design/components/status-indicator';
 
 
@@ -40,7 +41,7 @@ function ProviderConfigSection() {
         const map = {};
         for (const c of (r?.items || r?.credentials || [])) {
           const pid = normalizeApiId(c.api_id || c.id);
-          map[pid] = { has_key: !!c.has_credential || !!c.has_key, key_hint: c.key_hint || "", base_url: c.base_url_override || "" };
+          map[pid] = { has_key: !!c.has_credential || !!c.has_key, key_hint: c.key_hint || "", base_url: c.base_url_override || "", api_format: c.api_format || "", auth_mode: c.auth_mode || "api_key" };
         }
         setCreds(map);
       } catch (_) {}
@@ -48,23 +49,39 @@ function ProviderConfigSection() {
     return () => { cancelled = true; };
   }, []);
 
-  const saveKey = async (providerId, apiKey, baseUrl) => {
+  const saveKey = async (providerId, apiKey, baseUrl, apiFormat) => {
     setSaving(s => ({ ...s, [providerId]: true }));
     try {
+      const existing = creds[providerId] || {};
+      const formatChanged = !!apiFormat && apiFormat !== (existing.api_format || "chat_completions");
       if (apiKey && apiKey.trim()) {
-        await window.api.credentials.set({ api_id: providerId, api_key: apiKey.trim() });
+        await window.api.credentials.set({
+          api_id: providerId, api_key: apiKey.trim(),
+          ...(apiFormat ? { api_format: apiFormat } : {}),
+        });
+      } else if (formatChanged) {
+        // 只切换格式：不重填 key，避免空 key 触发删除语义。
+        await window.api.credentials.set({
+          api_id: providerId, api_key: '',
+          base_url_override: existing.base_url || undefined,
+          keep_key: true, api_format: apiFormat,
+        });
       }
       if (baseUrl !== undefined) {
         if (isAdminUser) {
           const cfg = PROVIDERS_CONFIG.find((p) => p.id === providerId);
           const kind = providerId === "AgentPlatform" ? "vertex_ai" : providerId === "anthropic" ? "anthropic" : "openai_compat";
-          await window.api.models.upsertApi({ api_id: catalogApiIdForCredential(providerId), base_url: baseUrl, kind, display_name: cfg?.name || providerId });
+          await window.api.models.upsertApi({
+            api_id: catalogApiIdForCredential(providerId), base_url: baseUrl, kind,
+            display_name: cfg?.name || providerId,
+            ...(apiFormat ? { api_format: apiFormat } : {}),
+          });
         } else {
           window.__apiToast?.(t('settings_extra.admin_base_url_only'), { kind: "warn", duration: 3000 });
         }
       }
       window.__apiToast?.(t('settings.providers.save_ok'), { kind: "ok", duration: 1800 });
-      setCreds(s => ({ ...s, [providerId]: { ...s[providerId], has_key: !!(apiKey?.trim() || s[providerId]?.has_key), base_url: baseUrl ?? s[providerId]?.base_url } }));
+      setCreds(s => ({ ...s, [providerId]: { ...s[providerId], has_key: !!(apiKey?.trim() || s[providerId]?.has_key), base_url: baseUrl ?? s[providerId]?.base_url, api_format: apiFormat ?? s[providerId]?.api_format } }));
     } catch (e) {
       window.__apiToast?.(t('settings.providers.save_fail'), { kind: "danger", detail: e?.message });
     } finally {
@@ -143,7 +160,15 @@ function ProviderCard({ provider: p, cred, isSaving, agentPlatformJson, agentPla
   const { t } = useTranslation();
   const [keyVal, setKeyVal] = useStatePL("");
   const [baseVal, setBaseVal] = useStatePL(cred.base_url || p.defaultBase || "");
+  const [fmtVal, setFmtVal] = useStatePL(cred.api_format || "chat_completions");
   useEffectPL(() => { setBaseVal(cred.base_url || p.defaultBase || ""); }, [cred.base_url, p.defaultBase]);
+  useEffectPL(() => { setFmtVal(cred.api_format || "chat_completions"); }, [cred.api_format]);
+  // Anthropic 走原生协议，不暴露 OpenAI 家族的 Chat/Responses 选择。
+  const supportsFormat = p.id !== "anthropic" && p.special !== "agent_platform";
+  const formatOptions = [
+    { value: "chat_completions", label: t('settings.edit_api.api_format_chat') },
+    { value: "responses", label: t('settings.edit_api.api_format_responses') },
+  ];
 
   // Agent Platform 走专用 UI
   if (p.special === "agent_platform") {
@@ -277,11 +302,22 @@ function ProviderCard({ provider: p, cred, isSaving, agentPlatformJson, agentPla
               placeholder={p.defaultBase || "https://…"}
             />
           </CSFormField>
+          {supportsFormat && (
+            <CSFormField label={t('settings.edit_api.api_format')} stretch>
+              <CSSelect
+                selectedOption={formatOptions.find((o) => o.value === fmtVal) || formatOptions[0]}
+                options={formatOptions}
+                onChange={({ detail }) => setFmtVal(detail.selectedOption.value)}
+              />
+            </CSFormField>
+          )}
           <CSButton
             variant="primary"
             loading={isSaving}
-            disabled={isSaving || (!keyVal.trim() && baseVal === (cred.base_url || p.defaultBase || ""))}
-            onClick={() => onSaveKey(p.id, keyVal, baseVal)}
+            disabled={isSaving || (!keyVal.trim()
+              && baseVal === (cred.base_url || p.defaultBase || "")
+              && (!supportsFormat || fmtVal === (cred.api_format || "chat_completions")))}
+            onClick={() => onSaveKey(p.id, keyVal, baseVal, supportsFormat ? fmtVal : undefined)}
           >
             {t('common.save')}
           </CSButton>

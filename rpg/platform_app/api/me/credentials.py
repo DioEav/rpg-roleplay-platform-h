@@ -35,6 +35,11 @@ async def api_set_credential(request: Request, user=Depends(require_user)):
         keep_key = bool(body.get("keep_key"))
         # 免鉴权(本地/自托管:Ollama / vLLM / llama.cpp / LM Studio)。显式选项,不是靠"key 为空"猜。
         auth_mode = "none" if bool(body.get("no_auth")) else "api_key"
+        # API 协议格式：省略/null = 保留原值；'' = 清除覆盖(继承目录默认)；
+        # chat_completions / responses = 用户覆盖。只对 OpenAI 家族生效。
+        api_format = body.get("api_format")
+        if api_format is not None:
+            api_format = str(api_format).strip()
         if not is_admin:
             from model_registry import (
                 default_api_for,
@@ -69,6 +74,7 @@ async def api_set_credential(request: Request, user=Depends(require_user)):
             proxy=(body.get("proxy") or "").strip(),  # 出站代理 URL;仅本地模式真正使用(见 openai_compat)
             preserve_key_if_empty=keep_key,
             auth_mode=auth_mode,
+            api_format=api_format,
         )
         return json_response(result)
     except ValueError as exc:

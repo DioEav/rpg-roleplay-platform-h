@@ -67,6 +67,9 @@ function Composer({
   const permTriggerRef = useRefC(null);
   const slashTriggerRef = useRefC(null);  // task 141: 让 CommandMenu 能识别 trigger 不误关
   const [showImageGen, setShowImageGen] = useStateC(false);
+  // 本次在浮层里选中的 provider:同名模型可能同时存在于多个 provider,只按模型名解析会命中
+  // 目录里排在前面的同名条目(可能是没配 key 的旧中转站)→ 标签误回退成占位符。
+  const [pickedModelApi, setPickedModelApi] = useStateC(null);
   const isWriting = composerMode === "writing";
   const [enterToSend, setEnterToSend] = useStateC(() => {
     return lsGet(enterToSendKey) !== "0";
@@ -301,7 +304,7 @@ function Composer({
             {!hideModel && (
             <button ref={modelTriggerRef} className="gc-pop-trigger" onClick={toggleModel}>
               <Icon name="sparkle" size={12} />
-              <span className="gc-model-label" title={_currentModelLabel(gameState, model, t)}>{_currentModelLabel(gameState, model, t)}</span>
+              <span className="gc-model-label" title={_currentModelLabel(gameState, model, t, pickedModelApi)}>{_currentModelLabel(gameState, model, t, pickedModelApi)}</span>
               <Icon name="chevron_down" size={11} />
             </button>
             )}
@@ -337,7 +340,7 @@ function Composer({
           <MentionMenu chars={filteredChars} query={mention.query} onPick={insertMention} onClose={() => setMention(null)} />
         )}
         {showPlus && <AttachMenu onPick={onAttachPick} onClose={togglePlus} triggerRef={plusTriggerRef} onAiReply={onAiReply} aiReplyOnly={aiReplyOnly} />}
-        {showModel && <ModelPopover current={model} onPick={(id) => { setModel(id); toggleModel(); }} align="right" gameState={gameState} onClose={toggleModel} triggerRef={modelTriggerRef} persist={modelPersist} />}
+        {showModel && <ModelPopover current={model} onPick={(id, apiId) => { setModel(id); setPickedModelApi(apiId || null); toggleModel(); }} align="right" gameState={gameState} onClose={toggleModel} triggerRef={modelTriggerRef} persist={modelPersist} />}
         {showPerm && <PermissionPopover current={permission} optionIds={permissionOptions} onPick={(id) => { setPermission(id); togglePerm(); }} onClose={togglePerm} triggerRef={permTriggerRef} />}
         {showImageGen && (
           <GenerateImageModal
@@ -356,50 +359,81 @@ function Composer({
 
 
 // 取当前模型的展示标签。
-// 优先级：localModel（pickModel 后立即乐观更新）> gameState.app.model（后端刷新后）> 占位符。
+// 优先级：localModel（pickModel 后立即乐观更新）> 存档 session_model > catalog.selected(per-user 默认) > 后端全局 app。
 // Bug fix: 原来 _ignored 完全忽略 local model，导致切换后底部标签不更新直到 reloadState。
 // 用 gameState.models(catalog) 把 model_id 解析为 display_name；找不到就直接显示 id。
-function _currentModelLabel(gameState, localModel, t) {
+//
+// 解析必须带 provider:同名模型可能同时存在于多个 provider(自建中转尤其常见),只按名字
+// 全局找第一个会命中目录里排在前面的同名条目 —— 若那条属于没配 key 的 provider,就会被判
+// 成不可用、标签回退占位符(线上现象:opencode-go 的 deepseek/glm/kimi 明明能选,底栏却一直是「模型」)。
+// 所以每个候选都带上 api_id 先「去对应 provider 下找」;只有缺 api_id(本地乐观值)或该 provider
+// 下已没有这个模型(目录过期)时,才退化为全局按名字扫描,并优先取有凭证的命中。
+function _currentModelLabel(gameState, localModel, t, localApiId) {
   const _placeholder = () => (t ? t('game.composer.model_placeholder') : "Model");
   const catalog = gameState && gameState.models;
   const apis = (catalog && Array.isArray(catalog.apis)) ? catalog.apis : null;
-  // 把 id 解析成 {label, cred}。cred = 所属 provider 是否已配置 key。
-  // 不在 catalog 里的(自定义模型)按可用处理,直接显示 id。
-  const _resolve = (id) => {
-    if (!id) return null;
+  const _modelsOf = (api) => (api && (api.models || api.entries)) || [];
+  const _labelOf = (api, m) => ({
+    label: m.display_name || m.real_name || m.id,
+    cred: api.has_credential !== false,
+  });
+  // 指定 provider 下找:精确匹配本次选择所属的渠道,避免同名条目串台。
+  const _findInApi = (apiId, id) => {
+    if (!apiId || !id || !apis) return null;
+    const api = apis.find((a) => (a.api_id || a.id) === apiId);
+    if (!api) return null;
+    const m = _modelsOf(api).find((x) => x.id === id || x.real_name === id);
+    return m ? _labelOf(api, m) : null;
+  };
+  // 仅按名字找(无 api_id 的乐观值 / 该 provider 下已无此模型):优先有凭证的命中,
+  // 别让前面没配 key 的同名 provider 遮蔽后面能用的那个。
+  const _findByName = (id) => {
     if (apis) {
+      let fallback = null;
       for (const api of apis) {
-        for (const m of (api.models || [])) {
+        for (const m of _modelsOf(api)) {
           if (m.id === id || m.real_name === id) {
-            return { label: m.display_name || m.real_name || m.id, cred: api.has_credential !== false };
+            const hit = _labelOf(api, m);
+            if (hit.cred) return hit;
+            if (!fallback) fallback = hit;
           }
         }
       }
+      if (fallback) return fallback;
     }
     return { label: id, cred: true };  // 自定义/未在 catalog → 直接显示
   };
+  const _resolve = (id, apiId) => (!id ? null : (_findInApi(apiId, id) || _findByName(id)));
+  // 移动端复用同一个 model state 时存的是 {id, api_id, label} 对象(见 MobileGame.onPicked)。
+  // 桌面/移动共用 App state,先归一成 (id, apiId),否则对象会被当成模型名渲染 → React 崩溃。
+  const _local = (localModel && typeof localModel === 'object')
+    ? {
+        id: localModel.id || localModel.model_id || localModel.real_name || '',
+        apiId: localModel.api_id || localApiId,
+      }
+    : { id: localModel, apiId: localApiId };
   // catalog 已加载但没有任何「已配置 key」的 provider → 用户无可用模型,
   // 绝不回退显示一个他用不了的默认模型(否则删光 key 仍显示 Opus,误导)。
   // 后端权威标记:用户无任何可用(已配 key)模型 → 提示去配置,绝不显示用不了的全局默认。
   if (catalog && catalog.needs_model_config) return (t ? t('game.composer.model_needs_config') : 'Set up model');
-  if (apis && !apis.some((a) => a.has_credential && (a.models || []).length)) return _placeholder();
-  // 解析优先级:localModel(乐观更新) > 存档 session_model > catalog.selected(per-user 默认) > 后端全局 app。
+  if (apis && !apis.some((a) => a.has_credential && _modelsOf(a).length)) return _placeholder();
   // 必须含 catalog.selected —— 否则刷新后掉到 app.model(可能是全局默认 opus)而显示用不了的模型;
   // 且与 ModelPopover 选中态(selectedKey)同源,避免「勾在 A、底部显示 B」。只显示「有凭证」的那个。
   const sessionModel = gameState && gameState.session_model;
   const catSel = catalog && catalog.selected;
+  const appState = gameState && gameState.app;
   const candidates = [
-    localModel,
-    sessionModel && (sessionModel.model_id || sessionModel.model_real_name),
-    catSel && (catSel.model_id || catSel.model_real_name),
-    gameState && gameState.app && gameState.app.model,
+    [_local.id, _local.apiId],
+    [sessionModel && (sessionModel.model_id || sessionModel.model_real_name), sessionModel && sessionModel.api_id],
+    [catSel && (catSel.model_id || catSel.model_real_name), catSel && catSel.api_id],
+    [appState && appState.model, appState && appState.api_id],
   ];
-  for (const id of candidates) {
-    const r = _resolve(id);
+  for (const [id, apiId] of candidates) {
+    const r = _resolve(id, apiId);
     if (r && r.cred) return r.label;
   }
   return _placeholder();
 }
 
 
-export { Composer, MentionMenu, PERMISSION_OPTIONS, ContextUsage };
+export { Composer, MentionMenu, PERMISSION_OPTIONS, ContextUsage, _currentModelLabel };

@@ -24,6 +24,7 @@ PROJECT = Path(__file__).resolve().parents[3]
 MODELS_PY = (PROJECT / "rpg" / "routes" / "models.py").read_text(encoding="utf-8")
 MODEL_PROBE_PY = (PROJECT / "rpg" / "model_probe.py").read_text(encoding="utf-8")
 OPENAI_COMPAT_PY = (PROJECT / "rpg" / "agents" / "gm" / "backends" / "openai_compat.py").read_text(encoding="utf-8")
+OPENAI_CLIENT_PY = (PROJECT / "rpg" / "agents" / "gm" / "backends" / "_client.py").read_text(encoding="utf-8")
 # ModelsSection(provider 行 / 编辑弹窗)拆分后住 components/settings/models-section.jsx;
 # 断言不变,仅把读取路径指向新住址。
 SETTINGS_JSX = (PROJECT / "frontend" / "src" / "components" / "settings" / "models-section.jsx").read_text(encoding="utf-8")
@@ -95,9 +96,13 @@ class RemoteListProbeHonorsOverride(unittest.TestCase):
 
 class GenerationAlreadyHonorsOverride(unittest.TestCase):
     def test_openai_compat_prefers_override(self):
-        """sync 端点的修复使其与生成路径一致 —— 生成早已 base_url_override 优先。"""
+        """sync 端点的修复使其与生成路径一致 —— 生成早已 base_url_override 优先。
+
+        构造逻辑已抽到 `_client.py`(Chat/Responses 共用),所以不变量在 _client 里锁。
+        """
+        self.assertIn("prepare_openai_client", OPENAI_COMPAT_PY)
         self.assertRegex(
-            OPENAI_COMPAT_PY,
+            OPENAI_CLIENT_PY,
             r'effective_base\s*=\s*result\.get\("base_url_override"\)\s+or\s+base_url',
         )
 

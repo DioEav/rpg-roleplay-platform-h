@@ -203,4 +203,23 @@ describe('API 设置 — 详情表上下文/来源、价格列隐藏与工具栏
     await waitFor(() => expect(screen.queryByText('Model 0')).toBeNull());
     expect(screen.getByText('Model 3')).toBeTruthy();
   });
+
+  it('只切换 API 格式时用 keep_key 保存,不会删除已有 Key', async () => {
+    installMocks();
+    autoSyncState.lastProbedAt.set('deepseek', Date.now());
+
+    await openDetail();
+    fireEvent.click(screen.getByRole('button', { name: '编辑' }));
+
+    // 等编辑弹窗出现后切换协议格式。
+    fireEvent.mouseDown(await screen.findByRole('button', { name: /API 格式/ }));
+    fireEvent.mouseUp(await screen.findByRole('option', { name: 'Responses (/responses)' }));
+    fireEvent.click(screen.getByRole('button', { name: '保存' }));
+
+    await waitFor(() => expect(window.api.credentials.set).toHaveBeenCalled());
+    const payload = window.api.credentials.set.mock.calls.at(-1)[0];
+    expect(payload.api_format).toBe('responses');
+    expect(payload.keep_key).toBe(true);
+    expect(payload.api_key).toBe('');
+  });
 });

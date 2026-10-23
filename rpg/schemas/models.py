@@ -42,6 +42,7 @@ class ModelsUpsertApiRequest(_BaseRequest):
     name: _Str256 | None = None
     base_url: _Str256 | None = None
     kind: _Str256 | None = None
+    api_format: _Str256 | None = None
 
 
 class ModelsUpsertModelRequest(_BaseRequest):

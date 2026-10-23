@@ -476,6 +476,19 @@ def invalidate_user_api(user_id: int | None, api_id: str) -> None:
         pass
 
 
+def invalidate_api_health(api_id: str) -> None:
+    """清掉某 provider 全部模型的健康缓存。
+
+    协议格式变更(chat → responses)后,旧探测结果对应的端点和请求形态都已不同,
+    继续展示会让 UI 显示错误的绿点/红点。幂等、容错。
+    """
+    try:
+        for key in [k for k in _HEALTH_CACHE if k[0] == api_id]:
+            _HEALTH_CACHE.pop(key, None)
+    except Exception:
+        pass
+
+
 def _list_vertex_models(api: dict[str, Any], user_id: int | None = None) -> list[dict[str, Any]]:
     """列出 Vertex 可用 Gemini 模型。user_id 非 None 时优先使用用户 BYOK SA。"""
     from google import genai
@@ -699,6 +712,7 @@ def diff_catalog(api_id: str, user_id: int | None = None) -> dict[str, Any]:
 #   degraded    — 探测成功但延迟高 / 响应异常（预留，暂未触发）
 #   key_expired — HTTP 401，API key 失效或未授权
 #   forbidden   — HTTP 403，API key 无权限访问该模型
+#   protocol_unsupported — provider 明确拒绝当前协议（如 OpenCode 的 ModelProtocolUnsupported）
 #   err         — 5xx / 网络错误 / timeout / 其他未知错误
 #   untested    — 从未探测过（健康缓存中的初始值）
 
@@ -713,6 +727,10 @@ def _classify_probe_error(exc: Exception, err_str: str) -> str:
     委托方案=双层逻辑零删减,可维护性反降。两者并存是正确终态。
     """
     err_lower = err_str.lower()
+    # provider 明确表示「该模型不支持当前协议」(OpenCode Go: ModelProtocolUnsupported)。
+    # 这是配置选择问题（该用 Chat 还是 Responses），不是 key/网络故障，必须单独提示。
+    if "modelprotocolunsupported" in err_lower or "does not support this protocol" in err_lower:
+        return "protocol_unsupported"
     # Anthropic SDK: anthropic.AuthenticationError (status_code=401)
     # OpenAI SDK: openai.AuthenticationError
     # httpx: HTTPStatusError with status_code
@@ -755,6 +773,7 @@ def _probe_error_message(status_detail: str) -> str:
     return {
         "key_expired": "API key 已失效或未授权，请在「个人主页 → API 凭证」更新密钥",
         "forbidden": "API key 无权限访问该模型，请检查账号权限或模型授权",
+        "protocol_unsupported": "该模型不支持当前 API 格式（Chat Completions / Responses）。请切换到另一种格式的 API 条目后重试。",
         "err": "探测失败（供应商故障或网络不可达），可稍后重试",
         "degraded": "模型响应异常，功能可能受限",
         "ok": "",

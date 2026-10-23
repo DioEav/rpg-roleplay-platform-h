@@ -128,7 +128,14 @@ def _is_connection_failure(exc: Exception) -> bool:
     先按异常类的整条 MRO 判类名(子类如 APITimeoutError / ConnectTimeout 一并命中),
     再按措辞兜底。**调用方必须先排完所有带 HTTP 状态码的分支**:504 gateway timeout
     这类带 status 的错误措辞里也有 "timeout",顺序反了会被这里吞掉。
+
+    带 HTTP 状态码 = 对面已经回了响应(4xx/5xx),无论异常类是什么都不算连接失败。
+    必须显式挡在 MRO 匹配之前:`urllib.error.HTTPError` 继承 `URLError`,而
+    `_CONNECTION_EXC_NAMES` 含 `URLError` → 400(MissingSessionID / 参数不支持等)
+    会被误报成「连不上接口地址」,把用户支去查一个没坏的 base_url。
     """
+    if _http_status(exc) is not None:
+        return False
     for klass in type(exc).__mro__:
         if klass.__name__ in _CONNECTION_EXC_NAMES:
             return True

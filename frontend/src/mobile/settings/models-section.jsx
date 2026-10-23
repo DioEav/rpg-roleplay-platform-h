@@ -41,6 +41,12 @@ function ProviderDetail({ api, onBack, onSync, onToggleModel, onDeleteKey, nav }
                 <span style={{ color: 'var(--muted)' }}>Base URL</span>
                 <span className="mono" style={{ color: 'var(--text-quiet)', fontSize: 11, maxWidth: '60%', textAlign: 'right', wordBreak: 'break-all' }}>{api.base_url || '—'}</span>
               </div>
+              {!['anthropic', 'vertex_ai'].includes(api.kind) && (
+                <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                  <span style={{ color: 'var(--muted)' }}>{t('settings.models.api_format_label')}</span>
+                  <span className="mono" style={{ color: 'var(--text-quiet)', fontSize: 11 }}>{api.api_format === 'responses' ? t('settings.edit_api.api_format_responses') : t('settings.edit_api.api_format_chat')}</span>
+                </div>
+              )}
               <div style={{ display: 'flex', justifyContent: 'space-between' }}>
                 <span style={{ color: 'var(--muted)' }}>API Key</span>
                 <span className="mono" style={{ color: 'var(--text-quiet)' }}>•••• {api.key_hint}</span>
@@ -137,7 +143,7 @@ function ModelsSection({ nav, onBack }) {
     const credMap = {};
     for (const c of (creds?.items || creds?.credentials || [])) {
       const cid = normId(c.api_id || c.id);
-      credMap[cid] = { has_key: !!(c.has_credential||c.has_key||c.key_hint), key_hint: c.key_hint||'', enabled: c.enabled!==false, base_url_override: c.base_url_override||'', proxy_url: c.proxy_url || '' };
+      credMap[cid] = { has_key: !!(c.has_credential||c.has_key||c.key_hint), key_hint: c.key_hint||'', enabled: c.enabled!==false, base_url_override: c.base_url_override||'', api_format: c.api_format || '', proxy_url: c.proxy_url || '' };
     }
     const list = data?.models?.apis || data?.apis || [];
     const rows = Array.isArray(list) ? list.map(api => {
@@ -147,8 +153,10 @@ function ModelsSection({ nav, onBack }) {
       return {
         id: cataId, credential_id: criId,
         name: api.display_name || api.name || cataId,
+        kind: api.kind || api.api_kind || '',
         // 用户自己的 base_url_override(中转站)优先;非 admin 的 api.base_url 已被后端 redact 成空。
         base_url: cred.base_url_override || api.base_url || '',
+        api_format: cred.api_format || api.api_format || 'chat_completions',
         key_set: !!cred.has_key, key_hint: cred.key_hint || '—',
         connectivity: { status:'untested' },
         // proxy 从凭据读(api.proxy 对非 admin 恒 undefined);后端 list_credentials 返回 proxy_url。
@@ -162,8 +170,9 @@ function ModelsSection({ nav, onBack }) {
     const customRows = Object.entries(credMap)
       .filter(([cid, c]) => c.has_key && c.base_url_override && !catalogIds.has(normId(cid)))
       .map(([cid, c]) => ({
-        id: cid, credential_id: cid, name: cid,
+        id: cid, credential_id: cid, name: cid, kind: 'openai_compat',
         base_url: c.base_url_override, key_set: true, key_hint: c.key_hint || '—',
+        api_format: c.api_format || 'chat_completions',
         connectivity: { status:'untested' },
         enabled: c.enabled !== false, proxy: c.proxy_url ? 'http_proxy' : 'direct',
         models: [], _custom: true,

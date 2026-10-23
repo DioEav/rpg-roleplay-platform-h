@@ -160,5 +160,90 @@ class TestCredentialOverlaySync(unittest.TestCase):
         self.assertNotIn(ck, model_probe._LIST_CACHE, "删 key 后远程模型缓存必须被失效")
 
 
+class TestApiFormatRoundTrip(unittest.TestCase):
+    """api_format 在凭据/目录/overlay 三层往返，且 keep_key 编辑不会丢格式。"""
+
+    @classmethod
+    def setUpClass(cls):
+        from platform_app.db import connect, init_db
+        init_db()
+        with connect() as db:
+            db.execute("delete from users where username = %s", ("api_format_uat",))
+            row = db.execute(
+                """
+                insert into users(username, display_name, password_hash, email)
+                values (%s, %s, %s, %s) returning id
+                """,
+                ("api_format_uat", "API Format UAT", "x", "api_format_uat@example.com"),
+            ).fetchone()
+            cls.uid = int(row["id"])
+
+    @classmethod
+    def tearDownClass(cls):
+        from platform_app.db import connect
+        with connect() as db:
+            db.execute("delete from user_model_entries where user_id = %s", (cls.uid,))
+            db.execute("delete from user_api_credentials where user_id = %s", (cls.uid,))
+            db.execute("delete from users where id = %s", (cls.uid,))
+
+    def setUp(self):
+        from platform_app.db import connect
+        with connect() as db:
+            db.execute("delete from user_model_entries where user_id = %s", (self.uid,))
+            db.execute("delete from user_api_credentials where user_id = %s", (self.uid,))
+
+    def _set(self, **kw):
+        import model_probe
+        from platform_app import user_credentials
+        orig = model_probe.list_remote_models
+        model_probe.list_remote_models = lambda *a, **k: {
+            "ok": True, "models": [{"id": "m1", "real_name": "m1"}],
+        }
+        try:
+            return user_credentials.set_credential(
+                self.uid, "myrelay", kw.pop("key", "sk-test"),
+                base_url_override="https://relay.example/v1",
+                allow_base_url=True,
+                **kw,
+            )
+        finally:
+            model_probe.list_remote_models = orig
+
+    def test_format_round_trip_and_keep_key_semantics(self):
+        from platform_app import user_credentials
+        from model_registry import apply_user_overlay, resolve_api_format
+
+        self._set(api_format="responses")
+        cred = user_credentials.get_credential(self.uid, "myrelay")
+        self.assertEqual(cred["api_format"], "responses")
+        self.assertEqual(
+            user_credentials.list_credentials(self.uid)["items"][0]["api_format"],
+            "responses",
+        )
+        # 凭据覆盖优先于目录默认
+        self.assertEqual(
+            resolve_api_format("myrelay", self.uid,
+                               catalog_api={"api_format": "chat_completions"}),
+            "responses",
+        )
+        # keep_key 编辑但未提供 api_format → 保留原值
+        self._set(key="", preserve_key_if_empty=True)
+        self.assertEqual(
+            user_credentials.get_credential(self.uid, "myrelay")["api_format"],
+            "responses",
+        )
+        # 显式空串 → 清除覆盖（继承目录默认）
+        self._set(key="", preserve_key_if_empty=True, api_format="")
+        self.assertEqual(
+            user_credentials.get_credential(self.uid, "myrelay")["api_format"], "",
+        )
+        # 自建中转站 overlay 行携带凭据格式
+        self._set(api_format="responses")
+        catalog = apply_user_overlay({"apis": []}, self.uid)
+        api = next(a for a in catalog["apis"] if a["id"] == "myrelay")
+        self.assertEqual(api["api_format"], "responses")
+        self.assertEqual(api["kind"], "openai_compat")
+
+
 if __name__ == "__main__":
     unittest.main()

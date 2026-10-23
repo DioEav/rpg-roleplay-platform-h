@@ -13,7 +13,7 @@ Python FastAPI 后端逐包/逐模块职责。给 AI 协作者:找「某功能�
 ## 回合链与 GM 服务
 
 - `chat_pipeline/` **[热路径]** — `/api/chat` SSE 流水线。`__init__.py` 编排 5 个 async-generator phase;`context.py`(取上下文)→ `directives.py`(OOC/斜杠指令)→ `rules.py`(规则桥)→ `gm.py`(`run_gm_phase`,调 GM 出文)→ `persist.py`(落库)/ `postproc.py`(异步后处理)。`_common.py` 定义 `PipelineContext`/SSE 事件。搬家不改语义:事件名/顺序与旧 app.py 一致。
-- `agents/gm/` **[热路径]** — 三贤者 GM 管线(司命/文宗/史官)。`master.py` 主编排,`backends/`(anthropic/openai_compat/_tiered 各 LLM 后端),`style_config.py`/`style_harness.py`(GM 文风),`stream_retry.py`(流式重试)。
+- `agents/gm/` **[热路径]** — 三贤者 GM 管线(司命/文宗/史官)。`master.py` 主编排,`backends/`(anthropic/openai_compat/responses/vertex + 共享 `_client`/`_tiered` 各 LLM 后端),`style_config.py`/`style_harness.py`(GM 文风),`stream_retry.py`(流式重试)。
 - `gm_serving/` **[热路径]** — 回合服务层。`serve.py` 主服务,`context_inject.py`(上下文注入),`anchor_reconcile.py` + `anchor_signature.py`(锚点对齐,import `get_progress_window`),`impact.py`(后果),`steering.py`(引导强度),`settings.py`(含 `realign_progress_signals` 进度回退)。
 - `context_engine/` — 分层上下文组装:`core.py`/`layers.py`/`projection.py`/`formatters.py`;`budget.py`(层预算全局求解 —— 纯函数,按 min/want/priority 在模型窗口内分配,宽裕时等价于每层拿满 want);`_constants.py` 的 `MAX_LAYER_CHARS` 是**层预算登记表**,漏登记会被静默截断到默认上限,守卫 `tests/unit/test_context_layer_budget_registry.py`。
 - `context_providers/` — 可插拔上下文 provider,`registry.py` 注册;含 `episodic_recall`(长程记忆)、`memory`、`npc_agenda`、`world_pulse`、`runtime_phase_digests` 等。加 provider 走 registry。
@@ -81,7 +81,8 @@ Python FastAPI 后端逐包/逐模块职责。给 AI 协作者:找「某功能�
 ## 模型层 / 供应商
 
 - `model_registry.py` / `model_probe.py` / `model_aliases.py` / `model_catalog`(`config/model_catalog.json`) — 模型目录/探活/别名。
-- `model_reasoning.py` — 模型级思考能力 spec + 跨 provider 方言适配(off/low/…/max → reasoning_effort / thinking / budget)。三个 GM backend 与 `/api/models` 的唯一真源;`_effort.py` 已退化为兼容层。
+- `model_reasoning.py` — 模型级思考能力 spec + 跨 provider 方言适配(off/low/…/max → reasoning_effort / thinking / budget / Responses reasoning.effort)。四个 GM backend 与 `/api/models` 的唯一真源;`_effort.py` 已退化为兼容层。
+- `model_formats.py` — `api_format`(`chat_completions` / `responses`)单一真源;凭据覆盖 > 目录默认 > chat,只作用于 OpenAI 家族。
 - `mcp_broker.py` — MCP 服务器代理。`redis_bus.py` — Redis 并发/跨 worker SSE(优雅降级)。
 
 ## 其它

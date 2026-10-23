@@ -276,6 +276,18 @@ def _call_openai_compat_tools(
         + "\n\n"
         + _JSON_MODE_INSTRUCTION
     )
+    # Responses 协议：复用 _harness 的统一实现；签名/返回语义不变。
+    from agents._harness import (
+        _effective_api_format,
+        _openai_compat_headers,
+        _responses_json_mode,
+    )
+    if _effective_api_format(api_id, user_id, cred) == "responses":
+        text, _usage = _responses_json_mode(
+            api_id, model, system_prompt, user_prompt, user_id, timeout_sec, 1500,
+            json_hint='{"calls":[...]}', _cred={**cred, "key": key}, _base_url=base_url,
+        )
+        return _parse_tool_call_json_array(text)
     body = json.dumps({
         "model": model,
         "messages": [
@@ -288,7 +300,8 @@ def _call_openai_compat_tools(
     req = urllib.request.Request(
         base_url.rstrip("/") + "/chat/completions",
         data=body,
-        headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
+        # 与 GM/harness 同源请求头:UA + provider 专属头(OpenCode Go 缺 session 会 400)。
+        headers=_openai_compat_headers(api_id, base_url, key, user_id),
     )
     with safe_urlopen(req, timeout=timeout_sec) as resp:
         raw = resp.read().decode("utf-8")

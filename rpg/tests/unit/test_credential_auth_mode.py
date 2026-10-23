@@ -108,11 +108,14 @@ class SqlPredicateIsSingleSource(unittest.TestCase):
 class OpenAiBackendNeverPassesEmptyKey(unittest.TestCase):
     def test_backend_uses_resolved_token(self):
         src = (RPG / "agents" / "gm" / "backends" / "openai_compat.py").read_text(encoding="utf-8")
-        self.assertIn("resolved_auth_token", src)
-        self.assertIn("resolved_is_usable", src)
+        # client 构造已抽到 _client.py（Chat/Responses 共用）：token 归一/放行判据在那里锁。
+        client_src = (RPG / "agents" / "gm" / "backends" / "_client.py").read_text(encoding="utf-8")
+        self.assertIn("prepare_openai_client", src)
+        self.assertIn("resolved_auth_token", client_src)
+        self.assertIn("resolved_is_usable", client_src)
         # 不许再用「key 为空」当放行判据(那会把 key 被清空的托管 provider 也放进来)
         self.assertNotRegex(
-            src, r'if\s+not\s+key\s*:\s*\n\s*raise ValueError',
+            client_src, r'if\s+not\s+key\s*:\s*\n\s*raise ValueError',
             "放行判据必须是 resolved_is_usable(source),不是 key 是否为空",
         )
 

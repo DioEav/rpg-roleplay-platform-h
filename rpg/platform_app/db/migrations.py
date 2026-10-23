@@ -70,6 +70,7 @@ MIGRATIONS: list[tuple[int, str, list[str]]] = [
           api_id text not null,
           encrypted_key bytea not null default ''::bytea,
           base_url_override text not null default '',
+          api_format text not null default '',
           enabled boolean not null default true,
           metadata jsonb not null default '{}'::jsonb,
           created_at timestamptz not null default now(),
@@ -2437,6 +2438,13 @@ MIGRATIONS: list[tuple[int, str, list[str]]] = [
         "create index if not exists idx_character_cards_cloned_from "
         "on character_cards(user_id, cloned_from_card_id) "
         "where cloned_from_card_id is not null",
+    ]),
+
+    (109, "provider_api_format", [
+        # OpenAI 家族新增 Responses 协议。目录层存管理员默认(缺省 Chat Completions);
+        # 凭据层存用户覆盖,空串 = 继承目录默认。旧行自动获得默认值,行为完全不变。
+        "alter table model_apis add column if not exists api_format text not null default 'chat_completions'",
+        "alter table user_api_credentials add column if not exists api_format text not null default ''",
     ]),
 
 ]

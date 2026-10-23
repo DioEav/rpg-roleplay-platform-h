@@ -6,7 +6,12 @@ from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
-from agents.gm.backends import _AnthropicBackend, _OpenAICompatBackend, _VertexBackend
+from agents.gm.backends import (
+    _AnthropicBackend,
+    _OpenAICompatBackend,
+    _ResponsesBackend,
+    _VertexBackend,
+)
 from agents.gm.helpers import (
     _anthropic_curator_tool_use,
     _format_tools_for_prompt,
@@ -473,7 +478,7 @@ class GameMaster:
                 pass
         self.api_id = api_id
         self.user_id = user_id
-        self._backend: _AnthropicBackend | _VertexBackend | _OpenAICompatBackend
+        self._backend: _AnthropicBackend | _VertexBackend | _OpenAICompatBackend | _ResponsesBackend
 
         if kind == "anthropic":
             self._backend = _AnthropicBackend(
@@ -485,7 +490,12 @@ class GameMaster:
         elif kind in {"openai", "openai_compat"}:
             base_url = (api or {}).get("base_url") or ""
             env_key = (api or {}).get("credential_env") or "OPENAI_API_KEY"
-            self._backend = _OpenAICompatBackend(
+            # api_format 只在 OpenAI 家族生效：凭据覆盖 > 目录默认 > chat。
+            # 选 responses 时换用 Responses backend；Chat 仍是默认，旧 provider 行为不变。
+            from model_registry import resolve_api_format
+            _fmt = resolve_api_format(api_id, user_id, catalog_api=api)
+            _backend_cls = _ResponsesBackend if _fmt == "responses" else _OpenAICompatBackend
+            self._backend = _backend_cls(
                 model=model, base_url=base_url, env_key=env_key,
                 display_kind=api_id, user_id=user_id, api_id=api_id,
                 model_meta=_model_meta,

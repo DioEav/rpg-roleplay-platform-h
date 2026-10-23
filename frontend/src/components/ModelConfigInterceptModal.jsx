@@ -77,6 +77,7 @@ export function InlineProviderConfig({ capability = 'llm', defaultApiId = '', on
             has_key: !!c.has_credential || !!c.has_key,
             key_hint: c.key_hint || '',
             base_url: c.base_url_override || '',
+            api_format: c.api_format || '',
           };
         }
         setCreds(map);
@@ -89,19 +90,33 @@ export function InlineProviderConfig({ capability = 'llm', defaultApiId = '', on
 
   // ProviderCard 的 onSaveKey:保存 key(+ base_url)。credentials.set 内部已广播
   // rpg-credentials-updated,父组件据此点亮「继续」。
-  const onSaveKey = async (pid, apiKey, baseUrl) => {
+  const onSaveKey = async (pid, apiKey, baseUrl, apiFormat) => {
     setSaving(true);
     try {
+      const existing = creds[pid] || {};
+      const formatChanged = !!apiFormat && apiFormat !== (existing.api_format || "chat_completions");
       if (apiKey && apiKey.trim()) {
         await window.api.credentials.set({
           api_id: pid,
           api_key: apiKey.trim(),
           base_url_override: baseUrl || undefined,
+          ...(apiFormat ? { api_format: apiFormat } : {}),
+        });
+      } else if (formatChanged) {
+        // 只改格式：保留已存 key，避免空 key 删除凭据。
+        await window.api.credentials.set({
+          api_id: pid, api_key: '', base_url_override: existing.base_url || undefined,
+          keep_key: true, api_format: apiFormat,
         });
       }
       setCreds((s) => ({
         ...s,
-        [pid]: { ...s[pid], has_key: !!(apiKey?.trim() || s[pid]?.has_key), base_url: baseUrl ?? s[pid]?.base_url },
+        [pid]: {
+          ...s[pid],
+          has_key: !!(apiKey?.trim() || s[pid]?.has_key),
+          base_url: baseUrl ?? s[pid]?.base_url,
+          api_format: apiFormat ?? s[pid]?.api_format,
+        },
       }));
       window.__apiToast?.(t('components.model_config_intercept.toast.api_key_saved'), { kind: 'ok', duration: 1800 });
       onSaved && onSaved(pid);

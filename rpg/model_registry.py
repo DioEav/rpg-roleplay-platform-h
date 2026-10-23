@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import copy
 import json
+import time
 from pathlib import Path
 from typing import Any
 
@@ -15,9 +16,33 @@ from psycopg.types.json import Jsonb
 
 # 规范化逻辑集中在 model_aliases；此处再导出以兼容现有 from model_registry import normalize_api_id。
 from model_aliases import _API_ID_ALIASES, normalize_api_id  # noqa: F401
+from model_formats import (
+    API_FORMAT_CHAT,
+    coerce_api_format,
+    parse_api_format,
+)
 
 BASE = Path(__file__).parent
 MODEL_CONFIG_FILE = BASE / "config" / "model_catalog.json"
+
+# provider 目录默认格式的进程级短缓存：子代理 harness 每次调用都会解析格式，
+# 直接 load_model_catalog() 会多一次 DB 往返。目录写入时清空，60s TTL 兜跨 worker。
+_API_FORMAT_CACHE: dict[str, tuple[float, str]] = {}
+_API_FORMAT_CACHE_TTL = 60.0
+
+
+def _catalog_api_format(api_id: str) -> str:
+    now = time.monotonic()
+    hit = _API_FORMAT_CACHE.get(api_id)
+    if hit and now - hit[0] < _API_FORMAT_CACHE_TTL:
+        return hit[1]
+    try:
+        api = find_api(load_model_catalog(), api_id) or {}
+        fmt = coerce_api_format(api.get("api_format"))
+    except Exception:
+        fmt = API_FORMAT_CHAT
+    _API_FORMAT_CACHE[api_id] = (now, fmt)
+    return fmt
 
 
 def default_api_for(api_id: str | None) -> dict[str, Any] | None:
@@ -319,6 +344,11 @@ def load_model_catalog() -> dict[str, Any]:
 
 
 def save_model_catalog(catalog: dict[str, Any]) -> None:
+    # 目录写入后清掉 provider 格式短缓存,避免 60s 内继续用旧格式路由。
+    try:
+        _API_FORMAT_CACHE.clear()
+    except Exception:
+        pass
     # 全局模型目录的【权威存储是 DB】(model_apis / model_entries / app_config.selected_model):
     # 所有 worker 读 DB 同一真相源、写走行级 upsert 原子。**不再写 config/model_catalog.json** ——
     # 运行时写它会造成 git churn(反复改动被提交)+ 部署互相覆盖 + 多 worker 文件不一致(用户反馈)。
@@ -351,16 +381,20 @@ def apply_user_overlay(catalog: dict[str, Any], user_id: int | None) -> dict[str
     result = copy.deepcopy(catalog)
     by_id = {normalize_api_id(api.get("id")): api for api in result.get("apis", [])}
 
-    # 自建中转站需要 base_url:从用户凭证取
+    # 自建中转站需要 base_url + api_format:从用户凭证取
     cred_base: dict[str, str] = {}
+    cred_fmt: dict[str, str] = {}
     custom_ids = [aid for aid in overlay if normalize_api_id(aid) not in by_id]
     if custom_ids:
         try:
             from platform_app.user_credentials import list_credentials
             for item in (list_credentials(int(user_id)).get("items") or []):
-                cred_base[normalize_api_id(item.get("api_id"))] = item.get("base_url_override") or ""
+                _aid = normalize_api_id(item.get("api_id"))
+                cred_base[_aid] = item.get("base_url_override") or ""
+                cred_fmt[_aid] = item.get("api_format") or ""
         except Exception:
             cred_base = {}
+            cred_fmt = {}
 
     for raw_api_id, models in overlay.items():
         api_id = normalize_api_id(raw_api_id)
@@ -399,6 +433,7 @@ def apply_user_overlay(catalog: dict[str, Any], user_id: int | None) -> dict[str
             "id": api_id,
             "display_name": api_id,
             "kind": "openai_compat",
+            "api_format": cred_fmt.get(api_id) or API_FORMAT_CHAT,
             "enabled": True,
             "credential_ref": "",
             "credential_env": "",
@@ -478,10 +513,14 @@ def upsert_api(api_data: dict[str, Any]) -> dict[str, Any]:
     api = find_api(catalog, api_id)
     normalized = copy.deepcopy(api) if api else (default_api_for(api_id) or {"id": api_id, "models": []})
     normalized["id"] = api_id
+    # 管理员写入的目录默认格式。空/未提供时新建落 chat;更新时未提供保留原值。
+    _fmt_provided = "api_format" in api_data and api_data.get("api_format") is not None
+    _fmt = parse_api_format(api_data.get("api_format"), allow_empty=False) if _fmt_provided else None
     if not api:
         normalized.update({
             "display_name": str(api_data.get("display_name") or api_data.get("name") or api_id).strip(),
             "kind": str(api_data.get("kind") or normalized.get("kind") or api_id).strip(),
+            "api_format": _fmt or API_FORMAT_CHAT,
             "enabled": bool(api_data.get("enabled", True)),
             "credential_ref": api_data.get("credential_ref", normalized.get("credential_ref", "")),
             "credential_env": api_data.get("credential_env", normalized.get("credential_env", "")),
@@ -492,6 +531,8 @@ def upsert_api(api_data: dict[str, Any]) -> dict[str, Any]:
             normalized["display_name"] = str(api_data.get("display_name") or api_data.get("name") or api_id).strip()
         if "kind" in api_data:
             normalized["kind"] = str(api_data.get("kind") or api_id).strip()
+        if _fmt is not None:
+            normalized["api_format"] = _fmt
         if "enabled" in api_data:
             normalized["enabled"] = bool(api_data.get("enabled"))  # type: ignore[assignment]
         for key in ("credential_ref", "credential_env", "base_url"):
@@ -505,6 +546,10 @@ def upsert_api(api_data: dict[str, Any]) -> dict[str, Any]:
     else:
         catalog.setdefault("apis", []).append(normalized)
     save_model_catalog(catalog)
+    try:
+        _API_FORMAT_CACHE.pop(api_id, None)
+    except Exception:
+        pass
     return load_model_catalog()
 
 
@@ -601,6 +646,47 @@ def api_kind(api_id: str | None) -> str:
         return str(api_id)
 
 
+def resolve_api_format(
+    api_id: str | None,
+    user_id: int | None = None,
+    *,
+    catalog_api: dict[str, Any] | None = None,
+    credential: dict[str, Any] | None = None,
+) -> str:
+    """解析该 provider 实际应使用的 OpenAI 家族协议。
+
+    优先级：用户凭据覆盖 > 目录默认 > chat_completions。
+    · credential 已由调用方取得时直接传入，避免二次 DB/解密；
+    · 否则用 request-scoped 的 get_api_cred_cached（与 resolve_api_key 同一份缓存）；
+    · catalog_api 已由调用方加载时直接传入，否则查 live catalog。
+    读取路径一律 coerce，非法/历史脏值回退 chat，绝不抛错。
+    """
+    canonical = normalize_api_id(api_id)
+    cred_fmt = ""
+    if credential is not None:
+        # 旧调用方/测试桩可能不带该字段（真实 resolve_api_key/get_credential 一定带，
+        # 即使是空串）。缺字段按默认 chat，避免为此触发一次目录 DB 查询。
+        if "api_format" not in credential:
+            return API_FORMAT_CHAT
+        cred_fmt = credential.get("api_format") or ""
+    elif user_id:
+        try:
+            from core.request_cache import get_api_cred_cached
+            cred = get_api_cred_cached(int(user_id), canonical)
+            cred_fmt = (cred or {}).get("api_format") or ""
+        except Exception:
+            cred_fmt = ""
+    if cred_fmt:
+        return coerce_api_format(cred_fmt)
+    api = catalog_api
+    if api is not None:
+        fmt = api.get("api_format") or ""
+        if fmt:
+            return coerce_api_format(fmt)
+        return API_FORMAT_CHAT
+    return _catalog_api_format(canonical)
+
+
 def find_model(api: dict[str, Any] | None, model_id: str | None) -> dict[str, Any] | None:
     if not api:
         return None
@@ -637,6 +723,8 @@ def _migrate_catalog(data: dict[str, Any]) -> dict[str, Any]:
                 merged = {**copy.deepcopy(base), **copy.deepcopy(raw_api), "id": api_id}
                 if base.get("kind") and merged.get("kind") not in {"openai", "openai_compat", "anthropic", "vertex_ai"}:
                     merged["kind"] = base.get("kind")
+                merged["api_format"] = coerce_api_format(
+                    merged.get("api_format") or base.get("api_format"))
                 if base.get("base_url") and not merged.get("base_url"):
                     merged["base_url"] = base.get("base_url")
                 if not isinstance(merged.get("models"), list):
@@ -712,6 +800,7 @@ def _load_model_catalog_from_db() -> dict[str, Any] | None:
                     "id": row["api_id"],
                     "display_name": row["display_name"],
                     "kind": row["kind"],
+                    "api_format": row.get("api_format") or API_FORMAT_CHAT,
                     "enabled": row["enabled"],
                     "credential_ref": row["credential_ref"],
                     "credential_env": row["credential_env"],
@@ -758,11 +847,12 @@ def _write_model_catalog_rows(db, catalog: dict[str, Any]) -> None:
     for api in catalog.get("apis", []):
         db.execute(
             """
-            insert into model_apis(api_id, display_name, kind, enabled, credential_ref, credential_env, base_url)
-            values (%s, %s, %s, %s, %s, %s, %s)
+            insert into model_apis(api_id, display_name, kind, api_format, enabled, credential_ref, credential_env, base_url)
+            values (%s, %s, %s, %s, %s, %s, %s, %s)
             on conflict(api_id) do update set
               display_name = excluded.display_name,
               kind = excluded.kind,
+              api_format = excluded.api_format,
               enabled = excluded.enabled,
               credential_ref = excluded.credential_ref,
               credential_env = excluded.credential_env,
@@ -773,6 +863,7 @@ def _write_model_catalog_rows(db, catalog: dict[str, Any]) -> None:
                 api["id"],
                 api.get("display_name") or api["id"],
                 api.get("kind") or api["id"],
+                coerce_api_format(api.get("api_format")),
                 bool(api.get("enabled", True)),
                 api.get("credential_ref", ""),
                 api.get("credential_env", ""),

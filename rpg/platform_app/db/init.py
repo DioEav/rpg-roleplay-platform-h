@@ -604,6 +604,7 @@ def _init_model_and_mcp_tables(db) -> None:
           api_id text primary key,
           display_name text not null,
           kind text not null,
+          api_format text not null default 'chat_completions',
           enabled boolean not null default true,
           credential_ref text not null default '',
           credential_env text not null default '',

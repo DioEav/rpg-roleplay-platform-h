@@ -26,6 +26,7 @@ if str(PROJECT) not in sys.path:
 from core.outbound_ua import openai_default_headers, outbound_user_agent  # noqa: E402
 
 OPENAI_COMPAT_PY = (PROJECT / "agents" / "gm" / "backends" / "openai_compat.py").read_text(encoding="utf-8")
+OPENAI_CLIENT_PY = (PROJECT / "agents" / "gm" / "backends" / "_client.py").read_text(encoding="utf-8")
 MODEL_PROBE_PY = (PROJECT / "model_probe.py").read_text(encoding="utf-8")
 
 
@@ -69,11 +70,12 @@ class OutboundUaHelper(unittest.TestCase):
 
 class BothSdkSitesOverrideUa(unittest.TestCase):
     def test_generation_passes_default_headers(self):
-        # 生成路径走 openai_default_headers_for(base_url,...):UA 逻辑复用同一真源,
-        # 同时按 provider 作用域附加专属头(OpenCode Go 的 x-opencode-session)。
-        self.assertIn("from core.outbound_ua import openai_default_headers_for", OPENAI_COMPAT_PY)
+        # 生成路径走 _client.prepare_openai_client → openai_default_headers_for:
+        # UA 逻辑复用同一真源,同时按 provider 作用域附加专属头(OpenCode Go 的 x-opencode-session)。
+        self.assertIn("prepare_openai_client", OPENAI_COMPAT_PY)
+        self.assertIn("from core.outbound_ua import openai_default_headers_for", OPENAI_CLIENT_PY)
         self.assertRegex(
-            OPENAI_COMPAT_PY,
+            OPENAI_CLIENT_PY,
             r'"default_headers":\s*openai_default_headers_for\(',
         )
 

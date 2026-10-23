@@ -17,6 +17,8 @@ from pathlib import Path
 
 PROJECT = Path(__file__).resolve().parents[3]
 OPENAI_COMPAT_PY = (PROJECT / "rpg" / "agents" / "gm" / "backends" / "openai_compat.py").read_text(encoding="utf-8")
+# Chat/Responses 共用的 client 构造已抽到 _client.py：proxy 门控/SSRF 不变量在这里锁。
+OPENAI_CLIENT_PY = (PROJECT / "rpg" / "agents" / "gm" / "backends" / "_client.py").read_text(encoding="utf-8")
 USER_CRED_PY = (PROJECT / "rpg" / "platform_app" / "user_credentials.py").read_text(encoding="utf-8")
 
 
@@ -30,29 +32,31 @@ class ProxyOnlyUsedInLocalMode(unittest.TestCase):
         (require_auth=True → byok_only)拿到的永远是 None。
         """
         # 必须出现「读 proxy」+「(_proxy and not byok_only) 门控出 _use_proxy」
-        self.assertIn('result.get("proxy")', OPENAI_COMPAT_PY)
+        self.assertIn("prepare_openai_client", OPENAI_COMPAT_PY)
+        self.assertIn('result.get("proxy")', OPENAI_CLIENT_PY)
         self.assertRegex(
-            OPENAI_COMPAT_PY,
-            r'_use_proxy\s*=\s*_proxy\s+if\s*\(\s*_proxy\s+and\s+not\s+byok_only\s*\)\s*else\s+None',
+            OPENAI_CLIENT_PY,
+            r'_?use_proxy\s*=\s*_?proxy\s+if\s*\(\s*_?proxy\s+and\s+not\s+byok_only\s*\)\s*else\s+None',
             "proxy 必须经 `(_proxy and not byok_only)` 门控成 _use_proxy(否则为 None)"
             " —— 托管后端(require_auth)绝不能用用户 proxy(SSRF)。",
         )
         # proxy 只能以门控后的 _use_proxy 进入出站客户端(SSRF 安全层 safe_httpx_client)
-        self.assertRegex(OPENAI_COMPAT_PY, r'safe_httpx_client\([^)]*proxy=_use_proxy')
+        self.assertRegex(OPENAI_CLIENT_PY, r'safe_httpx_client\([^)]*proxy=_?use_proxy')
 
     def test_no_unconditional_proxy_pass(self):
         """不得有「未经门控就把 proxy 传给出站客户端」的写法。"""
-        # httpx.Client(...) 的实参里不应直接出现 proxy=（必须走 safe_httpx_client）
-        for m in re.finditer(r'httpx\.Client\(([^)]*)\)', OPENAI_COMPAT_PY):
-            self.assertNotIn('proxy=', m.group(1),
-                "httpx.Client(...) 不应直接传 proxy= —— 必须经门控走 safe_httpx_client。")
-        # safe_httpx_client(...) 若带 proxy 实参,只允许是门控后的 _use_proxy,
-        # 严禁直接传未门控的 _proxy / result.get("proxy")。
-        for m in re.finditer(r'safe_httpx_client\(([^)]*)\)', OPENAI_COMPAT_PY):
-            args = m.group(1)
-            if 'proxy=' in args:
-                self.assertIn('proxy=_use_proxy', args,
-                    "safe_httpx_client 的 proxy 只能传门控后的 _use_proxy(托管后端=None)。")
+        for src in (OPENAI_COMPAT_PY, OPENAI_CLIENT_PY):
+            # httpx.Client(...) 的实参里不应直接出现 proxy=（必须走 safe_httpx_client）
+            for m in re.finditer(r'httpx\.Client\(([^)]*)\)', src):
+                self.assertNotIn('proxy=', m.group(1),
+                    "httpx.Client(...) 不应直接传 proxy= —— 必须经门控走 safe_httpx_client。")
+            # safe_httpx_client(...) 若带 proxy 实参,只允许是门控后的 _use_proxy/use_proxy,
+            # 严禁直接传未门控的 _proxy / result.get("proxy")。
+            for m in re.finditer(r'safe_httpx_client\(([^)]*)\)', src):
+                args = m.group(1)
+                if 'proxy=' in args:
+                    self.assertRegex(args, r'proxy=_?use_proxy',
+                        "safe_httpx_client 的 proxy 只能传门控后的 _use_proxy(托管后端=None)。")
 
 
 class SetCredentialValidatesProxy(unittest.TestCase):

@@ -22,6 +22,7 @@ from typing import Any
 from psycopg.types.json import Jsonb
 
 from model_aliases import _API_ID_ALIASES, normalize_api_id  # noqa: F401 — re-export for compat
+from model_formats import parse_api_format
 from utils.crypto import decrypt_api_key, encrypt_api_key
 
 from .db import connect, expose, init_db
@@ -197,6 +198,10 @@ def _normalize_openai_base_url(url: str) -> str:
     s = (url or "").strip().rstrip("/")
     if s.lower().endswith("/chat/completions"):
         s = s[: -len("/chat/completions")].rstrip("/")
+    # Responses 端点同理:用户把完整 `.../v1/responses` 填进 base_url 时,
+    # SDK 会再拼 `/responses` → 双重路径。只剥精确后缀,不动普通 /v1。
+    elif s.lower().endswith("/responses"):
+        s = s[: -len("/responses")].rstrip("/")
     # Google AI Studio 的 OpenAI 兼容端点在 `/v1beta/openai`。用户常只填到 `/v1beta`(原生 Gemini base)
     # → SDK 拼 `.../v1beta/chat/completions`(原生无此端点→404)与 `.../v1beta/models`(原生列模型端点
     # 拒 Bearer、要 ?key= → 401「provider 拒绝列模型」)。自愈:generativelanguage host 且以 /v1beta 结尾
@@ -217,7 +222,7 @@ def _normalize_openai_base_url(url: str) -> str:
     return s
 
 
-def set_credential(user_id: int, api_id: str, plaintext_key: str, base_url_override: str = "", enabled: bool = True, *, allow_base_url: bool = False, proxy: str = "", preserve_key_if_empty: bool = False, auth_mode: str = "api_key") -> dict[str, Any]:
+def set_credential(user_id: int, api_id: str, plaintext_key: str, base_url_override: str = "", enabled: bool = True, *, allow_base_url: bool = False, proxy: str = "", preserve_key_if_empty: bool = False, auth_mode: str = "api_key", api_format: str | None = None) -> dict[str, Any]:
     """加密保存。空 key 等价于删除该 credential（preserve_key_if_empty=True 时例外）。
 
     auth_mode（v1.81.0）:
@@ -249,6 +254,9 @@ def set_credential(user_id: int, api_id: str, plaintext_key: str, base_url_overr
     auth_mode = (auth_mode or "api_key").strip() or "api_key"
     if auth_mode not in ("api_key", "none"):
         raise ValueError("auth_mode 只能是 api_key 或 none")
+    # api_format: None = 调用方未提供(更新时保留原值);'' = 显式清除(继承目录默认);
+    # 具体值 = 用户覆盖。只对 OpenAI 家族有意义,其它 kind 由调用侧忽略。
+    fmt = None if api_format is None else parse_api_format(api_format, allow_empty=True)
     if auth_mode == "none" and not base_url_override:
         raise ValueError("免鉴权模式必须填接口地址(base_url)——不指地址的「免 Key」无意义")
     if not plaintext_key and not preserve_key_if_empty and auth_mode != "none":
@@ -265,8 +273,9 @@ def set_credential(user_id: int, api_id: str, plaintext_key: str, base_url_overr
         base_url_override = _normalize_openai_base_url(base_url_override)
         _validate_base_url(base_url_override)
     if not plaintext_key and auth_mode != "none":
-        # preserve_key_if_empty：只改 base_url_override / 启用态，保留密钥与 metadata(proxy)。
-        return _update_credential_meta(user_id, api_id, base_url_override, enabled, auth_mode)
+        # preserve_key_if_empty：只改 base_url_override / 启用态 / 格式，保留密钥与 metadata(proxy)。
+        return _update_credential_meta(user_id, api_id, base_url_override, enabled, auth_mode,
+                                       api_format=fmt)
     # auth_mode='none' 且没填 key → 继续往下走正常 upsert,只是密文为空(见 encrypted 计算)。
     proxy = (proxy or "").strip()
     if proxy:
@@ -301,18 +310,20 @@ def set_credential(user_id: int, api_id: str, plaintext_key: str, base_url_overr
     with connect() as db:
         row = db.execute(
             """
-            insert into user_api_credentials(user_id, api_id, encrypted_key, base_url_override, enabled, metadata, auth_mode)
-            values (%s, %s, %s, %s, %s, %s, %s)
+            insert into user_api_credentials(user_id, api_id, encrypted_key, base_url_override, enabled, metadata, auth_mode, api_format)
+            values (%s, %s, %s, %s, %s, %s, %s, %s)
             on conflict(user_id, api_id) do update set
               encrypted_key = excluded.encrypted_key,
               base_url_override = excluded.base_url_override,
               enabled = excluded.enabled,
               metadata = excluded.metadata,
               auth_mode = excluded.auth_mode,
+              api_format = case when %s then excluded.api_format else user_api_credentials.api_format end,
               updated_at = now()
-            returning id, user_id, api_id, base_url_override, enabled, auth_mode, updated_at
+            returning id, user_id, api_id, base_url_override, enabled, auth_mode, api_format, updated_at
             """,
-            (user_id, api_id, encrypted, base_url_override or "", enabled, Jsonb(meta), auth_mode),
+            (user_id, api_id, encrypted, base_url_override or "", enabled, Jsonb(meta), auth_mode,
+             fmt or "", fmt is not None),
         ).fetchone()
     result = {"ok": True, **(expose(row) or {}), "has_credential": bool(plaintext_key)}
 
@@ -322,11 +333,14 @@ def set_credential(user_id: int, api_id: str, plaintext_key: str, base_url_overr
     try:
         import logging as _logging
 
-        from model_probe import invalidate_user_api, list_remote_models
+        from model_probe import invalidate_api_health, invalidate_user_api, list_remote_models
         from platform_app.user_models import replace_synced_models
         # 先清旧 key 的远程模型缓存,再强制重拉:绝不能命中改 key 前「校验连接/拉取模型」
         # 写满的旧 key 60s 缓存,否则会把旧 key 的模型写进 overlay(issue #22 根因之一)。
         invalidate_user_api(user_id, api_id)
+        # 协议格式变更后旧健康点不再代表当前端点/请求形态,清掉避免 UI 误报。
+        if fmt is not None:
+            invalidate_api_health(api_id)
         sync_result = list_remote_models(api_id, user_id=user_id, force_refresh=True)
         if sync_result.get("ok") and sync_result.get("models"):
             replace_synced_models(user_id, api_id, sync_result["models"])
@@ -348,8 +362,9 @@ def set_credential(user_id: int, api_id: str, plaintext_key: str, base_url_overr
 
 
 def _update_credential_meta(user_id: int, api_id: str, base_url_override: str, enabled: bool,
-                            auth_mode: str = "api_key") -> dict[str, Any]:
-    """只更新已存凭证的 base_url_override / enabled / auth_mode，保留密文 key 与 metadata(proxy)。
+                            auth_mode: str = "api_key",
+                            api_format: str | None = None) -> dict[str, Any]:
+    """只更新已存凭证的 base_url_override / enabled / auth_mode / api_format，保留密文 key 与 metadata(proxy)。
 
     调用方（set_credential 的 preserve_key_if_empty 分支）已做完 SSRF 闸与
     base_url_override 归一，这里只落库。无匹配行 → 报错，让前端提示先填 Key。
@@ -357,17 +372,23 @@ def _update_credential_meta(user_id: int, api_id: str, base_url_override: str, e
 
     auth_mode 也要一起写:用户把一条免鉴权凭据改回「需要 API Key」时,若只改列名不改
     auth_mode,DB 里会留着 'none',可用性判定继续按免鉴权放行 —— 与用户所见不符。
+
+    api_format: None = 未提供 → 保留原值;'' / 具体值 → 覆盖。这样「只改格式」不必重填 Key。
     """
     canonical = normalize_api_id(api_id)
     with connect() as db:
         row = db.execute(
             """
             update user_api_credentials
-               set base_url_override = %s, enabled = %s, auth_mode = %s, updated_at = now()
+               set base_url_override = %s, enabled = %s, auth_mode = %s,
+                   api_format = case when %s then %s else api_format end,
+                   updated_at = now()
              where user_id = %s and api_id = any(%s)
-            returning id, user_id, api_id, base_url_override, enabled, auth_mode, updated_at
+            returning id, user_id, api_id, base_url_override, enabled, auth_mode, api_format, updated_at
             """,
-            (base_url_override or "", enabled, auth_mode, user_id, _credential_aliases(canonical)),
+            (base_url_override or "", enabled, auth_mode,
+             api_format is not None, api_format or "",
+             user_id, _credential_aliases(canonical)),
         ).fetchone()
     if not row:
         raise ValueError("尚未配置该供应商的 API Key，请先填写 Key")
@@ -405,7 +426,7 @@ def list_credentials(user_id: int) -> dict[str, Any]:
         rows = db.execute(
             """
             select user_id, api_id, base_url_override, enabled, created_at, updated_at,
-                   metadata, auth_mode, length(encrypted_key) as cipher_len
+                   metadata, auth_mode, api_format, length(encrypted_key) as cipher_len
             from user_api_credentials
             where user_id = %s
             order by api_id
@@ -428,6 +449,7 @@ def list_credentials(user_id: int) -> dict[str, Any]:
             # 免鉴权凭据没 key 也算配好了 —— 前端用它显示「已配置」,别再提示"请先填 Key"
             "configured": int(r["cipher_len"] or 0) > 0 or _auth_mode == "none",
             "base_url_override": r["base_url_override"] or "",
+            "api_format": r.get("api_format") or "",
             "proxy_url": (_meta or {}).get("proxy") or "",
             "enabled": bool(r["enabled"]),
             "updated_at": str(r["updated_at"]),
@@ -474,6 +496,7 @@ def get_credential(user_id: int, api_id: str) -> dict[str, Any] | None:
             "key": plaintext,
             "auth_mode": auth_mode,
             "base_url_override": _normalize_openai_base_url(row.get("base_url_override") or ""),
+            "api_format": row.get("api_format") or "",
             "proxy": (_meta or {}).get("proxy") or "",
         }
     return None
@@ -503,27 +526,29 @@ def resolve_api_key(user_id: int | None, api_id: str, env_fallback: str = "") ->
             # 注:免鉴权(auth_mode='none')但用户仍填了 key 的,也走这条 —— key 照常发送。
             return {"key": cred["key"], "source": "user_db",
                     "base_url_override": _normalize_openai_base_url(cred.get("base_url_override", "")),
+                    "api_format": cred.get("api_format") or "",
                     "proxy": cred.get("proxy", "")}
         if cred and cred.get("auth_mode") == "none":
             # 免鉴权端点且用户没填 key:这是**合法可用**状态,不能继续往下掉进 env 回退/none。
             # source 单独标记,好让 GM 后端区分「用户明确说不需要 key」与「压根没配」。
             return {"key": "", "source": "user_db_no_auth",
                     "base_url_override": _normalize_openai_base_url(cred.get("base_url_override", "")),
+                    "api_format": cred.get("api_format") or "",
                     "proxy": cred.get("proxy", "")}
 
     # 仅未强制鉴权时允许环境变量回退
     from core.config import require_auth as _require_auth
     if _require_auth():
-        return {"key": "", "source": "none", "base_url_override": ""}
+        return {"key": "", "source": "none", "base_url_override": "", "api_format": ""}
     if env_fallback:
         env_key = os.environ.get(env_fallback)
         if env_key:
-            return {"key": env_key, "source": "env", "base_url_override": ""}
+            return {"key": env_key, "source": "env", "base_url_override": "", "api_format": ""}
     # 自部署「全局 key」约定:环境变量 RPG_KEY_<API_ID>(大写,非字母数字→_)。
     # 仅本地/自部署模式(上方 require_auth gate 已挡掉服务器模式)。让用户在控制台「配置」里
     # 填一次全局密钥即对所有调用生效(无需逐用户 BYOK)。用户库内凭据优先级仍高于此回退。
     conv = "RPG_KEY_" + "".join(ch if ch.isalnum() else "_" for ch in normalize_api_id(api_id)).upper()
     conv_key = os.environ.get(conv)
     if conv_key:
-        return {"key": conv_key, "source": "env", "base_url_override": ""}
-    return {"key": "", "source": "none", "base_url_override": ""}
+        return {"key": conv_key, "source": "env", "base_url_override": "", "api_format": ""}
+    return {"key": "", "source": "none", "base_url_override": "", "api_format": ""}

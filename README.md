@@ -186,7 +186,7 @@ FastAPI backend with ~30+ route modules / agents / state mixins, ~2700 pytest ca
 | Provider | Catalog | Streaming | Tool use | Multimodal | Extended thinking |
 |---|---|---|---|---|---|
 | Anthropic | ✅ | ✅ | ✅ | ✅ | ✅ |
-| OpenAI (Chat Completions, openai-compat backend) | ✅ | ✅ | ✅ | ✅ | — |
+| OpenAI (Chat Completions / Responses, openai-compat backend) | ✅ | ✅ | ✅ | ✅ | — |
 | Google Vertex (Gemini) | ✅ | ✅ | ✅ | ✅ | — |
 | OpenRouter | ✅ | ✅ via OpenAI-compat | partial | — | — |
 | DeepSeek | ✅ | ✅ via OpenAI-compat | partial | — | — |
