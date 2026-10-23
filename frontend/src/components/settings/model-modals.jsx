@@ -112,6 +112,18 @@ function EditApiModal({ open, api, isNew, isAdminUser = false, onClose, onConfir
     ...PROVIDERS_CONFIG.filter((p) => !p.hidden_in_edit_modal).map((p) => ({ value: p.id, label: p.name, description: p.defaultBase || undefined })),
     { value: CUSTOM, label: t('settings.edit_api.custom_provider'), description: t('settings.edit_api.custom_provider_desc') },
   ];
+  // 连接方式:目前后端只消费 http_proxy;'lan' 与 'direct' 行为相同(代理为空),
+  // 保留该项是为了界面语义,后续若支持内网直连再在保存/出站层接线。
+  const connectionOptions = [
+    { value: 'direct', label: t('settings.edit_api.direct') },
+    { value: 'http_proxy', label: t('settings.edit_api.http_proxy') },
+    { value: 'lan', label: t('settings.edit_api.lan') },
+  ];
+  const connectionHint = form.proxy === 'http_proxy'
+    ? t('settings.edit_api.proxy_hint')
+    : form.proxy === 'lan'
+      ? t('settings.edit_api.lan_hint')
+      : t('settings.edit_api.direct_hint');
   const onPickProvider = (val) => {
     setProvider(val);
     if (val === CUSTOM) { setForm((f) => ({ ...f, id: "", name: "", base_url: "" })); return; }
@@ -232,10 +244,10 @@ function EditApiModal({ open, api, isNew, isAdminUser = false, onClose, onConfir
               </>
             )}
             <CSFormField label={t('settings.edit_api.connection')}
-              description={form.proxy === 'http_proxy' ? t('settings.edit_api.proxy_hint') : undefined}>
+              description={connectionHint}>
               <CSSelect
-                selectedOption={{ value: form.proxy, label: form.proxy }}
-                options={[{ value: 'direct', label: t('settings.edit_api.direct') }, { value: 'http_proxy', label: t('settings.edit_api.http_proxy') }, { value: 'lan', label: t('settings.edit_api.lan') }]}
+                selectedOption={connectionOptions.find((o) => o.value === form.proxy) || connectionOptions[0]}
+                options={connectionOptions}
                 onChange={({ detail }) => setForm((f) => ({ ...f, proxy: detail.selectedOption.value }))}
               />
             </CSFormField>

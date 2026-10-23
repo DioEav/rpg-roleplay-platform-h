@@ -13,6 +13,11 @@ from pathlib import Path
 from typing import Any
 
 from core.logging import get_logger
+from model_reasoning import (
+    build_gemini_thinking_budget,
+    effective_max_tokens,
+    resolve_spec_for_call,
+)
 
 log = get_logger(__name__)
 
@@ -35,13 +40,14 @@ def _is_retryable_vertex(exc: Exception) -> bool:
 BASE = Path(__file__).parent.parent.parent.parent  # rpg/agents/gm/backends/ → rpg/
 
 
-# task 141: thinking budget 由 _effort 模块统一管理 (跨 backend 共用)。
-from ._effort import resolve_budget_tokens as _resolve_budget  # noqa: E402
+def _resolve_thinking_budget(user_id: int | None, model_id: str | None) -> int | None:
+    """Vertex (Gemini 2.5/3.x) thinking_budget。
 
-
-def _resolve_thinking_budget(user_id: int | None, model_id: str | None) -> int:
-    """Vertex (Gemini 2.5/3.x) thinking_budget — 0 禁用,>0 启用。"""
-    return _resolve_budget(user_id, "vertex_ai", model_id or "")
+    返回 None = 不传 thinking_config(auto / 模型不支持);0 = 显式关闭;>0 = 预算。
+    保持 2 参数签名:测试会 monkeypatch 本函数来验证 call_structured 的默认路径。
+    """
+    spec, level = resolve_spec_for_call(user_id, "vertex_ai", model_id or "")
+    return build_gemini_thinking_budget(spec, level)
 
 
 # 拒收 safety_settings 的 (api_id, model, user_id) 记忆。与 openai_compat._fixed_temp_combos
@@ -192,7 +198,8 @@ def _tools_signature(tools_param) -> str:
 
 
 class _VertexBackend:
-    def __init__(self, model: str = "gemini-3.5-flash", user_id: int | None = None):
+    def __init__(self, model: str = "gemini-3.5-flash", user_id: int | None = None,
+                 model_meta: dict[str, Any] | None = None):
         """初始化 Vertex AI backend。
 
         凭证优先链:
@@ -210,6 +217,8 @@ class _VertexBackend:
 
         self.user_id = user_id
         self.model_name = model
+        self._model_meta = model_meta
+        self._reasoning_override: dict[str, Any] | None = None
         self.last_usage: dict[str, int] = {}
         self._unavailable_message = ""
         credentials, project_id = load_sa_credentials(user_id)
@@ -237,6 +246,58 @@ class _VertexBackend:
     def _ensure_available(self) -> None:
         if self.client is None:
             raise RuntimeError(self._unavailable_message)
+
+    def _thinking_budget(self) -> int | None:
+        """本次调用的 thinking_budget。
+
+        生产路径(GameMaster 传了 model_meta)走统一 spec 解析,能力判断与 /api/models
+        完全一致;单测里 `_make_vertex` 不传 model_meta,保留 `_resolve_thinking_budget`
+        这个 monkeypatch 入口。
+        """
+        override = getattr(self, "_reasoning_override", None)
+        meta = getattr(self, "_model_meta", None)
+        if override or meta:
+            try:
+                spec, level = resolve_spec_for_call(
+                    self.user_id, "vertex_ai", self.model_name,
+                    model_dict=meta, override=override)
+                return build_gemini_thinking_budget(spec, level)
+            except Exception as exc:
+                log.warning(f"[vertex] reasoning resolve failed: {exc}")
+        try:
+            return _resolve_thinking_budget(self.user_id, self.model_name)
+        except Exception as exc:
+            log.warning(f"[vertex] thinking budget resolve failed: {exc}")
+            return None
+
+    def _reasoning_spec_level(self) -> tuple[dict[str, Any], str]:
+        """本次调用的 (spec, level);解析失败时返回空 spec + auto。"""
+        try:
+            return resolve_spec_for_call(
+                self.user_id, "vertex_ai", self.model_name,
+                model_dict=getattr(self, "_model_meta", None),
+                override=getattr(self, "_reasoning_override", None))
+        except Exception as exc:
+            log.warning(f"[vertex] reasoning resolve failed: {exc}")
+            return {}, "auto"
+
+    def _max_output_tokens(self, max_tokens: int, budget: int | None) -> int:
+        """Gemini 的 thinking token 计入 max_output_tokens。
+
+        统一 spec 路径按 budget + output_reserve_tokens 抬高上限(且尊重用户关闭
+        reasoning_counts_in_output);只有 spec 给不出结论时才回退旧的 +1024 兜底,
+        避免硬编码覆盖用户配置。
+        """
+        spec, level = self._reasoning_spec_level()
+        mt = effective_max_tokens(spec, level, int(max_tokens))
+        if not budget:
+            return mt
+        if spec.get("supported"):
+            if not spec.get("reasoning_counts_in_output"):
+                return mt
+            if level not in ("", "auto", "off"):
+                return mt  # effective_max_tokens 已按 reserve 抬高
+        return max(mt, int(budget) + 1024)
 
     def _prefix_cache_name(self, system: str, tools_param=None) -> str | None:
         """把 system(+tools)前缀建成 / 复用 Vertex CachedContent,返回 cache name 或 None。
@@ -335,14 +396,16 @@ class _VertexBackend:
         contents = self._to_contents(messages, types)
 
         _cache_name = self._prefix_cache_name(system)
+        _budget = self._thinking_budget()
+        _mt = self._max_output_tokens(max_tokens, _budget)
         _cfg: dict[str, Any] = {
-            "max_output_tokens": max(max_tokens, 2048),  # thinking 模型需要足够 budget
+            "max_output_tokens": max(_mt, 2048),
             "temperature": 0.9,
-            "thinking_config": types.ThinkingConfig(  # task 141: 按用户偏好,默认 high=8192
-                thinking_budget=_resolve_thinking_budget(self.user_id, self.model_name),
-            ),
             "http_options": types.HttpOptions(timeout=_VERTEX_TIMEOUT_SECONDS * 1000),
         }
+        if _budget is not None:
+            # None = auto/不支持 → 不传 thinking_config,沿用服务商默认。
+            _cfg["thinking_config"] = types.ThinkingConfig(thinking_budget=_budget)
         # 反馈#93 + NSFW:用户级生成参数(采样 + 安全过滤阈值)。只覆盖设过的键 —— 未设时
         # 沿用上面的默认 0.9 / 不发 safety_settings,存量用户零行为变化。
         _cfg.update(_user_gen_config(self.user_id, self.model_name))
@@ -430,6 +493,31 @@ class _VertexBackend:
         if fr:
             self.last_usage["finish_reason"] = fr
 
+    def probe(self, timeout_sec: float | None = None) -> str:
+        """最小连通性请求:不带 system / 采样 / thinking 参数。
+
+        独立于 call():探查只验证模型能否正常返回,不应被用户的生成参数或思考
+        配置影响。timeout_sec 转成 HttpOptions 毫秒超时,只作用于本次请求。
+        """
+        self._ensure_available()
+        from google.genai import types
+
+        contents = self._to_contents([{"role": "user", "content": "1"}], types)
+        timeout_ms = int((timeout_sec or _VERTEX_TIMEOUT_SECONDS) * 1000)
+        resp = self.client.models.generate_content(
+            model=self.model_name,
+            contents=contents,
+            config=types.GenerateContentConfig(
+                max_output_tokens=64,
+                http_options=types.HttpOptions(timeout=timeout_ms),
+            ),
+        )
+        try:
+            text = resp.text or ""
+        except Exception:
+            text = ""
+        return text.strip()
+
     def call_structured(self, system: str, messages: list[dict], max_tokens: int,
                         thinking_budget: int | None = None) -> str:
         from core.prompt_log import log_llm_prompt
@@ -444,16 +532,22 @@ class _VertexBackend:
         # 吃光预算(268 实锤族),vertex 无 tool_schema 走本函数,此前 no_think 在 vertex 结构化路径失效。
         _budget = (
             thinking_budget if thinking_budget is not None
-            else _resolve_thinking_budget(self.user_id, self.model_name)
+            else self._thinking_budget()
         )
+        if thinking_budget is not None:
+            # 显式预算(no_think=0 / 调用方指定)不来自 spec,沿用旧兜底。
+            _mt = int(max_tokens)
+            if _budget:
+                _mt = max(_mt, int(_budget) + 1024)
+        else:
+            _mt = self._max_output_tokens(max_tokens, _budget)
         config_kwargs = {
             "system_instruction": system,
-            "max_output_tokens": max_tokens,
+            "max_output_tokens": _mt,
             "temperature": 0.1,
-            "thinking_config": types.ThinkingConfig(
-                thinking_budget=_budget,
-            ),
         }
+        if _budget is not None:
+            config_kwargs["thinking_config"] = types.ThinkingConfig(thinking_budget=_budget)
         try:
             config = types.GenerateContentConfig(
                 response_mime_type="application/json",
@@ -477,16 +571,15 @@ class _VertexBackend:
         from google.genai import types
 
         contents = self._to_contents(messages, types)
+        _budget = self._thinking_budget()
+        _mt = self._max_output_tokens(max_tokens, _budget)
         _cfg: dict[str, Any] = {
             "system_instruction": system,
-            "max_output_tokens": max(max_tokens, 2048),
+            "max_output_tokens": max(_mt, 2048),
             "temperature": 0.9,
-            # 按用户 effort(ModelPopover 思考深度)。原硬编码 0 是死设置:call() 已按用户
-            # budget 生效,唯独流式(实际游玩热路径)恒 0 → UI「思考深度」对 Gemini 流式无效。
-            "thinking_config": types.ThinkingConfig(
-                thinking_budget=_resolve_thinking_budget(self.user_id, self.model_name),
-            ),
         }
+        if _budget is not None:
+            _cfg["thinking_config"] = types.ThinkingConfig(thinking_budget=_budget)
         # 用户级生成参数 + NSFW 安全过滤(只覆盖设过的键)
         _cfg.update(_user_gen_config(self.user_id, self.model_name))
         for chunk in self._open_stream(contents=contents, cfg=_cfg, types=types):
@@ -608,19 +701,21 @@ class _VertexBackend:
         # 与同会话多轮都复用同一缓存(前缀按读取价计费)。命中则 request 不再带 system/tools。
         _cache_name = self._prefix_cache_name(system, tools_param)
 
+        # thinking_budget 按模型级 spec + 作用域;None = auto/不支持 → 不传 thinking_config。
+        # thinking_config 是每请求生成参数,与显式缓存(缓存的是 system+tools)互不冲突。
+        _budget = self._thinking_budget()
+        _mt = self._max_output_tokens(max_tokens, _budget)
         for _iteration in range(max_iterations):
             pending_calls: list[dict[str, Any]] = []
             current_text_parts: list[Any] = []
             current_text_str = ""
 
-            # thinking_budget 按用户 effort(ModelPopover);原两条流式分支硬编码 0 = 死设置。
-            # thinking_config 是每请求生成参数,与显式缓存(缓存的是 system+tools)互不冲突。
-            _budget = _resolve_thinking_budget(self.user_id, self.model_name)
             _cfg: dict[str, Any] = {
-                "max_output_tokens": max(max_tokens, 2048),
+                "max_output_tokens": max(_mt, 2048),
                 "temperature": 0.9,
-                "thinking_config": types.ThinkingConfig(thinking_budget=_budget),
             }
+            if _budget is not None:
+                _cfg["thinking_config"] = types.ThinkingConfig(thinking_budget=_budget)
             if _cache_name:
                 _cfg["cached_content"] = _cache_name
             else:

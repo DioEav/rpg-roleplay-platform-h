@@ -12,6 +12,7 @@ from schemas._common import COMMON_ERROR_RESPONSES, ErrorResponse, GenericOkResp
 from schemas.models import (
     ModelsDeleteModelRequest,
     ModelsProbeRequest,
+    ModelsReasoningRequest,
     ModelsSelectRequest,
     ModelsUpsertApiRequest,
     ModelsUpsertModelRequest,
@@ -36,7 +37,7 @@ def _inject_pricing(catalog: dict[str, Any]) -> dict[str, Any]:
             real = m.get("real_name") or m.get("id")
             if not real:
                 continue
-            pricing = model_probe.get_pricing(api_id, real)
+            pricing = model_probe.get_pricing_for_display(api_id, real, m.get("pricing"))
             if not pricing:
                 continue
             m["input_cost_per_million"] = pricing.get("input")
@@ -46,6 +47,20 @@ def _inject_pricing(catalog: dict[str, Any]) -> dict[str, Any]:
             if not m.get("source"):
                 m["source"] = pricing.get("source", "static")
     return catalog
+
+
+def _enrich_synced_models(api_id: str, models: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """给 remote/sync 返回的模型补齐价格/上下文/来源(与 /api/models 同源)。
+
+    同步接口返回的原始模型通常只有 id/real_name/display_name/capabilities,
+    而前端会用这份清单**整体替换**模型列表 —— 不补字段,价格/上下文/来源
+    三列在自动同步完成后就会重新变成「—」(用户上报)。
+    """
+    _inject_pricing({"apis": [{"id": api_id, "models": models}]})
+    for m in models:
+        # 这些模型确实是从供应商实时拉到的;来源列展示 Live API,而不是价格来源。
+        m["source"] = "LiveApi"
+    return models
 
 
 def _inject_health(catalog: dict[str, Any]) -> dict[str, Any]:
@@ -105,6 +120,77 @@ def _inject_capabilities(catalog: dict[str, Any]) -> dict[str, Any]:
     return catalog
 
 
+def _inject_model_overrides(catalog: dict[str, Any], user_id: int | None) -> dict[str, Any]:
+    """应用用户级能力标签覆盖(capabilities / ui_tags)。
+
+    必须在 `_inject_capabilities` 之后、`_inject_reasoning` 之前：
+      · 之后再跑 capabilities 重算会覆盖用户编辑；
+      · reasoning 需要读到用户编辑后的 reasoning 标签。
+    """
+    import model_reasoning
+    try:
+        overrides = model_reasoning.load_model_tag_overrides(user_id)
+    except Exception:
+        overrides = {}
+    if not overrides:
+        return catalog
+    for api in catalog.get("apis", []):
+        api_id = api.get("id", "")
+        for m in api.get("models", []):
+            real = m.get("real_name") or m.get("id")
+            if not real:
+                continue
+            ov = overrides.get(f"{api_id}:{real}") or overrides.get(real)
+            if not isinstance(ov, dict):
+                continue
+            caps = ov.get("capabilities")
+            if isinstance(caps, list):
+                m["capabilities"] = [str(c) for c in caps]
+            ui_tags = ov.get("ui_tags")
+            if isinstance(ui_tags, list):
+                m["ui_tags"] = [str(t) for t in ui_tags]
+    return catalog
+
+
+def _inject_reasoning(catalog: dict[str, Any], user_id: int | None) -> dict[str, Any]:
+    """把模型级思考能力描述下发给前端(能力驱动 UI 的唯一真源)。
+
+    旧前端自己维护 `THINKING_EFFORT_PROVIDERS` 白名单,导致中转站/GLM/Kimi/Qwen/Grok
+    即使支持思考也不显示控件。这里统一由 model_reasoning 推断并附加 `reasoning` 字段:
+      - 已知 provider + 模型名 → 内置方言
+      - 自建中转 → 按模型名猜,标 confidence=assumed
+      - 未知 → supported=false(前端隐藏,避免「UI 有、后端不发」的谎报)
+
+    用户级 `reasoning_model_overrides` 在此合并;批量读取一次,避免每个模型查一次库。
+    """
+    import model_reasoning
+    try:
+        overrides = model_reasoning.load_reasoning_overrides(user_id)
+    except Exception:
+        overrides = {}
+    for api in catalog.get("apis", []):
+        api_id = api.get("id", "")
+        for m in api.get("models", []):
+            real = m.get("real_name") or m.get("id")
+            if not real:
+                continue
+            try:
+                spec = model_reasoning.spec_for_model(
+                    api_id, real, model_dict=m, api_dict=api,
+                    user_id=user_id,
+                    override=overrides.get(f"{api_id}:{real}") or overrides.get(real) or {},
+                )
+                m["reasoning"] = model_reasoning.public_spec(spec)
+            except Exception:
+                # 单个模型推断失败不影响整份目录;前端按「不支持」隐藏即可。
+                m["reasoning"] = {
+                    "supported": False, "dialect": "none", "can_disable": False,
+                    "levels": ["auto"], "default_level": "auto",
+                    "budget_tokens": {}, "confidence": "assumed", "source": "builtin",
+                }
+    return catalog
+
+
 @router.get("/api/models")
 async def api_models(
     api_user: dict[str, Any] | None = Depends(get_current_user),
@@ -116,7 +202,10 @@ async def api_models(
     catalog = load_catalog_for_user(_uid)
     is_admin = bool(api_user and api_user.get("role") == "admin")
     redacted = _redact_catalog(catalog, is_admin, user_id=_uid)
-    enriched = _inject_capabilities(_inject_pricing(redacted))
+    enriched = _inject_reasoning(
+        _inject_model_overrides(_inject_capabilities(_inject_pricing(redacted)), _uid),
+        _uid,
+    )
     # selected 必须 = 当前真正生效的模型(per-save session_model > 用户 gm 偏好 > 全局),与
     # _get_gm/_payload 同口径。否则游戏内切模型(写 per-save session_model)后,picker 重拉 /api/models
     # 仍读到用户 gm 默认 → 高亮回退「列表第一个」(线上反馈:选任何模型都跳回 llama 3.1)。缺则回退全局。
@@ -332,7 +421,7 @@ async def api_models_select(
             pass
     except Exception as exc:
         from fastapi import HTTPException
-        raise HTTPException(status_code=500, detail=f"prefs 写入失败: {exc}")
+        raise HTTPException(status_code=500, detail=f"prefs 写入失败: {exc}") from exc
     uid = _user_key(api_user)
     with _state_lock:
         _gm_by_user.pop(uid, None)
@@ -341,6 +430,166 @@ async def api_models_select(
     # 否则前端拿到 select 响应的 selected 会是全局默认 → 选完即跳默认(用户报「修十次没好」)。
     return json_response({"ok": True, "scope": "user", "api_id": api_id, "model_id": model_id,
                          "selected": {"api_id": api_id, "model_id": model_id, "real_name": model_id}})
+
+
+@router.post("/api/models/reasoning", response_model=GenericOkResponse, responses=COMMON_ERROR_RESPONSES)
+async def api_models_reasoning(
+    body: ModelsReasoningRequest,
+    api_user: dict[str, Any] | None = Depends(get_current_user),
+) -> JSONResponse:
+    """写思考档位。
+
+    带 save_id → 会话级 session_reasoning(只影响当前存档主 GM);
+    不带 save_id → 用户级 model_effort(所有对话共享,兼容旧行为)。
+    level=auto 表示不发任何思考字段,沿用服务商默认。
+    """
+    import model_reasoning
+    from model_aliases import normalize_api_id
+
+    if not api_user or not api_user.get("id"):
+        from fastapi import HTTPException
+        raise HTTPException(status_code=401, detail="未登录")
+
+    try:
+        api_id = normalize_api_id(str(body.api_id or "").strip())
+    except Exception:
+        return json_response({"ok": False, "error": "api_id 格式不合法"}, status_code=400)
+    model_id = str(body.model_id or "").strip()
+    level = str(body.level or "").strip().lower()
+    if not api_id or not model_id:
+        return json_response({"ok": False, "error": "缺少 api_id 或 model_id"}, status_code=400)
+    if body.save_id is not None and int(body.save_id) <= 0:
+        return json_response({"ok": False, "error": "save_id 不合法"}, status_code=400)
+    if level not in model_reasoning.VALID_LEVELS:
+        return json_response(
+            {"ok": False, "error": f"未知思考档位: {level}",
+             "allowed": list(model_reasoning.LEVELS)},
+            status_code=400,
+        )
+
+    uid = int(api_user["id"])
+    # 与 /api/models 用同一份模型元数据(capabilities/reasoning),避免「界面隐藏、
+    # 手工请求却能写成功」的能力判断分裂。
+    _model_meta = None
+    _api_meta = None
+    try:
+        from model_registry import find_api, load_catalog_for_user
+        _cat = load_catalog_for_user(uid)
+        _api_meta = find_api(_cat, api_id)
+        if _api_meta:
+            _model_meta = next(
+                (m for m in (_api_meta.get("models") or [])
+                 if (m.get("real_name") or m.get("id")) == model_id or m.get("id") == model_id),
+                None,
+            )
+    except Exception:
+        pass
+    # backend 的偏好键用模型 real_name;客户端可能传 catalog id,这里统一成 real_name,
+    # 否则写进去的 model_effort / session_reasoning 永远不会被 _reasoning_state 读到。
+    model_name = str((_model_meta or {}).get("real_name") or model_id).strip()
+    # 与 /api/models 一致：用户编辑的能力标签参与自动能力判断。
+    try:
+        _tag_overrides = model_reasoning.load_model_tag_overrides(uid)
+        _model_meta = model_reasoning.apply_tag_overrides(
+            _model_meta, api_id, model_name, _tag_overrides)
+    except Exception:
+        pass
+    spec = model_reasoning.spec_for_model(
+        api_id, model_name, model_dict=_model_meta, api_dict=_api_meta, user_id=uid)
+    if not spec.get("supported"):
+        return json_response({
+            "ok": False,
+            "error": "该模型未声明思考能力。若确认支持,可在高级设置里指定发送方言。",
+            "reasoning": model_reasoning.public_spec(spec),
+        }, status_code=400)
+    allowed = list(spec.get("levels") or ["auto"])
+    if level not in allowed:
+        return json_response({
+            "ok": False,
+            "error": f"该模型不支持档位 {level}",
+            "allowed": allowed,
+            "reasoning": model_reasoning.public_spec(spec),
+        }, status_code=400)
+
+    if body.save_id is not None:
+        # 只允许改当前激活存档:in-memory state 只对应一个 save,若允许写别人的
+        # save_id,会把 A 存档的档位塞进 B 的内存态。
+        try:
+            from platform_app.runtime import read_runtime
+            _active_sid = int((read_runtime(user_id=uid) or {}).get("save_id") or 0)
+            if _active_sid and int(body.save_id) != _active_sid:
+                return json_response({
+                    "ok": False,
+                    "error": "只能修改当前激活存档的思考档位",
+                }, status_code=400)
+        except Exception:
+            pass
+        from app import _gm_by_user, _state_by_user, _user_key
+        from state_repository import persist_session_reasoning
+        uid_key = _user_key(api_user)
+        state = _state_by_user.get(uid_key)
+        if state is not None:
+            state.set_session_reasoning(api_id, model_name, level)
+        persist_session_reasoning(
+            int(body.save_id), api_id, model_name, level, user_id=uid,
+        )
+        # 缓存里的 GM/backend 立即生效,不必等下一轮 _ensure_loaded。
+        try:
+            _gm = _gm_by_user.get(uid_key)
+            _be = getattr(_gm, "_backend", None) if _gm else None
+            if _gm and getattr(_gm, "api_id", "") == api_id \
+                    and getattr(_be, "model_name", "") == model_name:
+                _be._reasoning_override = {
+                    "api_id": api_id, "model_id": model_name, "level": level,
+                }
+        except Exception:
+            pass
+        return json_response({
+            "ok": True, "scope": "save", "save_id": int(body.save_id),
+            "api_id": api_id, "model_id": model_name, "level": level,
+            "reasoning": model_reasoning.public_spec(spec),
+        })
+
+    # 用户级:写 model_effort["api:model"],与旧 UI/旧偏好完全兼容。
+    try:
+        from psycopg.types.json import Jsonb
+
+        from platform_app.db import connect as _connect
+        with _connect() as db:
+            row = db.execute(
+                "select preferences from user_preferences where user_id = %s",
+                (uid,),
+            ).fetchone()
+            prefs = dict(row["preferences"]) if row and row.get("preferences") else {}
+            model_effort = prefs.get("model_effort")
+            if not isinstance(model_effort, dict):
+                model_effort = {}
+            model_effort[f"{api_id}:{model_name}"] = level
+            prefs["model_effort"] = model_effort
+            if row:
+                db.execute(
+                    "update user_preferences set preferences = %s, updated_at = now() where user_id = %s",
+                    (Jsonb(prefs), uid),
+                )
+            else:
+                db.execute(
+                    "insert into user_preferences (user_id, preferences) values (%s, %s)",
+                    (uid, Jsonb(prefs)),
+                )
+        try:
+            from core.request_cache import invalidate_user_prefs_cache
+            invalidate_user_prefs_cache(uid)
+        except Exception:
+            pass
+    except Exception as exc:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=500, detail=f"思考档位写入失败: {exc}") from exc
+
+    return json_response({
+        "ok": True, "scope": "user", "api_id": api_id,
+        "model_id": model_name, "level": level,
+        "reasoning": model_reasoning.public_spec(spec),
+    })
 
 
 @router.post("/api/models/api", response_model=GenericOkResponse, responses=COMMON_ERROR_RESPONSES)
@@ -514,6 +763,10 @@ async def api_models_remote_sync(
             "capabilities": _caps,
         })
 
+    # 前端用这份清单整体替换模型列表:必须在这里补齐价格/上下文/来源,
+    # 否则自动同步一完成,详情表的三列就全部回落到「—」。
+    synced_models = _enrich_synced_models(api_id, synced_models)
+
     # 写每用户 overlay(绝不写全局)
     user_models.replace_synced_models(user_id, api_id, synced_models)
     saved = load_catalog_for_user(user_id)
@@ -554,11 +807,12 @@ async def api_models_probe(
     """
     body_dict = body.model_dump(exclude_none=True)
     api_id = body_dict.get("api_id", "")
-    # admin 可以测任何 provider；普通用户只能测自己配过 key 的 provider
+    # admin 可以测任何 provider；普通用户只能测自己实际可用的 provider。
+    # 用 user_can_use_provider 而不是裸 get_credential:它统一处理 vertex_ai 的
+    # BYOK Service Account(凭据存在 AgentPlatform 行)与历史 api_id 别名。
     if api_user and api_user.get("role") != "admin":
-        from platform_app import user_credentials as _ucreds
-        cred = _ucreds.get_credential(api_user["id"], api_id)
-        if not cred:
+        from core.llm_backend import user_can_use_provider
+        if not user_can_use_provider(api_user["id"], api_id):
             return json_response(
                 {"ok": False, "error": "需要先在「个人主页 → API 凭证」中配置该 provider 的 key 才能测试"},
                 status_code=403,

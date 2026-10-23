@@ -27,11 +27,10 @@ const PERMISSION_OPTIONS = [
   { id: "full_access", labelKey: "game.permission.full_access_label", descKey: "game.permission.full_access_desc", icon: "unlock" },
 ];
 
-// Effort/深度思考控件的显示门槛(2026-10,与 settings modelparams-section 同规则):
-// 供应商白名单(后端真正消费 model_effort:anthropic/vertex_ai 走 budget_tokens,
-// openai/deepseek 走 reasoning_effort)**且**模型目录声明 reasoning 能力。
-// 其余(中转/本地/非推理模型)后端静默忽略该偏好,显示档位=「已启用」谎报,caps 缺失按不支持隐藏。
-const THINKING_EFFORT_PROVIDERS = ["anthropic", "vertex_ai", "openai", "deepseek"];
+// Effort/深度思考控件已改为**能力驱动**(2026-10):显示条件不再看 provider 白名单,
+// 而是看 /api/models 下发的 `model.reasoning` 描述(spec.supported + levels + can_disable)。
+// 这样自建中转站 / GLM / Kimi / Qwen / Grok / 豆包 等只要模型被识别出思考能力,
+// 就能在同一个控件里配置;未知模型显示为空,不再谎报「已启用」。
 
 /* ModelPopover — 游戏内底栏「模型」浮层。
    重构:模型列表 / 已配 key 过滤 / health / pricing / 切换落库(/api/models/select)
@@ -93,40 +92,68 @@ function ModelPopover({ current, onPick, align = "left", gameState, onClose, tri
         showPricing
         onChange={handlePicked}
       />
-      {/* task 141: Effort 段 — 每个模型独立配置 thinking budget 档位 */}
-      <EffortSection selectedKey={selectedKey} />
+      {/* task 141 / 2026-10: Effort 段 — 能力驱动;有存档时写本存档作用域 */}
+      <EffortSection selectedKey={selectedKey} saveId={saveId} gameState={gameState} />
     </div>
   );
 }
 
 
-function EffortSection({ selectedKey }) {
+const EFFORT_LABELS = {
+  auto: 'Auto',
+  off: 'Off',
+  low: 'Low',
+  medium: 'Medium',
+  high: 'High',
+  extra: 'Extra',
+  max: 'Max',
+};
+
+function normalizeEffortLevel(level, spec) {
+  const lv = String(level || 'auto').toLowerCase();
+  const levels = (spec && spec.levels) || [];
+  if (levels.includes(lv)) return lv;
+  if (['low', 'medium', 'extra', 'max'].includes(lv) && levels.includes('high')) return 'high';
+  if (lv === 'off' && spec && !spec.can_disable) return 'auto';
+  const fallback = (spec && spec.default_level) || 'auto';
+  if (levels.includes(fallback)) return fallback;
+  return levels.includes('auto') ? 'auto' : (levels[0] || 'auto');
+}
+
+function effortDesc(spec, id, t) {
+  if (id === 'auto') return t('game.composer.effort_auto_desc', { defaultValue: 'Follow the provider default' });
+  if (id === 'off') return t('game.composer.effort_off_desc');
+  const budget = spec && spec.budget_tokens && spec.budget_tokens[id];
+  if (budget) return `${Math.round(budget / 1000)}k tokens`;
+  if (id === 'high') {
+    return t('game.composer.effort_on_desc', { defaultValue: 'Enable thinking' });
+  }
+  if (id === 'max') return t('game.composer.effort_max_desc');
+  return id;
+}
+
+function EffortSection({ selectedKey, saveId, gameState }) {
   const { t } = useTranslation();
-  const EFFORT_OPTIONS = [
-    { id: 'off',    label: 'Off',    desc: t('game.composer.effort_off_desc') },
-    { id: 'low',    label: 'Low',    desc: '1k tokens' },
-    { id: 'medium', label: 'Medium', desc: '4k tokens' },
-    { id: 'high',   label: 'High',   desc: t('game.composer.effort_high_desc') },
-    { id: 'extra',  label: 'Extra',  desc: '16k tokens' },
-    { id: 'max',    label: 'Max',    desc: t('game.composer.effort_max_desc') },
-  ];
+  const hasSaveScope = saveId != null && Number(saveId) > 0;
   // selectedKey 格式: "api_id::model_real_name" — backend pref key 用 "api_id:model_id"
-  const [effort, setEffort] = useStateC('high');
-  const [busy, setBusy] = useStateC(false);
-  // 显示门槛:供应商白名单 + 模型目录声明 reasoning 能力(缺数据按不支持隐藏)
-  const [capsOk, setCapsOk] = useStateC(false);
-  const cancelledRef = React.useRef(false);  // 卸载守卫:卸载后跳过 setBusy
-  const reqIdRef = React.useRef(0);          // RMW 竞态守卫:只让最新请求写回
-  React.useEffect(() => { cancelledRef.current = false; return () => { cancelledRef.current = true; }; }, []);
   const prefKey = React.useMemo(() => {
     if (!selectedKey) return '';
     const [api, model] = selectedKey.split('::');
     return api && model ? `${api}:${model}` : '';
   }, [selectedKey]);
 
+  const [spec, setSpec] = useStateC(null);
+  const [effort, setEffort] = useStateC('auto');
+  const [busy, setBusy] = useStateC(false);
+  const cancelledRef = React.useRef(false);  // 卸载守卫:卸载后跳过 setBusy
+  const reqIdRef = React.useRef(0);          // RMW 竞态守卫:只让最新请求写回
+  React.useEffect(() => { cancelledRef.current = false; return () => { cancelledRef.current = true; }; }, []);
+
+  // 能力描述来自 /api/models 的 model.reasoning(后端 model_reasoning 统一推断)。
   React.useEffect(() => {
-    if (!prefKey) { setCapsOk(false); return; }
+    if (!prefKey) { setSpec(null); return; }
     let cancelled = false;
+    setSpec(null);
     (async () => {
       try {
         const d = await window.api.models.list().catch(() => ({}));
@@ -136,70 +163,111 @@ function EffortSection({ selectedKey }) {
         const modelKey = prefKey.slice(colon + 1);
         const api = ((d && d.models && d.models.apis) || []).find((a) => a.id === apiId);
         const m = ((api && api.models) || []).find((mm) => (mm.real_name || mm.id) === modelKey || mm.id === modelKey);
-        const caps = Array.isArray(m && m.capabilities)
-          ? m.capabilities
-          : (m && m.capabilities ? Object.keys(m.capabilities) : []);
-        setCapsOk(THINKING_EFFORT_PROVIDERS.includes(apiId) && caps.includes('reasoning'));
-      } catch (_) { if (!cancelled) setCapsOk(false); }
+        setSpec((m && m.reasoning) || null);
+      } catch (_) { if (!cancelled) setSpec(null); }
     })();
     return () => { cancelled = true; };
   }, [prefKey]);
 
+  // gameState 来自 /api/state(已把 session_reasoning 透出);_raw 是某些宿主的原始信封。
+  // 折成稳定字符串再进依赖,避免父组件每次渲染的新对象把 effect 反复触发。
+  const sessionReasoningKey = React.useMemo(() => {
+    const sr = gameState && (gameState.session_reasoning
+      || (gameState._raw && gameState._raw.session_reasoning));
+    return sr && sr.api_id && sr.model_id && sr.level
+      ? `${sr.api_id}::${sr.model_id}::${sr.level}`
+      : '';
+  }, [gameState]);
+
+  // 当前档位:本存档覆盖优先;否则用户级 model_effort;否则 spec 默认。
   React.useEffect(() => {
     if (!prefKey) return;
     let cancelled = false;
     (async () => {
+      const colon = prefKey.indexOf(':');
+      const apiId = prefKey.slice(0, colon);
+      const modelKey = prefKey.slice(colon + 1);
+      const [srApi, srModel, srLevel] = sessionReasoningKey.split('::');
+      if (hasSaveScope && srApi === apiId && srModel === modelKey && srLevel) {
+        if (!cancelled) setEffort(normalizeEffortLevel(srLevel, spec));
+        return;
+      }
       try {
         const r = await window.api.account.profile();
         if (cancelled) return;
         const p = (r && r.preferences) || {};
         const m = p.model_effort || {};
-        const cur = (m[prefKey] || 'high').toString().toLowerCase();
-        if (EFFORT_OPTIONS.some(e => e.id === cur)) setEffort(cur);
-        else setEffort('high');
-      } catch (_) {}
+        const cur = m[prefKey] || (spec && spec.default_level) || 'auto';
+        setEffort(normalizeEffortLevel(cur, spec));
+      } catch (_) {
+        if (!cancelled) setEffort(normalizeEffortLevel(null, spec));
+      }
     })();
     return () => { cancelled = true; };
-  }, [prefKey]);
+  }, [prefKey, saveId, hasSaveScope, sessionReasoningKey, spec]);
 
   const onPickEffort = async (id) => {
     if (!prefKey || busy) return;
+    const prevEffort = effort;
     const myReq = ++reqIdRef.current;  // 竞态守卫:只让最新请求的结果生效
     setBusy(true);
     setEffort(id);  // 乐观更新
+    const colon = prefKey.indexOf(':');
+    const apiId = prefKey.slice(0, colon);
+    const modelId = prefKey.slice(colon + 1);
     try {
-      // 先拉现有 model_effort 字典,patch 后整段 POST 回去
-      const profileR = await window.api.account.profile();
-      if (reqIdRef.current !== myReq) return;  // 被更新请求取代,bail out
-      const existing = ((profileR && profileR.preferences && profileR.preferences.model_effort) || {});
-      const next = { ...existing, [prefKey]: id };
-      await window.api.account.preferences({ preferences: { model_effort: next } });
+      if (hasSaveScope) {
+        // 本存档作用域:只影响当前对话主 GM。
+        await window.api.models.reasoning({
+          save_id: saveId, api_id: apiId, model_id: modelId, level: id,
+        });
+        try { window.dispatchEvent(new CustomEvent('game-state-refresh')); } catch (_) {}
+      } else {
+        // 无存档(或调用方明确不要存档作用域)→ 用户级 model_effort,兼容旧行为。
+        const profileR = await window.api.account.profile();
+        if (reqIdRef.current !== myReq) return;  // 被更新请求取代,bail out
+        const existing = ((profileR && profileR.preferences && profileR.preferences.model_effort) || {});
+        const next = { ...existing, [prefKey]: id };
+        await window.api.account.preferences({ preferences: { model_effort: next } });
+      }
       if (reqIdRef.current !== myReq) return;  // 再次确认
       window.__apiToast?.(t('game.composer.effort_saved', { id }), { kind: 'ok', duration: 1500 });
     } catch (e) {
+      // 回滚到点击前的档位,避免 UI 显示已生效而后端拒绝。
+      setEffort(prev => (prev === id ? prevEffort : prev));
       window.__apiToast?.(t('game.composer.effort_save_failed'), { kind: 'danger', detail: e?.message });
     } finally { if (!cancelledRef.current) setBusy(false); }
   };
 
-  if (!prefKey || !capsOk) return null;
+  // 能力驱动:未声明 / 只有一个档位(只有 auto)时整体隐藏,不再按 provider 白名单。
+  if (!prefKey || !spec || !spec.supported) return null;
+  const levels = (spec.levels || ['auto']).filter((id) => id !== 'off' || spec.can_disable);
+  if (levels.length <= 1) return null;
+  const scopeLabel = hasSaveScope
+    ? t('game.composer.effort_scope_save', { defaultValue: 'This conversation' })
+    : t('game.composer.effort_scope_model', { defaultValue: 'All conversations' });
   return (
     <div style={{
       padding: '10px 12px',
       borderTop: '1px solid var(--line-soft)',
       display: 'flex', flexDirection: 'column', gap: 6,
     }}>
-      <div className="muted-2" style={{ fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.08em' }}>
-        Effort
+      <div className="muted-2" style={{
+        fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.08em',
+        display: 'flex', alignItems: 'center', gap: 6,
+      }}>
+        <span>Effort</span>
+        <span style={{ textTransform: 'none', letterSpacing: 0, opacity: 0.75 }}>· {scopeLabel}</span>
       </div>
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
-        {EFFORT_OPTIONS.map((opt) => {
-          const active = opt.id === effort;
+        {levels.map((id) => {
+          const active = id === effort;
           return (
             <button
-              key={opt.id}
-              onClick={() => onPickEffort(opt.id)}
+              key={id}
+              onClick={() => onPickEffort(id)}
               disabled={busy}
-              title={opt.desc}
+              title={effortDesc(spec, id, t)}
               style={{
                 padding: '4px 10px',
                 borderRadius: 999,
@@ -211,7 +279,9 @@ function EffortSection({ selectedKey }) {
                 whiteSpace: 'nowrap',
               }}
             >
-              {opt.label}
+              {id === 'auto'
+                ? t('game.composer.effort_auto', { defaultValue: 'Auto' })
+                : (EFFORT_LABELS[id] || id)}
             </button>
           );
         })}

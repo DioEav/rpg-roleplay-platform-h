@@ -501,9 +501,9 @@ button, a, [role="button"], .btn, .iconbtn, summary, label {
 .pl-table tbody tr.sel:hover { background: var(--accent-soft); }
 .pl-table tbody tr.sel td:first-child { box-shadow: inset 2px 0 0 var(--accent); }
 .pl-table tbody tr:last-child td { border-bottom: 0; }
-.pl-table .pl-title-cell { display: grid; gap: 2px; min-width: 0; max-width: 360px; }
-.pl-table .pl-title-cell strong { font-family: var(--font-serif); font-size: 14.5px; letter-spacing: 0.02em; }
-.pl-table .pl-title-cell .muted-2 { font-size: 11.5px; }
+.pl-title-cell { display: grid; gap: 4px; min-width: 0; max-width: 360px; }
+.pl-title-cell strong { font-family: var(--font-serif); font-size: 14.5px; letter-spacing: 0.02em; }
+.pl-title-cell .muted-2 { font-size: 11.5px; }
 .pl-table-actions { display: inline-flex; gap: 2px; justify-content: flex-end; align-items: center; }
 .pl-table tbody td.pl-table-actions, .pl-table thead th.pl-table-actions {
   display: table-cell !important;
@@ -1201,6 +1201,14 @@ button, a, [role="button"], .btn, .iconbtn, summary, label {
 
 .pl-model-toolbar .seg { height: 28px; padding: 2px; }
 .pl-model-toolbar .seg button { height: 22px; padding: 0 8px; font-size: 11.5px; }
+/* 选中的筛选档位用强调色描底 + 强调色文字:此前仅 text/panel-2 的小色差,
+   切换时几乎看不出来。只作用于模型列表工具栏,不影响页面其它 seg。 */
+.pl-model-toolbar .seg::before {
+  background: var(--accent-soft);
+  box-shadow: inset 0 0 0 1px var(--accent-edge);
+}
+.pl-model-toolbar .seg button.active { color: var(--accent); font-weight: 600; }
+.pl-model-toolbar .seg button.active .muted-2 { color: var(--accent); opacity: 0.8; }
 
 .pl-model-caps-row {
   display: flex; align-items: center; gap: 4px; flex-wrap: wrap;
@@ -1271,6 +1279,27 @@ button, a, [role="button"], .btn, .iconbtn, summary, label {
 }
 .pl-health .dot { width: 7px; height: 7px; border-radius: 999px; }
 .pl-health .dot.muted-2 { background: var(--muted-2); }
+
+/* 单模型探查按钮(详情表) */
+.pl-model-probe {
+  height: 24px; padding: 0 8px;
+  border: 1px solid var(--line-soft);
+  border-radius: var(--r-2);
+  background: transparent; color: var(--muted);
+  font-size: 11.5px; white-space: nowrap; cursor: pointer;
+  transition: color .12s, border-color .12s, background .12s;
+}
+.pl-model-probe:hover:not(:disabled) {
+  color: var(--accent); border-color: var(--accent-edge); background: var(--accent-soft);
+}
+.pl-model-probe:disabled { opacity: 0.55; cursor: wait; }
+
+/* 单模型删除按钮(详情表):只有 overlay 模型可用,全局目录模型禁用 */
+.pl-model-delete { color: var(--muted); }
+.pl-model-delete:hover:not(:disabled) {
+  color: var(--danger); border-color: rgba(200, 103, 93, 0.4); background: var(--danger-soft);
+}
+.pl-model-delete:disabled { opacity: 0.35; cursor: not-allowed; }
 
 .pl-model-hidden-note {
   margin-top: 10px;

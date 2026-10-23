@@ -349,6 +349,49 @@ def persist_session_model(
         pass  # 轻量补丁失败不影响主流程
 
 
+def persist_session_reasoning(
+    save_id: int,
+    api_id: str,
+    model_id: str,
+    level: str,
+    user_id: int | None = None,
+) -> None:
+    """把会话级思考档位写入 runtime_checkouts.state_snapshot.session_reasoning。
+
+    与 persist_session_model 同构:只 patch JSONB 字段,不触发完整 commit。
+    失败静默 —— 内存已生效,重启后回退到用户级 model_effort。
+    """
+    if not save_id or not api_id or not model_id or not level:
+        return
+    try:
+        init_db()
+        with connect() as db:
+            row = db.execute(
+                """
+                select id, state_snapshot
+                from runtime_checkouts
+                where save_id = %s and (%s::bigint is null or user_id = %s)
+                order by updated_at desc
+                limit 1
+                """,
+                (int(save_id), user_id, user_id),
+            ).fetchone()
+            if not row:
+                return
+            snap = _ensure_dict(row.get("state_snapshot") or {})
+            snap["session_reasoning"] = {
+                "api_id": str(api_id),
+                "model_id": str(model_id),
+                "level": str(level),
+            }
+            db.execute(
+                "update runtime_checkouts set state_snapshot = %s where id = %s",
+                (json.dumps(snap, ensure_ascii=False), int(row["id"])),
+            )
+    except Exception:
+        pass  # 轻量补丁失败不影响主流程
+
+
 # ── 工具 ──────────────────────────────────────────────────────────
 def _ensure_dict(value: Any) -> dict[str, Any]:
     if isinstance(value, dict):

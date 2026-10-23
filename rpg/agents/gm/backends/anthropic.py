@@ -11,6 +11,11 @@ from typing import Any
 import httpx
 
 from core.logging import get_logger
+from model_reasoning import (
+    build_anthropic_thinking,
+    effective_max_tokens,
+    resolve_spec_for_call,
+)
 
 log = get_logger(__name__)
 
@@ -62,7 +67,8 @@ def _system_blocks(system: str, extra: str = "") -> list[dict[str, Any]]:
 class _AnthropicBackend:
     # task 57 (2026-05-25): 默认改为当前 Sonnet（最新平衡型）；
     # Opus 4.7 是 frontier 但成本 5×，留给用户显式选。
-    def __init__(self, model: str = "claude-sonnet-4-6", user_id: int | None = None):
+    def __init__(self, model: str = "claude-sonnet-4-6", user_id: int | None = None,
+                 model_meta: dict[str, Any] | None = None):
         from anthropic import Anthropic
 
         from platform_app.user_credentials import resolve_api_key
@@ -105,23 +111,41 @@ class _AnthropicBackend:
         )
         self.model_name = model
         self.user_id = user_id  # task 141: 给 _thinking_param 用
+        self._model_meta = model_meta
+        self._reasoning_override: dict[str, Any] | None = None
         self.last_usage: dict[str, int] = {}
         log.info(f"[GM] Anthropic · {self.model_name} (key from {result.get('source', 'env')})")
 
-    def _thinking_param(self) -> dict | None:
-        """task 141: 按用户偏好返 Anthropic Extended Thinking 参数。
-        budget=0 → None;>0 → {type: "enabled", budget_tokens: N}。
-        模型不支持时 Anthropic SDK 会忽略 / 返错,由 call/stream try/except 兜底。
-        """
+    def _reasoning_state(self):
         try:
-            from ._effort import resolve_budget_tokens
-            budget = resolve_budget_tokens(self.user_id, "anthropic", self.model_name)
-            if budget <= 0:
-                return None
-            return {"type": "enabled", "budget_tokens": int(budget)}
+            return resolve_spec_for_call(
+                self.user_id, "anthropic", self.model_name,
+                model_dict=getattr(self, "_model_meta", None),
+                override=getattr(self, "_reasoning_override", None),
+            )
         except Exception as exc:
-            log.warning(f"[anthropic] _thinking_param resolve failed: {exc}")
+            log.warning(f"[anthropic] reasoning resolve failed: {exc}")
+            return ({"supported": False, "levels": ["auto"]}, "auto")
+
+    def _thinking_param(self, state=None) -> dict | None:
+        """按模型级 spec 返 Anthropic Extended Thinking 参数。
+
+        auto/off → None(不传 = 关闭);其余按 budget_tokens 映射。模型不支持思考时
+        spec.supported=False,同样返 None,不再给老模型硬塞 thinking 撞 400。
+        """
+        spec, level = state if state is not None else self._reasoning_state()
+        try:
+            return build_anthropic_thinking(spec, level)
+        except Exception as exc:
+            log.warning(f"[anthropic] build thinking failed: {exc}")
             return None
+
+    def _effective_max_tokens(self, max_tokens: int, state=None) -> int:
+        spec, level = state if state is not None else self._reasoning_state()
+        try:
+            return effective_max_tokens(spec, level, int(max_tokens))
+        except Exception:
+            return max_tokens
 
     def _sampling_extra(self, has_thinking: bool) -> dict:
         """反馈#93:用户生成参数预设(temperature/top_p/top_k/stop)。
@@ -152,8 +176,7 @@ class _AnthropicBackend:
         last_exc: Exception | None = None
         # task 141: thinking 模型 max_tokens 要 ≥ budget_tokens + 输出预算,否则 SDK 报错
         _thinking = self._thinking_param()
-        if _thinking:
-            max_tokens = max(max_tokens, int(_thinking["budget_tokens"]) + 1024)
+        max_tokens = self._effective_max_tokens(max_tokens)
         _extra = {"thinking": _thinking} if _thinking else {}
         _extra.update(self._sampling_extra(bool(_thinking)))  # 反馈#93:接入生成参数预设
         for attempt in range(_MAX_RETRIES + 1):
@@ -188,6 +211,22 @@ class _AnthropicBackend:
             if _fr:
                 self.last_usage["finish_reason"] = _fr
         return resp.content[0].text.strip()
+
+    def probe(self, timeout_sec: float | None = None) -> str:
+        """最小连通性请求:不带 system / 采样 / thinking 参数。
+
+        独立于 call():探查只验证模型能否正常返回,不应被用户的生成参数或思考
+        配置影响。timeout_sec 透传给 SDK 的单次请求超时。
+        """
+        kwargs: dict[str, Any] = {
+            "model": self.model_name,
+            "max_tokens": 64,
+            "messages": [{"role": "user", "content": "1"}],
+        }
+        if timeout_sec:
+            kwargs["timeout"] = float(timeout_sec)
+        resp = self.client.messages.create(**kwargs)
+        return ((resp.content[0].text if resp.content else "") or "").strip()
 
     def call_structured(self, system: str, messages: list[dict], max_tokens: int) -> str:
         from core.prompt_log import log_llm_prompt
@@ -226,8 +265,7 @@ class _AnthropicBackend:
                        system=system, messages=messages)
         # task 141: thinking 模型 max_tokens 必须容下 budget;不支持 thinking 的模型走旧路径
         _thinking = self._thinking_param()
-        if _thinking:
-            max_tokens = max(max_tokens, int(_thinking["budget_tokens"]) + 1024)
+        max_tokens = self._effective_max_tokens(max_tokens)
         _extra = {"thinking": _thinking} if _thinking else {}
         _extra.update(self._sampling_extra(bool(_thinking)))  # 反馈#93:接入生成参数预设
         # 思考流(thinking_delta):此处 thinking 生效(_thinking_param),但本方法契约是
@@ -299,11 +337,10 @@ class _AnthropicBackend:
         # 重建中的 thinking / redacted_thinking block(含 signature),content_block_stop 时 yield。
         current_thinking: dict[str, Any] | None = None
         current_redacted: dict[str, Any] | None = None
-        # 与 call()/stream() 同源:按用户 effort 偏好取 thinking 参数;budget<=0 → None(不启用)。
+        # 与 call()/stream() 同源:按模型级 spec + 作用域取 thinking 参数。
         _thinking = self._thinking_param()
-        if _thinking:
-            # thinking 模型 max_tokens 必须容下 budget(留输出余量),否则 SDK 报错。
-            max_tokens = max(max_tokens, int(_thinking["budget_tokens"]) + 1024)
+        # thinking 模型 max_tokens 必须容下 budget(留输出余量),否则 SDK 报错。
+        max_tokens = self._effective_max_tokens(max_tokens)
         _extra = {"thinking": _thinking} if _thinking else {}
         # 工具循环热路径也必须带上用户的采样参数 —— 此前这里只取 thinking,于是「有工具可用」的
         # 回合里 temperature/top_p/top_k/stop 全部静默失效(call()/stream() 都接了,

@@ -256,6 +256,8 @@ def _call_verifier_backend(
             system=system_prompt,
             messages=[{"role": "user", "content": user_prompt}],
             max_tokens=800,
+            # 结构化微任务禁深思(268 实锤族):思考会吃光 800 正文预算。
+            thinking_budget=0,
         )
         return text, backend
     text = _extractor._call_openai_compat_json_mode(

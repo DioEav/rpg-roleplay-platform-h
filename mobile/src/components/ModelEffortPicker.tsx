@@ -8,12 +8,36 @@ import React, { useCallback, useEffect, useState } from "react";
 import { ActivityIndicator, Alert, Modal, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { BlurView } from "expo-blur";
-import { settings, prefs, ProviderInfo } from "@/api";
+import { settings, prefs, game, ProviderInfo } from "@/api";
 import { ApiError } from "@/api/http";
 import { theme } from "@/theme/theme";
 
-const EFFORT_TIERS = ["off", "low", "medium", "high", "extra", "max"];
-const EFFORT_LABEL: Record<string, string> = { off: "关", low: "低", medium: "中", high: "高", extra: "极", max: "满" };
+type ReasoningSpec = {
+  supported?: boolean;
+  can_disable?: boolean;
+  levels?: string[];
+  default_level?: string;
+  confidence?: string;
+};
+
+const EFFORT_LABEL: Record<string, string> = {
+  auto: "自动", off: "关", low: "低", medium: "中", high: "高", extra: "极", max: "满",
+};
+
+function realNameOf(providers: ProviderInfo[], apiId?: string, modelId?: string): string {
+  if (!apiId || !modelId) return "";
+  const p = providers.find((x) => (x.api_id || (x as any).id) === apiId);
+  const m = (p?.models || []).find((mo: any) => (mo.real_name || mo.id) === modelId || mo.id === modelId);
+  return ((m as any)?.real_name || (m as any)?.id || modelId || "") as string;
+}
+
+function reasoningOf(providers: ProviderInfo[], apiId?: string, modelId?: string): ReasoningSpec | null {
+  if (!apiId || !modelId) return null;
+  const p = providers.find((x) => (x.api_id || (x as any).id) === apiId);
+  const m = (p?.models || []).find((mo: any) => (mo.real_name || mo.id) === modelId || mo.id === modelId);
+  const r = (m as any)?.reasoning;
+  return r && typeof r === "object" ? (r as ReasoningSpec) : null;
+}
 
 export function ModelEffortPicker({
   visible,
@@ -29,11 +53,15 @@ export function ModelEffortPicker({
   const insets = useSafeAreaInsets();
   const [providers, setProviders] = useState<ProviderInfo[]>([]);
   const [selected, setSelected] = useState<{ api_id?: string; model_id?: string }>({});
+  const [spec, setSpec] = useState<ReasoningSpec | null>(null);
   const [effort, setEffort] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(false);
   const [busy, setBusy] = useState(false);
 
-  const selKey = selected.api_id && selected.model_id ? `${selected.api_id}::${selected.model_id}` : "";
+  // 后端偏好/思考键用的是模型 real_name;selected.model_id 是 catalog id,两者可能不同。
+  const selectedReal = realNameOf(providers, selected.api_id, selected.model_id);
+  // 必须用单冒号:后端偏好键是 "{api_id}:{model_id}",双冒号会写成永远读不到的孤儿键。
+  const selKey = selected.api_id && selectedReal ? `${selected.api_id}:${selectedReal}` : "";
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -42,10 +70,27 @@ export function ModelEffortPicker({
       const list: ProviderInfo[] = m?.models?.apis ?? [];
       for (const p of list) if (!p.api_id) p.api_id = (p as any).id;
       setProviders(list.filter((p) => p.has_credential));
-      setSelected({ api_id: m?.selected?.api_id, model_id: m?.selected?.model_id });
+      const sel = { api_id: m?.selected?.api_id, model_id: m?.selected?.model_id };
+      setSelected(sel);
+      setSpec(reasoningOf(list, sel.api_id, sel.model_id));
       const pr = await prefs.get().catch(() => null);
       const me = pr?.preferences?.model_effort;
       if (me && typeof me === "object") setEffort(me);
+      // 本存档覆盖优先(桌面端写入的 session_reasoning 也在这里回显)。
+      try {
+        const st = await game.state().catch(() => null);
+        const sr = st?.session_reasoning;
+        const selReal = realNameOf(list, sel.api_id, sel.model_id);
+        if (sel.api_id && selReal && sr
+            && sr.api_id === sel.api_id && sr.model_id === selReal && sr.level) {
+          setEffort((prev) => ({
+            ...prev,
+            [`${sel.api_id}:${selReal}`]: String(sr.level),
+          }));
+        }
+      } catch {
+        /* non-fatal */
+      }
     } catch (e) {
       if (e instanceof ApiError && e.status !== 401) Alert.alert("加载失败", e.message);
     } finally {
@@ -62,6 +107,7 @@ export function ModelEffortPicker({
     try {
       await settings.selectModel(api_id, model_id, saveId);
       setSelected({ api_id, model_id });
+      setSpec(reasoningOf(providers, api_id, model_id));
       // Sync console_assistant_model_override so FamiliarSanctum follows this choice
       prefs.set({ console_assistant_model_override: { api_id, model: model_id } }).catch(() => {});
       onPicked?.(label);
@@ -73,17 +119,35 @@ export function ModelEffortPicker({
   };
 
   const setTier = async (tier: string) => {
-    if (!selKey) return;
+    if (!selKey || !selected.api_id || !selectedReal) return;
     const next = { ...effort, [selKey]: tier };
     setEffort(next);
     try {
-      await prefs.set({ model_effort: next });
-    } catch {
-      /* non-fatal */
+      if (saveId != null && saveId > 0) {
+        // 本对话作用域:只影响当前存档主 GM。
+        await settings.reasoning({
+          api_id: selected.api_id,
+          model_id: selectedReal,
+          level: tier,
+          save_id: saveId,
+        });
+      } else {
+        // 无存档 → 用户级,所有对话共享。
+        await prefs.set({ model_effort: next });
+      }
+    } catch (e) {
+      // 回滚乐观更新
+      setEffort((prev) => ({ ...prev, [selKey]: effort[selKey] || (spec?.default_level || "auto") }));
+      Alert.alert("保存失败", e instanceof ApiError ? e.message : "请重试");
     }
   };
 
-  const currentTier = selKey ? effort[selKey] || "off" : "off";
+  const tiers = (spec?.levels || []).filter((t) => t !== "off" || spec?.can_disable);
+  const rawTier = selKey ? (effort[selKey] || spec?.default_level || "auto") : "auto";
+  // 旧偏好值/不支持的档位 → 就近高亮一个真实档位,避免一排全未选中。
+  const currentTier = tiers.includes(rawTier)
+    ? rawTier
+    : (tiers.includes("high") ? "high" : (tiers[0] || "auto"));
 
   return (
     <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
@@ -118,15 +182,17 @@ export function ModelEffortPicker({
               )}
             </ScrollView>
 
-            {selKey ? (
+            {selKey && spec?.supported && tiers.length > 1 ? (
               <View style={styles.effortWrap}>
-                <Text style={styles.effortLabel}>思考深度</Text>
+                <Text style={styles.effortLabel}>
+                  思考深度{saveId != null && saveId > 0 ? " · 本对话" : " · 所有对话"}
+                </Text>
                 <View style={styles.effortRail}>
-                  {EFFORT_TIERS.map((t) => {
+                  {tiers.map((t) => {
                     const on = currentTier === t;
                     return (
                       <Pressable key={t} onPress={() => setTier(t)} style={[styles.effortNotch, on && styles.effortNotchOn]}>
-                        <Text style={[styles.effortNotchText, on && { color: theme.color.bg }]}>{EFFORT_LABEL[t]}</Text>
+                        <Text style={[styles.effortNotchText, on && { color: theme.color.bg }]}>{EFFORT_LABEL[t] || t}</Text>
                       </Pressable>
                     );
                   })}

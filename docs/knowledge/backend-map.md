@@ -81,6 +81,7 @@ Python FastAPI 后端逐包/逐模块职责。给 AI 协作者:找「某功能�
 ## 模型层 / 供应商
 
 - `model_registry.py` / `model_probe.py` / `model_aliases.py` / `model_catalog`(`config/model_catalog.json`) — 模型目录/探活/别名。
+- `model_reasoning.py` — 模型级思考能力 spec + 跨 provider 方言适配(off/low/…/max → reasoning_effort / thinking / budget)。三个 GM backend 与 `/api/models` 的唯一真源;`_effort.py` 已退化为兼容层。
 - `mcp_broker.py` — MCP 服务器代理。`redis_bus.py` — Redis 并发/跨 worker SSE(优雅降级)。
 
 ## 其它

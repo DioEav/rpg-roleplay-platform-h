@@ -14,6 +14,7 @@ import {
 } from './models-catalog.js';
 import { ApiDetailPanel, ApiModelsList, ModelNameCell, HealthDot } from './model-list.jsx';
 import { AddModelModal, EditApiModal, VisibilityModal, ValidateModal } from './model-modals.jsx';
+import ModelEditModal from './model-edit-modal.jsx';
 import { ProviderCard, ProviderConfigSection } from './provider-config.jsx';
 import CSContainer from '@cloudscape-design/components/container';
 import CSHeader from '@cloudscape-design/components/header';
@@ -58,6 +59,7 @@ function ModelsSection() {
   const [visibilityApi, setVisibilityApi] = useStatePL(null);
   const [validateApi, setValidateApi] = useStatePL(null);
   const [addModelApi, setAddModelApi] = useStatePL(null);
+  const [editingModel, setEditingModel] = useStatePL(null);
   const [selectedApiId, setSelectedApiId] = useStatePL(null);
   const autoSyncedRef = React.useRef(new Set());
 
@@ -77,6 +79,19 @@ function ModelsSection() {
     health_latency_ms: m.health_latency_ms,
     health_checked_at: m.health_checked_at,
     health_status_detail: m.status_detail || m.health_status_detail || undefined,
+    // 详情表的价格 / 上下文 / 来源三列直接读这些字段。后端 /api/models 已通过
+    // _inject_pricing 注入,这里必须原样透传;旧 catalog 的 price/context 字符串也保留兜底。
+    price: m.price || "",
+    input_cost_per_million: m.input_cost_per_million ?? null,
+    output_cost_per_million: m.output_cost_per_million ?? null,
+    context: m.context || "",
+    context_window: m.context_window ?? null,
+    max_output_tokens: m.max_output_tokens ?? null,
+    source: m.source || "",
+    deprecated_at: m.deprecated_at || null,
+    reasoning: m.reasoning || null,
+    ui_tags: m.ui_tags || [],
+    customReasoning: !!(m.reasoning && m.reasoning.source === "user"),
   }), []);
 
   const loadConfiguredApis = useCallbackPL(async () => {
@@ -109,6 +124,7 @@ function ModelsSection() {
       return {
         id: catalogId,
         credential_id: credentialId,
+        kind: api.kind || api.api_kind || "",
         name: api.display_name || api.name || catalogId,
         // 用户自己的 base_url_override(指向中转站)优先:它来自 list_credentials,不被
         // _redact_catalog 抹掉;而 api.base_url 对非 admin 已被后端 redact 成空。用 override
@@ -139,7 +155,7 @@ function ModelsSection() {
     const customRows = Object.entries(credMap)
       .filter(([cid, c]) => c.configured && c.base_url_override && !catalogIds.has(normalizeApiId(cid)))
       .map(([cid, c]) => ({
-        id: cid, credential_id: cid, name: cid,
+        id: cid, credential_id: cid, kind: "openai_compat", name: cid,
         base_url: c.base_url_override, base_url_override: c.base_url_override || "",
         key_set: !!c.has_key, key_hint: c.key_hint || '',
         auth_mode: c.auth_mode || 'api_key', configured: true,
@@ -155,7 +171,9 @@ function ModelsSection() {
   }, [mapModel, t]);
 
   const syncRemoteModels = useCallbackPL(async (api, opts = {}) => {
-    if (!api) return null;
+    // 停用的供应商不发起任何连通性探测:它当前不参与调用,探测只会产生
+    // 「找不到 API key」这类与「已停用」无关的错误,并白占一条供应商连接。
+    if (!api || api.enabled === false) return null;
     const apiId = catalogApiIdForCredential(api.id);
     setApis(arr => arr.map(a => a.id === apiId ? {
       ...a,
@@ -170,6 +188,17 @@ function ModelsSection() {
       if (!r?.ok) throw new Error(r?.error || "remote model sync failed");
       const elapsed = Math.max(1, Math.round(performance.now() - started));
       const models = (r.models || []).map(mapModel);
+      // 远端同步只返回模型清单，不包含用户级标签/思考覆盖。保留当前行上的
+      // reasoning/ui_tags，避免点一次刷新就看起来像“自定义配置丢了”。
+      const oldModels = api.models || [];
+      for (const m of models) {
+        const old = oldModels.find((x) => x.id === m.id || x.real_name === m.real_name);
+        if (old) {
+          m.reasoning = old.reasoning || m.reasoning;
+          m.ui_tags = old.ui_tags || [];
+          m.customReasoning = !!old.customReasoning;
+        }
+      }
       const conn = {
         status: "ok",
         latency_ms: elapsed,
@@ -221,6 +250,9 @@ function ModelsSection() {
     if (!api) return;
     const prev = api.enabled;
     const newEnabled = !prev;
+    // 停用后清除「本次挂载已自动同步」标记:重新启用时 effect 会再探测一次;
+    // 停用期间 effect 本身已跳过探测,不会因此打供应商。
+    if (!newEnabled) autoSyncedRef.current.delete(id);
     setApis(arr => arr.map(a => a.id === id ? { ...a, enabled: newEnabled } : a));
     try {
       // 开关读写必须是**同一个对象**。本页的 enabled 来自用户凭据(loadConfiguredApis 里
@@ -246,11 +278,25 @@ function ModelsSection() {
     const m = api?.models.find(m => m.id === mId);
     const wasEnabled = m?.enabled ?? true;
     setApis(arr => arr.map(a => a.id === apiId
-      ? { ...a, models: a.models.map(m => m.id === mId ? { ...m, enabled: !wasEnabled } : m) }
+      ? { ...a, models: a.models.map(m => m.id === mId ? { ...m, enabled: !wasEnabled, visible: !wasEnabled } : m) }
       : a));
     try {
-      await window.api.models.upsertModel({ api_id: apiId, real_name: mId, enabled: !wasEnabled });
-    } catch (_) {}
+      // overlay 模型(同步/手填)必须走 per-user 端点;全局目录模型只有 admin 能改。
+      // 旧实现一律调全局 upsertModel,普通用户静默 403 → 开关看似生效、刷新后弹回。
+      if (m?.synced) {
+        await window.api.models.meVisibility({
+          api_id: apiId, model: m.real_name || mId, visible: !wasEnabled,
+        });
+      } else {
+        await window.api.models.upsertModel({ api_id: apiId, real_name: mId, enabled: !wasEnabled });
+      }
+    } catch (e) {
+      // 写失败必须回滚,尤其全局目录模型对普通用户是 admin-only(403)。
+      setApis(arr => arr.map(a => a.id === apiId
+        ? { ...a, models: a.models.map(x => x.id === mId ? { ...x, enabled: wasEnabled, visible: wasEnabled } : x) }
+        : a));
+      window.__apiToast?.(t('settings.models.toggle_fail'), { kind: 'danger', detail: e?.message });
+    }
   };
   const renameModel = async (apiId, mId, display) => {
     setApis(arr => arr.map(a => a.id === apiId
@@ -258,6 +304,84 @@ function ModelsSection() {
       : a));
     try { await window.api.models.upsertModel({ api_id: apiId, real_name: mId, display_name: display }); } catch (_) {}
   };
+  // 单模型可用性探查:发一条最小真实请求,验证模型是否可用/能否联通。
+  // 后端 probe_availability 会同时写 health cache;这里把结果同步到本地行状态,
+  // 让表格的健康点和状态徽标立即更新,不必整页重拉。
+  const probeModel = useCallbackPL(async (api, m) => {
+    const modelId = m.real_name || m.id;
+    const label = m.display || modelId;
+    const applyHealth = (health, statusDetail, latency, error) => {
+      setApis(arr => arr.map(a => a.id === api.id ? {
+        ...a,
+        models: a.models.map(mm => mm.id === m.id ? {
+          ...mm,
+          health,
+          health_status_detail: statusDetail || '',
+          health_latency_ms: latency,
+          health_error: error || '',
+        } : mm),
+      } : a));
+    };
+    try {
+      const r = await window.api.models.probe({
+        api_id: api.id,
+        model: modelId,
+        timeout: 45,
+      });
+      const ok = !!r?.ok;
+      const latency = Number(r?.latency_ms || 0);
+      const detail = r?.error_detail || r?.error || '';
+      const unsupported = r?.status_detail === 'unsupported';
+      if (ok) {
+        applyHealth('ok', r?.status_detail || 'ok', latency, '');
+      } else if (!unsupported) {
+        // 非对话模型(embedding 等)只提示,不把健康点误标成 err。
+        applyHealth('err', r?.status_detail || 'err', latency, r?.error || '');
+      }
+      if (ok) {
+        window.__apiToast?.(t('settings.model_list.probe_ok', { model: label, ms: latency }), {
+          kind: 'ok', duration: 2500,
+        });
+      } else {
+        window.__apiToast?.(t('settings.model_list.probe_fail', { model: label, error: detail }), {
+          kind: 'danger', detail, duration: 6000,
+        });
+      }
+      return r;
+    } catch (e) {
+      const why = e?.message || '';
+      applyHealth('err', 'err', 0, why);
+      window.__apiToast?.(t('settings.model_list.probe_fail', { model: label, error: why }), {
+        kind: 'danger', detail: why,
+      });
+      return null;
+    }
+  }, [t]);
+  // 单模型删除:只删当前用户 overlay 里的模型(同步/手填)。全局目录模型由前端
+  // 按钮禁用;这里仍走 per-user 端点,后端对不在 overlay 的模型返回 404。
+  const deleteModel = useCallbackPL(async (api, m) => {
+    const modelId = m.real_name || m.id;
+    const label = m.display || modelId;
+    const ok = window.__confirm
+      ? await window.__confirm({
+          title: t('settings.model_list.delete_title'),
+          message: t('settings.model_list.delete_confirm', { model: label }),
+          danger: true,
+          confirmText: t('settings.model_list.delete_btn'),
+        })
+      : true;
+    if (!ok) return;
+    try {
+      await window.api.models.meDeleteModel({ api_id: api.id, real_name: modelId });
+      setApis(arr => arr.map(a => a.id === api.id
+        ? { ...a, models: a.models.filter(x => x.id !== m.id) }
+        : a));
+      try { window.dispatchEvent(new CustomEvent('rpg-models-updated')); } catch (_) {}
+      window.__apiToast?.(t('settings.model_list.delete_ok', { model: label }), { kind: 'ok' });
+    } catch (e) {
+      window.__apiToast?.(t('settings.model_list.delete_fail'), { kind: 'danger', detail: e?.message });
+    }
+  }, [t]);
   const setModelVisibility = async (apiId, ids) => {
     const api = apis.find(a => a.id === apiId);
     setApis(arr => arr.map(a => a.id === apiId
@@ -299,6 +423,22 @@ function ModelsSection() {
       window.__apiToast?.(t('settings.models.add_model_fail'), { kind: 'danger', detail: e?.message || '' });
     }
   };
+  // 单模型编辑：标签 + 自定义思考 spec 走用户级配置端点，不碰 admin-only 全局目录。
+  const saveModelConfig = async ({ api, model, capabilities, reasoning }) => {
+    await window.api.models.modelConfig({
+      api_id: api.id,
+      real_name: model.real_name || model.id,
+      capabilities,
+      reasoning,
+    });
+    await loadConfiguredApis();
+    window.dispatchEvent(new CustomEvent('rpg-models-updated', {
+      detail: { api_id: api.id, model: model.real_name || model.id },
+    }));
+    window.__apiToast?.(t('settings.model_edit.save_ok'), { kind: 'ok', duration: 1800 });
+    setEditingModel(null);
+  };
+
   const removeModels = async (apiId, ids) => {
     setApis(arr => arr.map(a => a.id === apiId
       ? { ...a, models: a.models.filter(m => !ids.includes(m.id)) }
@@ -320,6 +460,9 @@ function ModelsSection() {
     if (useMock || apisLoading) return;
     const now = Date.now();
     const pending = configuredApis.filter(a => {
+      // 停用的供应商不自动探测(同步按钮的守卫在 syncRemoteModels 里,这里提前过滤
+      // 也避免把已停用项标记成「已自动同步过」,重新启用后还能正常探测一次)。
+      if (a.enabled === false) return false;
       if (autoSyncedRef.current.has(a.id)) return false;
       // 3 分钟节流:此前每次进入(切走设置页再切回)都把每个 provider 重探一遍 —— 后端
       // 探测 30s、前端 35s 才放弃,重复进出就是反复占连接。这里只节流**自动**这一条路径,
@@ -340,7 +483,7 @@ function ModelsSection() {
       }
     })();
     return () => { cancelled = true; };
-  }, [useMock, apisLoading, configuredApis.map(a => a.id).join("|"), syncRemoteModels]);
+  }, [useMock, apisLoading, configuredApis.map(a => `${a.id}:${a.enabled === false ? 0 : 1}`).join("|"), syncRemoteModels]);
 
   const detailEl = selectedApi ? (
     <ApiDetailPanel
@@ -351,6 +494,9 @@ function ModelsSection() {
       onAddModel={() => setAddModelApi(selectedApi.id)}
       onToggleModel={(mId) => toggleModel(selectedApi.id, mId)}
       onRenameModel={(mId, display) => renameModel(selectedApi.id, mId, display)}
+      onProbeModel={(m) => probeModel(selectedApi, m)}
+      onDeleteModel={(m) => deleteModel(selectedApi, m)}
+      onEditModel={(m) => setEditingModel({ api: selectedApi, model: m })}
       onDeleteKey={async () => {
         if (!await window.__confirm({ title: t('settings.models.delete_key_title'), message: t('settings.models.delete_key_confirm', { name: selectedApi.name }), danger: true, confirmText: t('settings.models.delete_key_btn') })) return;
         try {
@@ -422,8 +568,14 @@ function ModelsSection() {
               { id: 'key', header: 'API Key', cell: (a) => <span className="mono">•••• {a.key_hint || t('settings.models.key_set_hint')}</span> },
               { id: 'models', header: t('settings.models.col_models'), cell: (a) => `${a.models.filter(m => m.enabled).length} / ${a.models.length}` },
               { id: 'connectivity', header: t('settings.models.col_connectivity'), cell: (a) => {
+                const disabled = a.enabled === false;
                 const c = a.connectivity || {};
-                const status = a.enabled === false ? "disabled" : (c.status || "untested");
+                if (disabled) {
+                  // 停用态只有「已禁用」这一种确定状态:不显示上一次(或自动同步失败的)
+                  // 错误原因,也不给可点击的刷新入口 —— 否则看起来像这条供应商仍然连通失败。
+                  return <CSStatusIndicator type="stopped">{t('settings.models.status_disabled')}</CSStatusIndicator>;
+                }
+                const status = c.status || "untested";
                 const label = status === "checking"
                   ? t('settings.models.connectivity_checking')
                   : status === "ok"
@@ -433,9 +585,7 @@ function ModelsSection() {
                       // 没等到响应 ≠ 不可达:供应商可能只是慢(或查询被 abort),别下「不可访问」的结论。
                       : status === "timeout"
                         ? t('settings.models.connectivity_timeout')
-                        : status === "disabled"
-                          ? t('settings.models.status_disabled')
-                          : t('settings.models.connectivity_untested');
+                        : t('settings.models.connectivity_untested');
                 const type = status === "ok" ? "success" : status === "err" ? "error" : status === "timeout" ? "warning" : status === "checking" ? "in-progress" : "stopped";
                 return (
                   <>
@@ -599,6 +749,13 @@ function ModelsSection() {
         onClose={() => setAddModelApi(null)}
         onConfirm={(m) => { addModel(addModelApi, m); setAddModelApi(null); }}
       />
+      <ModelEditModal
+        open={!!editingModel}
+        api={editingModel?.api}
+        model={editingModel?.model}
+        onClose={() => setEditingModel(null)}
+        onSave={saveModelConfig}
+      />
     </CSSpaceBetween>
   );
 }
@@ -613,6 +770,7 @@ export {
   EditApiModal,
   ValidateModal,
   VisibilityModal,
+  ModelEditModal,
   ProviderCard,
   ProviderConfigSection,
   ModelNameCell,

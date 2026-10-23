@@ -172,7 +172,7 @@ class TestModelProbe:
     def test_server_mode_vertex_with_user_sa_allowed(self):
         """服务器模式 + 用户有 BYOK SA → 应允许探测（会真实调 GameMaster）。"""
         fake_gm = MagicMock()
-        fake_gm._backend.call.return_value = "1"
+        fake_gm._backend.probe.return_value = "1"
         with (
             patch("model_probe._require_user_credential", return_value=True),
             patch("core.vertex_sa.has_user_sa", return_value=True),

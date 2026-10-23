@@ -10,6 +10,8 @@
 
 这三条各自对应下面三组断言。
 """
+import pytest
+
 import model_probe
 from agents.gm.backends.openai_compat import (
     _EFFORT_TO_DEEPSEEK,
@@ -18,6 +20,13 @@ from agents.gm.backends.openai_compat import (
 )
 
 _FLASH_IN, _FLASH_OUT = 0.15, 0.60
+
+
+@pytest.fixture(autouse=True)
+def _no_user_prefs_db(monkeypatch):
+    """本文件是纯请求参数单测,不连 DB;思考档位由每个用例的 override 固定。"""
+    import model_reasoning
+    monkeypatch.setattr(model_reasoning, "_read_user_prefs", lambda user_id: {})
 
 
 # ── 一、定价:现役 ID 在表内,三个旧别名按 Flash 价 ────────────────────────────
@@ -83,15 +92,19 @@ def test_seed_catalog_offers_current_flash_id():
 
 
 # ── 三、运行时:思考开关接线 + extra_body 深合并 + tools 回传 reasoning_content ──
-def _stub_backend(api_id: str, effort: str) -> _OpenAICompatBackend:
-    """绕开 __init__(要真 key / 真 client),只装 _reasoning_param 用到的字段。"""
+def _stub_backend(api_id: str, effort: str, model_name: str = "deepseek-flash") -> _OpenAICompatBackend:
+    """绕开 __init__(要真 key / 真 client),只装 _reasoning_param 用到的字段。
+
+    2026-10 起思考控制走 model_reasoning 的 spec/方言;测试用存档级 override 固定档位,
+    避免依赖 DB(user_preferences)。
+    """
     b = object.__new__(_OpenAICompatBackend)
     b.api_id = api_id
-    b.model_name = "deepseek-flash"
+    b.model_name = model_name
     b.user_id = 1
-    import agents.gm.backends._effort as _e
-    _e.resolve_effort = lambda *a, **k: effort          # noqa: ARG005
-    _e.resolve_openai_reasoning = lambda *a, **k: effort  # noqa: ARG005
+    b._reasoning_override = {
+        "api_id": api_id, "model_id": model_name, "level": effort,
+    }
     return b
 
 
@@ -109,9 +122,29 @@ def test_deepseek_effort_levels_map_to_official_names():
     assert set(_EFFORT_TO_DEEPSEEK.values()) <= {"minimal", "low", "medium", "high", "xhigh", "max"}
 
 
-def test_unknown_provider_still_sends_nothing():
-    """Qwen/Hunyuan/中转/本地没有权威开关字段,乱传只会 400。"""
-    assert _stub_backend("dashscope", "high")._reasoning_param() == {}
+def test_qwen_now_gets_its_own_dialect():
+    """2026-10:Qwen 不再被当成「没有权威开关字段」静默丢弃 —— 走 enable_thinking+预算。"""
+    out = _stub_backend("dashscope", "high", model_name="qwen3.8-max")._reasoning_param()
+    assert out.get("extra_body", {}).get("enable_thinking") is True
+    assert out.get("extra_body", {}).get("thinking_budget") == 8192
+
+
+def test_unknown_relay_model_still_sends_nothing():
+    """真正未知的自建中转模型默认不发字段,避免给严格中转站塞未知参数撞 400。"""
+    assert _stub_backend("acme_relay", "high", model_name="mystery-1")._reasoning_param() == {}
+
+
+def test_backend_uses_catalog_caps_to_veto_name_heuristic():
+    """backend 拿到的 model_meta 与 /api/models 同源:目录明确非推理的变体不得发字段。"""
+    b = _stub_backend("openai", "high", model_name="gpt-5.5-instant")
+    b._model_meta = {"capabilities": ["text", "streaming", "tools", "json_mode"]}
+    b._reasoning_override = None
+    assert b._reasoning_param() == {}
+
+    b2 = _stub_backend("openai", "high", model_name="gpt-5.5-thinking")
+    b2._model_meta = {"capabilities": ["text", "streaming", "reasoning"]}
+    b2._reasoning_override = None
+    assert b2._reasoning_param() == {"reasoning_effort": "high"}
 
 
 def test_merge_tuning_deep_merges_extra_body():
@@ -192,6 +225,8 @@ def _backend_with_fake_client(responses):
     b = object.__new__(_OpenAICompatBackend)
     b.api_id, b.model_name, b.user_id = "deepseek", "deepseek-flash", 1
     b._fixed_temp_combos = set()
+    b._sampling_rejected_combos = set()
+    b._reasoning_rejected_combos = set()
     calls = []
 
     def _create(**kw):
@@ -212,15 +247,34 @@ def _bad_request(msg="unsupported parameter"):
     return BadRequestError(msg, response=httpx.Response(400, request=req), body=None)
 
 
-def test_tuning_rejected_retries_without_it():
+def test_sampling_rejected_keeps_reasoning():
+    """2026-10 分组退参:中转站拒 temperature/top_k 时,不得把 reasoning_effort 一起剥掉。"""
     b, calls = _backend_with_fake_client([_bad_request(), "ok"])
     out = b._create(model="m", messages=[], temperature=0.9, reasoning_effort="xhigh",
                     extra_body={"top_k": 40})
     assert out == "ok"
     assert len(calls) == 2
-    assert not ({"temperature", "reasoning_effort", "extra_body"} & set(calls[1])), \
-        "重试必须把全部可选调参剥干净"
-    assert b._fixed_temp_combos, "退参救回来了才记忆,下次直接不发"
+    assert "temperature" not in calls[1]
+    assert "top_k" not in (calls[1].get("extra_body") or {})
+    assert calls[1].get("reasoning_effort") == "xhigh", \
+        "采样被拒不能连坐思考参数"
+    assert b._fixed_temp_combos and b._sampling_rejected_combos, "采样退参救回来了才记忆"
+    assert not b._reasoning_rejected_combos, "思考参数没被拒,不该被标记"
+
+
+def test_reasoning_rejected_strips_only_reasoning_after_sampling_retry():
+    """思考参数被拒:先剥采样仍 400,再剥思考才成功;只记忆思考被拒。"""
+    b, calls = _backend_with_fake_client([_bad_request(), _bad_request(), "ok"])
+    out = b._create(model="m", messages=[], temperature=0.9, reasoning_effort="xhigh",
+                    extra_body={"top_k": 40})
+    assert out == "ok"
+    assert len(calls) == 3
+    assert "reasoning_effort" in calls[1], "第一段重试应保留思考参数"
+    assert "reasoning_effort" not in calls[2], "第二段重试才剥思考参数"
+    assert "temperature" not in calls[2]
+    assert b._reasoning_rejected_combos, "思考被拒必须被记忆,下次直接不发"
+    assert not b._sampling_rejected_combos, \
+        "采样是否被拒无法从本次结果断言,不能顺手永久关掉"
 
 
 def test_400_not_caused_by_tuning_does_not_poison_the_memo():
@@ -233,6 +287,7 @@ def test_400_not_caused_by_tuning_does_not_poison_the_memo():
     else:
         raise AssertionError("第二次仍 400 应上抛")
     assert not b._fixed_temp_combos, "不能把与调参无关的 400 记成「该 combo 拒调参」"
+    assert not b._sampling_rejected_combos and not b._reasoning_rejected_combos
 
 
 def test_non_400_bubbles_up_untouched():

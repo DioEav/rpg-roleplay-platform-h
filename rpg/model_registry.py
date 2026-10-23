@@ -365,7 +365,12 @@ def apply_user_overlay(catalog: dict[str, Any], user_id: int | None) -> dict[str
     for raw_api_id, models in overlay.items():
         api_id = normalize_api_id(raw_api_id)
         existing = by_id.get(api_id)
-        cleaned = [m for m in (models or []) if isinstance(m, dict)]
+        # overlay 里的模型都来自用户账号的 remote/sync;标 LiveApi 让设置页
+        # 「来源」列知道它们不是静态目录条目(价格仍由 _inject_pricing 补)。
+        cleaned = [
+            {**m, "source": m.get("source") or "LiveApi"}
+            for m in (models or []) if isinstance(m, dict)
+        ]
         if existing is not None:
             # 用户同步清单覆盖全局 provider 的 models。清理后为空时
             # **不**用空清单覆盖全局好模型,保留全局菜单 —— 否则该用户该 provider 视图

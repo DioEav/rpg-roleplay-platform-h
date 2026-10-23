@@ -28,14 +28,17 @@ function SetRow({ label, description, children }) {
     </CSFormField>
   );
 }
-/* 简单 <select> → CSSelect 适配:options 为 [{value,label}] */
-function SetSelect({ value, options, onChange, disabled }) {
+/* 简单 <select> → CSSelect 适配:options 为 [{value,label}]
+   expandToViewport:弹窗 / 滚动容器内使用,下拉浮层挂到 body,避免被 overflow 裁切。 */
+function SetSelect({ value, options, onChange, disabled, expandToViewport, ariaLabel }) {
   const sel = options.find((o) => o.value === value) || null;
   return (
     <CSSelect
       selectedOption={sel}
       options={options}
       disabled={disabled}
+      expandToViewport={expandToViewport}
+      ariaLabel={ariaLabel}
       onChange={({ detail }) => onChange(detail.selectedOption.value)}
     />
   );

@@ -22,6 +22,16 @@ import { lsGetJSON, lsSetJSON, lsRemove } from '../lib/storage.js';
    (credentials.list 本身只回元数据,见 user_credentials.list_credentials)。 */
 const _PICKER_TTL_MS = 5 * 60 * 1000;
 const _SNAPSHOT_KEY = 'agent_picker_snapshot_v1';
+// 非对话模型(embedding / TTS / ASR / 图像等)不进入聊天模型选择器。
+// 判定:至少有一个非对话能力,且没有任何对话能力(text/reasoning/tools/vision/...)。
+// 这样多模态聊天模型(text + audio_input)仍会保留。
+const NON_CHAT_CAPS = new Set(['embedding', 'image_gen', 'audio_gen', 'asr', 'rerank', 'audio']);
+const CHAT_CAPS = new Set(['text', 'reasoning', 'tools', 'tool_use', 'vision', 'function_calling']);
+const isNonChatOnly = (m) => {
+  const caps = (m && (m.capabilities || m.caps)) || [];
+  if (!caps.length) return false;
+  return !caps.some((c) => CHAT_CAPS.has(c)) && caps.some((c) => NON_CHAT_CAPS.has(c));
+};
 let _shared = null;    // { ts, models, creds, prefs } — 最近一次成功结果(内存)
 let _inflight = null;  // 进行中的共享拉取(single-flight)
 
@@ -232,7 +242,11 @@ export default function AgentModelPicker({
   useEffect(() => {
     const bump = () => { invalidatePickerSnapshot(); setReloadTick((x) => x + 1); };
     window.addEventListener('rpg-credentials-updated', bump);
-    return () => window.removeEventListener('rpg-credentials-updated', bump);
+    window.addEventListener('rpg-models-updated', bump);
+    return () => {
+      window.removeEventListener('rpg-credentials-updated', bump);
+      window.removeEventListener('rpg-models-updated', bump);
+    };
   }, []);
 
   // 数据应用:把一份 {models, creds, prefs} 推导成选中态。推导逻辑与旧版逐行一致(机械搬家)。
@@ -305,9 +319,10 @@ export default function AgentModelPicker({
         //   > 该 provider 首个 capabilityFilter 过滤后的模型
         const apiObj = list.find((x) => (x.api_id || x.id) === chosenApi);
         let chosenModels = (apiObj?.models || apiObj?.entries || []);
-        // capabilityFilter='embedding' 时保留 embedding 模型；否则剔除 embedding-only(避免聊天选择器混进 RAG 模型)。
-        if (capabilityFilter !== 'embedding') {
-          chosenModels = chosenModels.filter((m) => !((m.capabilities || m.caps || []).length === 1 && (m.capabilities || m.caps || [])[0] === 'embedding'));
+        // capabilityFilter 为 embedding/image_gen 等模态筛选时,保留该模态模型;
+        // 无筛选(聊天模型选择器)时排除非对话模型(embedding/TTS/ASR/图像等)。
+        if (!capabilityFilter) {
+          chosenModels = chosenModels.filter((m) => !isNonChatOnly(m));
         }
         // capabilityFilter 过滤（仅影响"默认首选"查找，不影响最终兜底）
         const capFilteredModels = capabilityFilter
@@ -484,10 +499,6 @@ export default function AgentModelPicker({
 
   const apiOf = (id) => apis.find((x) => (x.api_id || x.id) === id);
   const modelsOf = (id) => (apiOf(id)?.models || apiOf(id)?.entries || []);
-  const isEmbeddingOnly = (m) => {
-    const caps = m.capabilities || m.caps || [];
-    return caps.length === 1 && caps[0] === 'embedding';
-  };
   // embedder 平台兜底:仅 admin/vip(platformVertexAllowed=true)可见平台 vertex embedding。
   // 非 vip/admin 用户没上传自己的 SA 时 vertex_ai 不在 credApiIds → 不会被显示(收紧到位)。
   const platformVertexEmbedding = platformVertexAllowed && capabilityFilter === 'embedding';
@@ -534,10 +545,10 @@ export default function AgentModelPicker({
   // 过滤后的模型条目(共用于下拉 + popover)。
   const filteredModels = modelsOf(apiId).filter((m) => {
     const caps = m.capabilities || m.caps || [];
-    // capabilityFilter='embedding' 时只看 embedding;其它(含无 filter)排除 embedding-only(避免聊天选择器混进 RAG)。
-    if (capabilityFilter === 'embedding') return caps.includes('embedding');
-    if (isEmbeddingOnly(m)) return false;
+    // 指定 capabilityFilter 时按该能力筛选(embedding / image_gen 等模态选择器
+    // 需要保留对应的非对话模型);无筛选 = 聊天选择器,排除非对话模型。
     if (capabilityFilter) return caps.includes(capabilityFilter);
+    if (isNonChatOnly(m)) return false;
     return true;
   });
   const modelOptions = filteredModels.map((m) => ({
@@ -686,9 +697,8 @@ export default function AgentModelPicker({
   function filteredModelsOf(aid) {
     return modelsOf(aid).filter((m) => {
       const caps = m.capabilities || m.caps || [];
-      if (capabilityFilter === 'embedding') return caps.includes('embedding');
-      if (isEmbeddingOnly(m)) return false;
       if (capabilityFilter) return caps.includes(capabilityFilter);
+      if (isNonChatOnly(m)) return false;
       return true;
     });
   }

@@ -137,6 +137,9 @@ export const settings = {
   models: () => http.get<{ ok: boolean; models: { apis: ProviderInfo[] }; selected?: any }>(`${V1}/models`),
   selectModel: (api_id: string, model_id: string, save_id?: number) =>
     http.post(`${V1}/models/select`, { api_id, model_id, ...(save_id != null ? { save_id } : {}) }),
+  /** 思考档位:带 save_id=本对话作用域;不带=用户级 model_effort。 */
+  reasoning: (body: { api_id: string; model_id: string; level: string; save_id?: number }) =>
+    http.post(`${V1}/models/reasoning`, body),
   credentials: () => http.get<{ ok: boolean; items: ProviderInfo[] }>(`${V1}/me/credentials`),
   setCredential: (body: { api_id: string; api_key: string; base_url_override?: string; enabled?: boolean }) =>
     http.post(`${V1}/me/credentials`, body),

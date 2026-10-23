@@ -337,6 +337,9 @@ function App() {
     'player','world','relationships','memory','worldline','permissions','suggestions','turn',
     'ruleset','player_character','scene','encounter','dice_log','content_pack',
     'active_entities','app','models',
+    // ModelPopover / EffortSection 需要读本存档的模型与思考档位覆盖;
+    // 不在这里透传 → 切了档位后控件回显会退回用户级默认。
+    'session_model','session_reasoning',
   ];
   const RESETTABLE_KEYS = new Set(['suggestions']);
 

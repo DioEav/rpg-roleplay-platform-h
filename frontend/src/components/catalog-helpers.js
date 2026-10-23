@@ -22,6 +22,8 @@ export const CAP_LABEL = {
   tool_use:           "工具调用",
   vision:             "视觉",
   audio:              "音频",
+  audio_gen:          "音频生成",
+  asr:                "语音识别",
   structured_output:  "结构化输出",
   extended_thinking:  "深度思考",
   embedding:          "向量嵌入",

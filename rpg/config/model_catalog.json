@@ -803,7 +803,9 @@
           "display_name": "MiMo-7B-RL",
           "enabled": false,
           "capabilities": [
-            "text"
+            "text",
+            "streaming",
+            "reasoning"
           ]
         }
       ]

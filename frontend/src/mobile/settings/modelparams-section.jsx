@@ -38,6 +38,9 @@ function ModelParamsSection() {
   const [params, setParams] = useState(MP_DEFAULTS);
   const [nsfw, setNsfw] = useState({ mode:'soft', intensity:0.5, extra_prompt:'' });
   const [effort, setEffort] = useState('medium');
+  const [thinkingSpec, setThinkingSpec] = useState(null);
+  const [thinkingLevel, setThinkingLevel] = useState('auto');
+  const [selectedModelKey, setSelectedModelKey] = useState('');
   const [showJson, setShowJson] = useState(false);
 
   useEffect(() => {
@@ -72,6 +75,29 @@ function ModelParamsSection() {
         });
         const eff = String(readPref(prefs,'reasoning_effort','medium') || 'medium');
         if (['low','medium','high'].includes(eff)) setEffort(eff);
+
+        // 思考档位:与桌面/游戏浮层同源,按 /api/models 的 model.reasoning 能力驱动。
+        try {
+          const md = await window.api.models.list().catch(() => ({}));
+          // 与桌面端同口径:顶层 selected = 当前真正生效的模型;models.models.selected
+          // 是 catalog 自带兜底,可能指向另一个模型,不能优先用。
+          const sel = (md && md.selected) || (md && md.models && md.models.selected) || {};
+          const apis = (md && md.models && md.models.apis) || [];
+          const api = apis.find((a) => a.id === sel.api_id);
+          const model = ((api && api.models) || []).find(
+            (mm) => (mm.real_name || mm.id) === (sel.real_name || sel.model_id || sel.id)
+              || mm.id === (sel.real_name || sel.model_id || sel.id));
+          const spec = (model && model.reasoning) || null;
+          setThinkingSpec(spec);
+          const effKey = sel.api_id && model
+            ? `${sel.api_id}:${model.real_name || model.id}`
+            : '';
+          setSelectedModelKey(effKey);
+          const modelEffort = (prefs.model_effort && typeof prefs.model_effort === 'object')
+            ? prefs.model_effort : {};
+          const cur = modelEffort[effKey] || (spec && spec.default_level) || 'auto';
+          setThinkingLevel(String(cur).toLowerCase());
+        } catch (_) {}
       } catch (_) {}
     })();
     return () => { cancelled = true; };
@@ -90,6 +116,33 @@ function ModelParamsSection() {
     if ('extra_prompt' in patch) save('nsfw_extra_prompt', patch.extra_prompt);
   };
 
+  const thinkingLevels = (thinkingSpec && thinkingSpec.levels || [])
+    .filter((lv) => lv !== 'off' || (thinkingSpec && thinkingSpec.can_disable));
+  const showThinking = !!thinkingSpec && !!thinkingSpec.supported
+    && thinkingLevels.filter((lv) => lv !== 'auto').length > 0;
+  const effectiveThinkingLevel = thinkingLevels.includes(thinkingLevel)
+    ? thinkingLevel
+    : (thinkingLevels.includes(thinkingSpec && thinkingSpec.default_level)
+      ? thinkingSpec.default_level
+      : 'auto');
+  const THINKING_LABEL = {
+    auto: '自动', off: '关', low: '低', medium: '中', high: '高', extra: '极深', max: '最满',
+  };
+  const saveThinkingLevel = async (level) => {
+    if (!selectedModelKey) return;
+    const colon = selectedModelKey.indexOf(':');
+    const apiId = selectedModelKey.slice(0, colon);
+    const modelId = selectedModelKey.slice(colon + 1);
+    const prev = thinkingLevel;
+    setThinkingLevel(level);
+    try {
+      await window.api.models.reasoning({ api_id: apiId, model_id: modelId, level });
+    } catch (e) {
+      setThinkingLevel(prev);
+      window.toast?.('保存失败', { kind: 'danger', detail: e?.message });
+    }
+  };
+
   return (
     <>
       {/* 预设 */}
@@ -100,6 +153,21 @@ function ModelParamsSection() {
           onChange={applyPreset}
         />
       </MField>
+
+      {/* 2026-10: 能力驱动的思考档位(用户级,对所有对话生效;对话框浮层可覆盖本对话)。
+          放在温度上方,与桌面设置同序。 */}
+      {showThinking && (
+        <MField label={t('mobile.settings.modelparams.extended_thinking', { defaultValue: '思考模式' })}
+          desc={t('mobile.settings.modelparams.extended_thinking_desc', {
+            defaultValue: '按当前模型支持的能力显示;这里设置对所有对话生效。',
+          })}>
+          <Seg
+            options={thinkingLevels.map((lv) => [lv, THINKING_LABEL[lv] || lv])}
+            value={effectiveThinkingLevel}
+            onChange={saveThinkingLevel}
+          />
+        </MField>
+      )}
 
       <MSlider label={t('mobile.settings.modelparams.temperature')} desc={t('mobile.settings.modelparams.temperature_desc')}
         value={params.temperature} min={0} max={2} step={0.05}

@@ -435,6 +435,30 @@ class GameMaster:
         from model_registry import find_api, load_model_catalog
         catalog = load_model_catalog()
         api = find_api(catalog, api_id)
+        # 模型元数据(capabilities/reasoning)用于 backend 的思考能力判定。
+        # 全局目录没有的自建中转站,再从该用户的 overlay 里找一次(仅构造时,有缓存)。
+        _meta_api = api
+        _model_meta = None
+        if _meta_api:
+            _model_meta = next(
+                (m for m in (_meta_api.get("models") or [])
+                 if (m.get("real_name") or m.get("id")) == model or m.get("id") == model),
+                None,
+            )
+        # 全局目录没有该模型(用户 sync 来的新模型/自建中转),再查一次用户 overlay。
+        if _model_meta is None and user_id:
+            try:
+                from model_registry import load_catalog_for_user as _load_user_catalog
+                _user_api = find_api(_load_user_catalog(user_id), api_id)
+                if _user_api:
+                    _meta_api = _user_api
+                    _model_meta = next(
+                        (m for m in (_user_api.get("models") or [])
+                         if (m.get("real_name") or m.get("id")) == model or m.get("id") == model),
+                        None,
+                    )
+            except Exception:
+                pass
         kind = (api or {}).get("kind", api_id)
         # 中转站: 自定义 OpenAI 兼容 provider 不在全局 catalog(api is None),但用户凭证
         # 带了 base_url_override → 按 openai_compat 路由(_OpenAICompatBackend 会从用户
@@ -452,16 +476,19 @@ class GameMaster:
         self._backend: _AnthropicBackend | _VertexBackend | _OpenAICompatBackend
 
         if kind == "anthropic":
-            self._backend = _AnthropicBackend(model=model, user_id=user_id)
+            self._backend = _AnthropicBackend(
+                model=model, user_id=user_id, model_meta=_model_meta)
         elif kind == "vertex_ai":
             # 传 user_id → load_sa_credentials 优先走用户 BYOK SA
-            self._backend = _VertexBackend(model=model, user_id=user_id)
+            self._backend = _VertexBackend(
+                model=model, user_id=user_id, model_meta=_model_meta)
         elif kind in {"openai", "openai_compat"}:
             base_url = (api or {}).get("base_url") or ""
             env_key = (api or {}).get("credential_env") or "OPENAI_API_KEY"
             self._backend = _OpenAICompatBackend(
                 model=model, base_url=base_url, env_key=env_key,
                 display_kind=api_id, user_id=user_id, api_id=api_id,
+                model_meta=_model_meta,
             )
         else:
             # GM 严格 BYOK:未知/未配置的 provider kind 绝不静默回退平台 Vertex SA / Anthropic env key

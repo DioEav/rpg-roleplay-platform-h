@@ -9,7 +9,6 @@ import CSSpaceBetween from '@cloudscape-design/components/space-between';
 import CSBox from '@cloudscape-design/components/box';
 import CSInput from '@cloudscape-design/components/input';
 import CSButton from '@cloudscape-design/components/button';
-import CSToggle from '@cloudscape-design/components/toggle';
 
 // 内容尺度档位白名单 —— 必须与后端 agents/gm/content_policy.MODES 一字不差。
 // 漏一档的后果不是"显示不对"而是"行为与显示不一致":存过该档的用户下次打开会被静默换档。
@@ -39,6 +38,36 @@ const MODEL_PARAM_PRESET_VALUES = {
 
 // readScopedPref / readNumberPref 上提到 lib/prefs.js(语义统一 #24);见顶部 import。
 
+// 高级:自建中转站的模型名不一定能自动识别。这里让用户手动指定 wire 方言,
+// 写入 user_preferences.reasoning_model_overrides["api:model"];后端 model_reasoning
+// 会在解析 spec 时合并它。标准 provider 不显示这行,避免普通用户误改。
+const STANDARD_REASONING_PROVIDERS = new Set([
+  "openai", "anthropic", "vertex_ai", "openrouter", "deepseek", "xai",
+  "dashscope", "doubao", "ark_agent_plan", "siliconflow", "xiaomi_mimo",
+]);
+const REASONING_DIALECT_OPTIONS = [
+  { label: "自动（不覆盖）", value: "auto" },
+  { label: "OpenAI · reasoning_effort", value: "openai_effort" },
+  { label: "DeepSeek · reasoning_effort + thinking", value: "deepseek" },
+  { label: "OpenRouter · reasoning.effort", value: "openrouter_reasoning" },
+  { label: "Qwen · enable_thinking + budget", value: "qwen_enable_thinking" },
+  { label: "GLM · thinking.type", value: "glm_thinking" },
+  { label: "Kimi · thinking.type", value: "kimi_thinking" },
+  { label: "Grok · reasoning_effort", value: "grok_effort" },
+  { label: "豆包 · thinking.type", value: "doubao_thinking" },
+  { label: "MiMo · thinking.type", value: "mimo_thinking" },
+  { label: "本地 vLLM · chat_template_kwargs", value: "vllm_chat_template" },
+  // 模型编辑里可选的「自定义 JSON」也必须能被这行下拉展示;否则当前值是
+  // custom_json 时下拉会显示为空,看起来像"自动匹配"。
+  { label: "自定义 JSON · 每档 extra_body", value: "custom_json" },
+];
+// 原生 backend 只认自己的方言(与 model-edit-modal 的 NATIVE_DIALECTS 一致):
+// anthropic / vertex_ai 显示这两个,避免用户在这里选了对方言、后端却完全不发字段。
+const NATIVE_DIALECT_OPTIONS = {
+  anthropic: [{ label: "Anthropic · budget_tokens", value: "anthropic_budget" }],
+  vertex_ai: [{ label: "Gemini · thinking_budget", value: "gemini_budget" }],
+};
+
 function ModelParamsSection() {
   const { t } = useTranslation();
   const PRESETS = [
@@ -60,26 +89,43 @@ function ModelParamsSection() {
   const [reqTimeout, setReqTimeout] = useStatePL("");
   // 从 catalog 获取当前选中模型的 capabilities,用于条件展示 reasoning_effort
   const [selectedModelCaps, setSelectedModelCaps] = useStatePL([]);
-  // task 141: Extended Thinking toggle — 读 model_effort 偏好,按当前模型展示开关
+  // task 141 / 2026-10: 思考控制 — 能力驱动,读 /api/models 的 model.reasoning。
   const [selectedModelKey, setSelectedModelKey] = useStatePL("");
-  const [thinkingEnabled, setThinkingEnabled] = useStatePL(false);
+  const [selectedReasoning, setSelectedReasoning] = useStatePL(null);
+  const [selectedApiKind, setSelectedApiKind] = useStatePL("");
+  const [thinkingLevel, setThinkingLevel] = useStatePL("auto");
+  const [dialectOverride, setDialectOverride] = useStatePL("auto");
   useEffectPL(() => {
     let cancelled = false;
     (async () => {
       try {
         const models = await window.api.models.list().catch(() => ({}));
         if (cancelled) return;
-        const sel = models?.models?.selected ?? models?.selected ?? null;
+        // ⚠️ 优先顶层 selected(当前真正生效的模型:存档 session_model > GM 偏好),
+        // 而不是 models.models.selected —— 后者是 /api/models 里 catalog 自带的
+        // selected(全局默认 / 用户第一个有凭证的模型),常用于展示兜底。两者可能
+        // 不是同一个模型:用错会让本页的思考档位跟着另一个模型走(用户反馈:
+        // 编辑了 mimo-v2.6-flash 的可用档位,设置页按钮不变)。
+        const sel = models?.selected ?? models?.models?.selected ?? null;
         // 构建 model_effort 字典键: "{api_id}:{real_name}"
         const apiId = sel?.api_id || "";
         const modelId = sel?.real_name || sel?.model_id || sel?.id || "";
         const effKey = apiId && modelId ? `${apiId}:${modelId}` : "";
+        // 必须在 if 块外声明:后面读 specDefault 时 m 不能是块级作用域。
+        let modelSpec = null;
         if (sel) {
           // sel.capabilities 可能是 array 或 object
           const caps = Array.isArray(sel.capabilities)
             ? sel.capabilities
             : (sel.capabilities ? Object.keys(sel.capabilities) : []);
           setSelectedModelCaps(caps);
+          // /api/models 已在每个 model 上附加 reasoning;selected 只有投影,需要在 apis 里找回。
+          const api = (models?.models?.apis || []).find((a) => a.id === apiId);
+          setSelectedApiKind((api && (api.kind || api.api_kind)) || "");
+          const m = ((api && api.models) || []).find(
+            (mm) => (mm.real_name || mm.id) === modelId || mm.id === modelId);
+          modelSpec = (m && m.reasoning) || null;
+          setSelectedReasoning(modelSpec);
         }
         if (effKey) setSelectedModelKey(effKey);
         // 读取当前模型 thinking 偏好
@@ -87,25 +133,34 @@ function ModelParamsSection() {
         if (cancelled) return;
         const prefs = (profile && profile.preferences) || {};
         const modelEffort = prefs.model_effort || {};
-        const cur = (modelEffort[effKey] || "").toString().toLowerCase();
-        // 与后端 _effort.resolve_effort 对齐:未配置 = DEFAULT_EFFORT("high")= 开;
-        // 只有显式 "off" 才是关(空串当关会让新用户看到「已关闭」而后端实际在 thinking)。
-        setThinkingEnabled(cur === "" ? true : (cur !== "off" && cur !== "0"));
+        // 四家老 provider 未配置时后端默认 high;spec.default_level 已把 legacy 默认
+        // 透出,这里必须跟它对齐,否则设置页显示 Auto 而实际在跑 High。
+        const specDefault = (modelSpec && modelSpec.default_level) || "auto";
+        const cur = (modelEffort[effKey] || specDefault).toString().toLowerCase();
+        setThinkingLevel(cur);
+        const overrides = prefs.reasoning_model_overrides || {};
+        const ov = overrides[effKey];
+        setDialectOverride((ov && ov.dialect) ? String(ov.dialect) : "auto");
       } catch (_) {}
     })();
     return () => { cancelled = true; };
   }, []);
   const showReasoningEffort = selectedModelCaps.includes("reasoning");
   // Reasoning Effort 已整体隐藏(2026-09):它写 settings.reasoning_effort,后端没有任何读取者(未接线),
-  // 真正管思考深度的是下方 Extended Thinking 开关。恢复显示 / 接线时把 false 改回 true。
+  // 真正管思考深度的是下方 per-model 控件。恢复显示 / 接线时把 false 改回 true。
   const SHOW_REASONING_EFFORT = false;
-  // Extended Thinking 开关门槛(2026-10 收紧):供应商白名单 **且** 模型目录声明了 reasoning
-  // 能力才显示。四家之外的后端静默忽略 model_effort;四家之内也有不支持思考的模型
-  // (如 openai 的非推理模型),都不该显示「已启用」的假开关。capabilities 缺失时按不支持隐藏。
-  const THINKING_EFFORT_PROVIDERS = ["anthropic", "vertex_ai", "openai", "deepseek"];
-  const showThinkingToggle = !!selectedModelKey
-    && THINKING_EFFORT_PROVIDERS.includes(selectedModelKey.split(":")[0])
-    && selectedModelCaps.includes("reasoning");  const [params, setParams] = useStatePL(MODEL_PARAM_DEFAULTS);
+  // 能力驱动门槛:模型 spec 声明 supported 才显示;能否关闭/有哪些档位由 spec 决定。
+  const reasoningLevels = (selectedReasoning && selectedReasoning.levels) || [];
+  const showThinkingControl = !!selectedReasoning && !!selectedReasoning.supported
+    && reasoningLevels.filter((x) => x !== "auto").length > 0;
+  // 旧偏好值(如只有开/关的模型存过 medium)不在 levels 里 → 用默认档位高亮,
+  // 避免显示成一排全未选中。
+  const effectiveThinkingLevel = reasoningLevels.includes(thinkingLevel)
+    ? thinkingLevel
+    : (reasoningLevels.includes(selectedReasoning && selectedReasoning.default_level)
+      ? selectedReasoning.default_level
+      : "auto");
+  const [params, setParams] = useStatePL(MODEL_PARAM_DEFAULTS);
   useEffectPL(() => {
     let cancelled = false;
     (async () => {
@@ -173,22 +228,71 @@ function ModelParamsSection() {
     if (Object.prototype.hasOwnProperty.call(patch, "extra_prompt")) save("nsfw_extra_prompt", patch.extra_prompt);
   };
 
-  // task 141: Extended Thinking 开关 — 写 model_effort[{api_id}:{model_id}] = "high" | "off"
-  const toggleThinking = async (on) => {
-    setThinkingEnabled(on);
+  // 2026-10: 设置页写用户级 model_effort(所有对话共享);对话框里写存档级。
+  const saveThinkingLevel = async (level) => {
     if (!selectedModelKey) return;
-    const effort = on ? "high" : "off";
+    const prev = thinkingLevel;
+    setThinkingLevel(level);
     try {
-      const profileR = await window.api.account.profile();
-      const existing = ((profileR && profileR.preferences && profileR.preferences.model_effort) || {});
-      const next = { ...existing, [selectedModelKey]: effort };
-      await window.api.account.preferences({ preferences: { model_effort: next } });
-      window.__apiToast?.(on ? t('settings.modelparams.thinking_saved_on') : t('settings.modelparams.thinking_saved_off'), { kind: 'ok', duration: 1800 });
+      await window.api.models.reasoning({
+        api_id: selectedModelKey.slice(0, selectedModelKey.indexOf(':')),
+        model_id: selectedModelKey.slice(selectedModelKey.indexOf(':') + 1),
+        level,
+      });
+      // 不要一律弹「已启用」:点 Off / Auto 也必须给出对应文案。
+      const toastKey = level === 'off' || level === '0'
+        ? 'settings.modelparams.thinking_saved_off'
+        : level === 'auto'
+          ? 'settings.modelparams.thinking_saved_auto'
+          : 'settings.modelparams.thinking_saved_on';
+      window.__apiToast?.(t(toastKey), { kind: 'ok', duration: 1800 });
     } catch (e) {
-      setThinkingEnabled(!on);  // 回滚
+      setThinkingLevel(prev);  // 回滚
       window.__apiToast?.(t('settings.modelparams.thinking_save_failed'), { kind: 'danger', detail: e?.message });
     }
   };
+
+  // 高级:手动指定中转站方言。保存后重新拉 /api/models,让新的 reasoning spec 立即生效。
+  const saveDialect = async (dialect) => {
+    if (!selectedModelKey) return;
+    const prev = dialectOverride;
+    setDialectOverride(dialect);
+    try {
+      const profile = await window.api.account.profile();
+      const existing = { ...((profile && profile.preferences
+        && profile.preferences.reasoning_model_overrides) || {}) };
+      if (dialect === "auto") delete existing[selectedModelKey];
+      else existing[selectedModelKey] = {
+        ...(existing[selectedModelKey] || {}),
+        dialect,
+        supported: true,
+      };
+      await window.api.account.preferences({
+        preferences: { reasoning_model_overrides: existing },
+      });
+      const models = await window.api.models.list().catch(() => null);
+      const colon = selectedModelKey.indexOf(":");
+      const apiId = selectedModelKey.slice(0, colon);
+      const modelId = selectedModelKey.slice(colon + 1);
+      const api = ((models && models.models && models.models.apis) || [])
+        .find((a) => a.id === apiId);
+      const m = ((api && api.models) || []).find(
+        (mm) => (mm.real_name || mm.id) === modelId || mm.id === modelId);
+      setSelectedReasoning((m && m.reasoning) || null);
+      window.__apiToast?.(t('settings.modelparams.reasoning_dialect_saved', {
+        defaultValue: '思考发送方式已保存',
+      }), { kind: 'ok', duration: 1800 });
+    } catch (e) {
+      setDialectOverride(prev);
+      window.__apiToast?.(t('settings.modelparams.thinking_save_failed'), { kind: 'danger', detail: e?.message });
+    }
+  };
+
+  const selectedApiId = selectedModelKey ? selectedModelKey.split(":")[0] : "";
+  const showDialectEditor = !!selectedApiId && (
+    !STANDARD_REASONING_PROVIDERS.has(selectedApiId)
+    || (selectedReasoning && selectedReasoning.confidence !== "verified")
+  );
 
   return (
     <SetGroup title={t('settings.modelparams.title')} description={t('settings.modelparams.description')}>
@@ -199,6 +303,41 @@ function ModelParamsSection() {
           ))}
         </CSSpaceBetween>
       </SetRow>
+
+      {/* 2026-10: 能力驱动的思考控件,放在温度上方(用户要求的顺序)。
+          供应商白名单已删除 —— GLM/Kimi/Qwen/Grok/中转只要 model.reasoning
+          声明 supported 就显示;未知模型整体隐藏。 */}
+      {showThinkingControl && (
+        <SetRow label={t('settings.modelparams.extended_thinking')}
+          description={t('settings.modelparams.extended_thinking_desc')}>
+          <div style={{ display: "flex", flexDirection: "column", gap: 8, width: "100%" }}>
+            <CSSpaceBetween direction="horizontal" size="xs">
+              {reasoningLevels.map((lv) => (
+                <CSButton key={lv} variant={effectiveThinkingLevel === lv ? "primary" : "normal"}
+                  onClick={() => saveThinkingLevel(lv)}>
+                  {lv === "auto"
+                    ? t('game.composer.effort_auto', { defaultValue: "Auto" })
+                    : lv === "off"
+                      ? t('settings.modelparams.thinking_off')
+                      : lv}
+                </CSButton>
+              ))}
+            </CSSpaceBetween>
+          </div>
+        </SetRow>
+      )}
+
+      {showDialectEditor && (
+        <SetRow
+          label={t('settings.modelparams.reasoning_dialect', { defaultValue: "思考发送方式（高级）" })}
+          description={t('settings.modelparams.reasoning_dialect_desc', {
+            defaultValue: "自建中转站的模型名无法自动识别时，在这里指定它接受的参数格式。自动 = 不覆盖。",
+          })}>
+          <SetSelect value={dialectOverride}
+            options={NATIVE_DIALECT_OPTIONS[selectedApiKind] || REASONING_DIALECT_OPTIONS}
+            onChange={saveDialect} />
+        </SetRow>
+      )}
 
       <ParamSlider label={t('settings.modelparams.temperature')} desc={t('settings.modelparams.temperature_desc')}
         value={params.temperature} min={0} max={2} step={0.05} unit=""
@@ -214,21 +353,6 @@ function ModelParamsSection() {
               </CSButton>
             ))}
           </CSSpaceBetween>
-        </SetRow>
-      )}
-
-      {/* task 141: Extended Thinking 开关 — 只对真正消费 model_effort 且模型本身支持思考的
-          组合显示:供应商白名单(anthropic/vertex_ai 走 budget_tokens、openai/deepseek 走
-          reasoning_effort,见 openai_compat.py _reasoning_param)+ 模型目录声明 reasoning 能力。
-          其余(中转/本地/非推理模型)后端会静默忽略该偏好,显示开关=「已启用」谎报,一律隐藏。 */}
-      {showThinkingToggle && (
-        <SetRow label={t('settings.modelparams.extended_thinking')}
-          description={t('settings.modelparams.extended_thinking_desc')}>
-          <CSToggle checked={thinkingEnabled} onChange={({ detail }) => toggleThinking(detail.checked)}>
-            {thinkingEnabled
-              ? t('settings.modelparams.thinking_on')
-              : t('settings.modelparams.thinking_off')}
-          </CSToggle>
         </SetRow>
       )}
 

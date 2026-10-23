@@ -205,6 +205,63 @@ def get_pricing(api_id_or_kind: str, model_real_name: str, catalog_override: dic
     return None
 
 
+# 自建中转站(funhpc / 某某 relay)的 api_id 不在 _STATIC_PRICING 里,但模型本身
+# 通常来自某家官方。按模型名跨 provider 兜底查价,让设置页的价格/上下文列有参考值。
+# 顺序 = 官方直供优先,聚合站(OpenRouter)最后,避免把加价后的聚合价当官方价。
+_CANONICAL_PRICING_ORDER: tuple[str, ...] = (
+    "openai", "anthropic", "vertex_ai", "deepseek", "xai",
+    "dashscope", "siliconflow", "minimax", "hunyuan", "doubao",
+    "xiaomi_mimo", "openrouter",
+)
+
+
+def get_pricing_any_provider(model_real_name: str) -> dict[str, Any] | None:
+    """按模型名在全部静态价格表里查找(供未知/自建 provider 兜底)。
+
+    只在 provider 自己查不到价格时使用。命中后 source 固定为 static-inferred,
+    表示「按模型名推断」,与第一方精确命中(static/static-prefix)可区分。
+    """
+    name = (model_real_name or "").strip()
+    if not name:
+        return None
+    # 聚合站/中转站常用 "vendor/model" 写法(openai/gpt-5.6、anthropic/claude-opus-5)。
+    # 先剥掉 vendor 前缀按官方模型名查,再回退原名 —— 否则会先命中 OpenRouter 加价表。
+    candidates = [name]
+    if "/" in name:
+        tail = name.rsplit("/", 1)[-1].strip()
+        if tail and tail != name:
+            candidates = [tail, name]
+    for candidate in candidates:
+        for api_id in _CANONICAL_PRICING_ORDER:
+            pricing = get_pricing(api_id, candidate)
+            if pricing:
+                return {**pricing, "source": "static-inferred"}
+            # 大小写变体(DeepSeek-V4-Flash / GPT-5.6)兜底:精确与前缀都没命中时再核一次。
+            for key, value in _STATIC_PRICING.get(api_id, {}).items():
+                if key.lower() == candidate.lower():
+                    return {**value, "source": "static-inferred", "unit": "USD per million tokens"}
+    return None
+
+
+def get_pricing_for_display(
+    api_id: str,
+    model_real_name: str,
+    catalog_override: dict[str, Any] | None = None,
+) -> dict[str, Any] | None:
+    """设置页展示用定价:本 provider 优先,未知/自建 provider 再按模型名推断。
+
+    已知 provider 查不到某个模型时**不**跨表借用 —— 那会把别家价格错配到
+    这个 provider 上(如 OpenAI 账号里出现同名第三方模型)。成本记账仍走
+    get_pricing,不受这里的影响。
+    """
+    pricing = get_pricing(api_id, model_real_name, catalog_override)
+    if pricing:
+        return pricing
+    if (api_id or "") in _STATIC_PRICING:
+        return None
+    return get_pricing_any_provider(model_real_name)
+
+
 # ══════════════════════════════════════════════════════════════════════
 #  远端模型列表嗅探
 # ══════════════════════════════════════════════════════════════════════
@@ -702,6 +759,7 @@ def _probe_error_message(status_detail: str) -> str:
         "degraded": "模型响应异常，功能可能受限",
         "ok": "",
         "untested": "尚未探测",
+        "unsupported": "该模型不支持对话连通性测试（如 embedding 模型）",
     }.get(status_detail, "未知错误")
 
 
@@ -738,9 +796,15 @@ def probe_availability(api_id: str, model_real_name: str | None = None, timeout_
                 "latency_ms": 0,
                 "error": "需要在「个人主页 → API 凭证」中配置该 provider 的 key 才能发探测请求",
             }
-    from model_registry import find_api, load_model_catalog
+    from model_registry import find_api, load_catalog_for_user, load_model_catalog
 
-    catalog = load_model_catalog()
+    # 自建中转站 / 用户同步来的模型只在 per-user overlay 里,全局 catalog 没有。
+    # 传了 user_id 时必须用该用户的视图,否则 find_api 直接把中转站判成「api_id 不存在」,
+    # 单模型探查永远测不了用户真正在用的渠道。
+    try:
+        catalog = load_catalog_for_user(user_id) if user_id else load_model_catalog()
+    except Exception:
+        catalog = load_model_catalog()
     api = find_api(catalog, api_id)
     base_err = {"api_id": api_id, "latency_ms": 0}
     if not api:
@@ -754,16 +818,48 @@ def probe_availability(api_id: str, model_real_name: str | None = None, timeout_
             return {"ok": False, "error": "该 API 没有注册任何 model", **base_err}
         model_real_name = models[0].get("real_name") or models[0].get("id")
 
+    # 5–120 秒内截断:探查是人工触发的连通性测试,不能沿用正常聊天的 300/1800s,
+    # 也不能让前端等太久。后端必须比前端更早返回超时,错误才可读。
+    timeout_sec = max(5, min(120, int(timeout_sec or 30)))
+
+    # embedding / rerank / 图像 / 音频模型发 chat completion 必然失败,也不该把它们
+    # 标成健康 err。返回 unsupported,前端只提示、不写健康点。
+    model_meta = next(
+        (m for m in (api.get("models") or [])
+         if (m.get("real_name") or m.get("id")) == model_real_name),
+        None,
+    )
+    # 用读取时同一套能力分类器判断,而不是只看 DB 里同步时的默认值
+    # (同步默认是 text/streaming,TTS/ASR 必须靠名字 heuristic 重新识别)。
+    caps_raw = get_capabilities(
+        api_id, model_real_name,
+        catalog_override=(model_meta or {}).get("capabilities") or [],
+    )
+    cap_set = set(caps_raw)
+    chat_like = bool(cap_set & {
+        "text", "reasoning", "tools", "vision", "function_calling",
+    })
+    non_chat_caps = cap_set & {
+        "embedding", "image_gen", "audio", "audio_gen", "asr", "rerank",
+    }
+    if not chat_like and (
+        non_chat_caps
+        or is_embedding_model(model_meta if model_meta is not None else model_real_name)
+    ):
+        msg = "该模型不是对话模型(embedding / 图像 / 音频等),不支持对话连通性测试"
+        return {
+            "ok": False, "status_detail": "unsupported",
+            "error": msg, "error_detail": msg,
+            "latency_ms": 0, "model_used": model_real_name, "api_id": api_id,
+        }
+
     start = time.monotonic()
     try:
         from agents.gm import GameMaster
         # 强制按 user 取 key；服务器模式下 user_id=None 会导致 backend 取不到 key 抛错
         gm = GameMaster(api_id=api_id, model=model_real_name, user_id=user_id)
-        text = gm._backend.call(
-            system="只回复一个字符：1",
-            messages=[{"role": "user", "content": "1"}],
-            max_tokens=80,
-        )
+        # 最小连通性请求:不带 system / 采样 / 思考参数;超时在本次请求内截断。
+        text = gm._backend.probe(timeout_sec=timeout_sec)
         latency = int((time.monotonic() - start) * 1000)
         result = {
             "ok": True,
@@ -866,6 +962,7 @@ CAPABILITY_LABELS = {
     "json_mode":    "JSON 结构化输出",
     "image_gen":    "图像生成",
     "audio_gen":    "音频生成",
+    "asr":          "语音识别",
     "reasoning":    "深度思考",
     "computer_use": "电脑控制",
     "code_exec":    "代码执行",
@@ -922,6 +1019,13 @@ _CAPABILITY_DEFAULTS: dict[str, dict[str, list[str]]] = {
         "gpt-4.1":          ["text", "streaming", "image_input", "tools", "json_mode"],
         "o1":               ["text", "streaming", "reasoning"],
         "o1-mini":          ["text", "streaming", "reasoning"],
+        # o3/o4 系列同样是推理模型;旧表只列到 o1,导致用户 sync 来的 o3-mini
+        # 被当成 text/streaming,思考控件不显示。
+        "o3":               ["text", "streaming", "tools", "json_mode", "reasoning"],
+        "o3-mini":          ["text", "streaming", "tools", "json_mode", "reasoning"],
+        "o3-pro":           ["text", "streaming", "tools", "json_mode", "reasoning"],
+        "o4":               ["text", "streaming", "tools", "json_mode", "reasoning"],
+        "o4-mini":          ["text", "streaming", "tools", "json_mode", "reasoning"],
     },
     "openrouter": {},  # 透传上游能力，调用方需自行查 catalog
     "siliconflow": {
@@ -966,6 +1070,13 @@ _CAPABILITY_DEFAULTS: dict[str, dict[str, list[str]]] = {
     },
     "hunyuan":   {"hunyuan-turbos-latest": ["text", "streaming", "tools"], "hunyuan-large": ["text", "streaming", "tools"]},
     "doubao":    {"doubao-1-5-pro-32k-250115": ["text", "streaming", "image_input", "tools"], "doubao-1-5-lite-32k-250115": ["text", "streaming"]},
+    "xiaomi_mimo": {
+        # MiMo-7B-RL / v2.5 / v2.6 默认开思考;官方 OpenAI 兼容端点用 thinking.type 开关。
+        "mimo-7b-rl": ["text", "streaming", "reasoning"],
+        "mimo-v2.5":  ["text", "streaming", "tools", "json_mode", "reasoning"],
+        "mimo-v2.6":  ["text", "streaming", "tools", "json_mode", "reasoning"],
+        "mimo-v2":    ["text", "streaming", "tools", "json_mode", "reasoning"],
+    },
 }
 
 
@@ -1013,6 +1124,8 @@ def get_capabilities(api_id: str, model_real_name: str, catalog_override: list[s
     """返回模型能力清单。
     catalog 中的 capabilities + 内置默认表 merge,去重保序。
     embedding 模型按名字 heuristic 兜底(_CAPABILITY_DEFAULTS 内置只有 chat 模型)。
+    TTS / ASR 按名字 heuristic 识别;命中时覆盖从父模型前缀继承来的 chat 默认值
+    (例如 gpt-4o-mini-tts 不应继承 gpt-4o-mini 的 tools/json_mode)。
     """
     table = _CAPABILITY_DEFAULTS.get(api_id, {})
     defaults: list[str] = []
@@ -1023,17 +1136,23 @@ def get_capabilities(api_id: str, model_real_name: str, catalog_override: list[s
             if model_real_name.startswith(prefix):
                 defaults = list(table[prefix])
                 break
-    catalog = list(catalog_override or [])
+    catalog_raw = catalog_override or []
+    if isinstance(catalog_raw, dict):
+        catalog = [k for k, v in catalog_raw.items() if v]
+    else:
+        catalog = list(catalog_raw)
     seen = set()
     out = []
     for c in catalog + defaults:
         if c not in seen:
             out.append(c)
             seen.add(c)
-    # task: 名字 heuristic 兜底加 embedding cap
-    if _infer_embedding_capability(model_real_name) and "embedding" not in seen:
-        out.append("embedding")
-        seen.add("embedding")
+    # 名字明确是 embedding 模型时,重置为向量嵌入能力:同步默认的 text/streaming
+    # 只是兜底值,留着会让 RAG 模型混进聊天选择器。
+    if _infer_embedding_capability(model_real_name):
+        keep = {c for c in catalog if c in {"embedding", "file_input"}}
+        out = ["embedding"] + sorted(keep - {"embedding"})
+        seen = set(out)
     # image_gen heuristic — 模型名含图像生成关键词时自动标记
     _IMAGE_GEN_PATTERNS = (
         "imagen", "seedream", "wanx",
@@ -1046,6 +1165,29 @@ def get_capabilities(api_id: str, model_real_name: str, catalog_override: list[s
     if "image_gen" not in seen and any(pat in _name_lower for pat in _IMAGE_GEN_PATTERNS):
         out.append("image_gen")
         seen.add("image_gen")
+    # TTS / ASR heuristic。这两类是明确的独立端点,不能只靠同步默认的 text/streaming。
+    # 命中后重置为音频能力,并保留显式声明里的非对话能力(audio_gen/asr/audio_input/file_input)。
+    _AUDIO_GEN_PATTERNS = (
+        "tts", "text-to-speech", "text_to_speech",
+        "speech-synthesis", "speech_synthesis",
+        "audio-gen", "audio_gen",
+        "cosyvoice", "sambert", "gpt-sovits", "f5-tts", "musicgen", "suno",
+    )
+    _ASR_PATTERNS = (
+        "whisper", "asr", "stt",
+        "speech-to-text", "speech_to_text",
+        "transcribe", "transcription",
+        "sensevoice", "paraformer", "funasr", "wav2vec",
+    )
+    audio_caps: list[str] = []
+    if any(pat in _name_lower for pat in _AUDIO_GEN_PATTERNS):
+        audio_caps.append("audio_gen")
+    if any(pat in _name_lower for pat in _ASR_PATTERNS):
+        audio_caps.extend(["asr", "audio_input"])
+    if audio_caps:
+        keep = {c for c in catalog if c in {"audio_gen", "asr", "audio_input", "file_input"}}
+        out = list(dict.fromkeys(audio_caps + sorted(keep)))
+        seen = set(out)
     # 默认值 — embedding 模型不应回到 text+streaming
     if not out:
         return ["text", "streaming"]

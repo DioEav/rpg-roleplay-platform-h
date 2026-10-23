@@ -20,6 +20,19 @@ class ModelsSelectRequest(_BaseRequest):
     scope: str | None = "user"
 
 
+class ModelsReasoningRequest(_BaseRequest):
+    """思考档位写入。
+
+    - save_id 非空 → 写该存档的 session_reasoning(对话框里的「本对话」作用域)
+    - save_id 为空 → 写用户级 model_effort(所有对话共享)
+    两个字段都带 api_id/model_id:切换模型后旧档位自动失效,不会被套到新模型上。
+    """
+    api_id: _Str256 | None = ""
+    model_id: _Str256 | None = ""
+    level: _Str256 | None = ""
+    save_id: int | None = None
+
+
 class ModelsUpsertApiRequest(_BaseRequest):
     """upsert_api 直接消费整个 body dict,字段透传即可。
     已知字段加了 max_length=256 约束;其余透传字段仍允许(extra="allow")。

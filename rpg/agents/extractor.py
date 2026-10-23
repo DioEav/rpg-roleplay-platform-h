@@ -254,6 +254,8 @@ def _call_extractor_backend(
             system=system_prompt,
             messages=[{"role": "user", "content": user_prompt}],
             max_tokens=800,
+            # 结构化微任务禁深思(268 实锤族):思考会吃光 800 正文预算。
+            thinking_budget=0,
         )
         return text, backend
     # OpenAI 兼容：response_format = json_object（GPT-4+ / SiliconFlow / DashScope 都支持）

@@ -987,6 +987,8 @@
       // 强制重拉所有 provider live /models,清 TTL cache
       refresh: () => POST(`${API_PREFIX}/models/refresh`, {}),
       select: (body) => POST(`${API_PREFIX}/models/select`, body),
+      // 思考档位:带 save_id=本对话作用域;不带=用户级 model_effort。
+      reasoning: (body) => POST(`${API_PREFIX}/models/reasoning`, body),
       upsertApi: (body) => POST(`${API_PREFIX}/models/api`, body),
       upsertModel: (body) => POST(`${API_PREFIX}/models/model`, body),
       deleteModel: (body) => POST(`${API_PREFIX}/models/model/delete`, body),
@@ -998,6 +1000,9 @@
       //    普通用户会撞「需要管理员权限」,写成功了还会让所有人看见你的私人模型。
       meUpsertModel: (body) => POST(`${API_PREFIX}/me/models/model`, body),
       meDeleteModel: (body) => POST(`${API_PREFIX}/me/models/model/delete`, body),
+      // 用户级模型配置:标签覆盖 + 自定义思考 spec。GET 供编辑弹窗回填原始映射。
+      getModelConfig: (q) => GET(`${API_PREFIX}/me/models/model/config`, q),
+      modelConfig: (body) => POST(`${API_PREFIX}/me/models/model/config`, body),
       validate: (body) => POST(`${API_PREFIX}/models/validate`, body),
       remote: (q) => GET(`${API_PREFIX}/models/remote`, q),
       // 这条会真去探测供应商的 /models,后端给的是 30s 超时(model_probe 的
@@ -1006,7 +1011,9 @@
       // 留 5s 余量盖住网络往返与排队,让死线落在后端之后。
       syncRemote: (body) => POST(`${API_PREFIX}/models/remote/sync`, body, { signal: timeoutSignal(35000) }),
       diff: (q) => GET(`${API_PREFIX}/models/diff`, q),
-      probe: (body) => POST(`${API_PREFIX}/models/probe`, body),
+      // 后端 probe_availability 现在按 body.timeout(默认 45s)截断;前端留 15s 余量。
+      // 探针是最小直连请求(不带 system/采样/思考参数),慢推理模型也可能需要更久。
+      probe: (body) => POST(`${API_PREFIX}/models/probe`, body, { signal: timeoutSignal(60000) }),
       pricing: () => GET(`${API_PREFIX}/models/pricing`),
       report: (q) => GET(`${API_PREFIX}/models/report`, q),
       capabilities: () => GET(`${API_PREFIX}/models/capabilities`),

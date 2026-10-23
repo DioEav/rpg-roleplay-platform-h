@@ -36,8 +36,8 @@ function installMocks(overrides = {}) {
   const toast = vi.fn();
   window.RPG_AUTH = { authed: true };
   window.api = {
-    models: { list: vi.fn().mockResolvedValue({ models: { apis: [API_ROW] } }), syncRemote, upsertApi },
-    credentials: { list: vi.fn().mockResolvedValue({ items: [CRED] }), set: credSet },
+    models: { list: vi.fn().mockResolvedValue({ models: { apis: [overrides.apiRow || API_ROW] } }), syncRemote, upsertApi },
+    credentials: { list: vi.fn().mockResolvedValue({ items: [overrides.cred || CRED] }), set: credSet },
   };
   window.__apiToast = toast;
   return { syncRemote, credSet, upsertApi, toast };
@@ -120,5 +120,41 @@ describe('API 设置 — 进页面探测与启用开关', () => {
     await waitFor(() => expect(credSet).toHaveBeenCalled());
     await waitFor(() => expect(toggle.getAttribute('aria-pressed')).toBe('true'));   // 乐观翻转已回滚
     expect(toast).toHaveBeenCalledWith('启用状态保存失败', expect.anything());
+  });
+
+  it('停用的供应商:进页面不探测、连通性只显示「已禁用」,不展示旧的探测错误', async () => {
+    const { syncRemote } = installMocks({ cred: { ...CRED, enabled: false } });
+    // 上次启用时留下的失败原因不能泄漏到停用态
+    autoSyncState.lastConnectivity.set('deepseek', {
+      status: 'err', checked_at: Date.now(),
+      error: '找不到 deepseek 的 API key（用户凭证未配置且环境变量未设）',
+    });
+
+    render(<ModelsSection />);
+    await screen.findByText('DeepSeek');
+
+    expect(screen.getByText('已禁用')).toBeTruthy();
+    expect(screen.queryByText(/找不到 deepseek 的 API key/)).toBeNull();
+    await new Promise((r) => setTimeout(r, 60));
+    expect(syncRemote).not.toHaveBeenCalled();
+  });
+
+  it('关闭供应商后不再探测,连通性立即切到「已禁用」并隐藏错误原因', async () => {
+    const { syncRemote, credSet } = installMocks();
+    // 已探测过 → 进页面不会自动再探,便于只观察开关动作
+    autoSyncState.lastProbedAt.set('deepseek', Date.now());
+    autoSyncState.lastConnectivity.set('deepseek', {
+      status: 'err', checked_at: Date.now(), error: '旧的探测失败',
+    });
+
+    await renderReady();
+    expect(screen.getByText('旧的探测失败')).toBeTruthy();
+
+    fireEvent.click(providerToggle());
+
+    await waitFor(() => expect(credSet).toHaveBeenCalled());
+    await waitFor(() => expect(screen.queryByText('旧的探测失败')).toBeNull());
+    expect(screen.getByText('已禁用')).toBeTruthy();
+    expect(syncRemote).not.toHaveBeenCalled();
   });
 });

@@ -105,11 +105,15 @@ const NSFW_TIERS: { key: "block" | "soft" | "open" | "explicit"; label: string; 
   { key: "explicit", label: "炽烈", sub: "明确细节，谨慎使用。" },
 ];
 
-const EFFORT_TIERS: { key: "low" | "medium" | "high"; label: string }[] = [
-  { key: "low", label: "省力" },
-  { key: "medium", label: "适中" },
-  { key: "high", label: "竭力" },
-];
+const THINKING_LABELS: Record<string, string> = {
+  auto: "自动",
+  off: "关",
+  low: "省力",
+  medium: "适中",
+  high: "竭力",
+  extra: "极深",
+  max: "最满",
+};
 
 function formatSlider(def: SliderDef, value: number) {
   if (def.format) return def.format(value);
@@ -188,8 +192,9 @@ export default function ModelParamsScreen() {
     intensity: 0.5,
     extra_prompt: "",
   });
-  const [reasoningEffort, setReasoningEffort] = useState<"low" | "medium" | "high">("medium");
-  const [showReasoning, setShowReasoning] = useState(false);
+  const [thinkingLevel, setThinkingLevel] = useState("auto");
+  const [thinkingSpec, setThinkingSpec] = useState<any>(null);
+  const [selectedModelKey, setSelectedModelKey] = useState<{ api_id?: string; model_id?: string }>({});
   const [advanced, setAdvanced] = useState(false);
 
   // Stable patch — set local optimistically, then fire-and-forget the write. No toast on
@@ -266,27 +271,35 @@ export default function ModelParamsScreen() {
           extra_prompt: String(p["nsfw_extra_prompt"] ?? legacyNsfw.extra_prompt ?? legacyNsfw.extra ?? ""),
         });
 
-        const eff = String(p["reasoning_effort"] ?? "medium");
-        setReasoningEffort((["low", "medium", "high"].includes(eff) ? eff : "medium") as any);
-
-        // Check capabilities on the currently selected chat model
+        // 思考档位:按 /api/models 的 model.reasoning 能力驱动,和桌面/游戏浮层同源。
+        // 旧实现读的是 reasoning_effort —— 后端没有读取者,等于摆设。
+        let spec: any = null;
+        let selApi = "";
+        let selReal = "";
         try {
           const m = await settings.models();
           const apis = m?.models?.apis ?? [];
-          const selApi = m?.selected?.api_id;
-          const selModel = m?.selected?.model_id;
+          selApi = m?.selected?.api_id || "";
+          const selModel = m?.selected?.model_id || "";
           for (const a of apis) {
             const aid = a.api_id || (a as any).id;
             if (aid !== selApi) continue;
             for (const mod of a.models || []) {
-              if (mod.id !== selModel) continue;
-              const caps: string[] = (mod as any).capabilities || [];
-              if (caps.some((c) => /reason/i.test(c))) setShowReasoning(true);
+              if (mod.id !== selModel && (mod as any).real_name !== selModel) continue;
+              spec = (mod as any)?.reasoning || null;
+              selReal = (mod as any)?.real_name || mod.id || "";
             }
           }
         } catch {
-          /* ignore — reasoning hint is best-effort */
+          /* ignore — capability hint is best-effort */
         }
+        setThinkingSpec(spec);
+        setSelectedModelKey({ api_id: selApi, model_id: selReal });
+        const effKey = selApi && selReal ? `${selApi}:${selReal}` : "";
+        const modelEffort = (p["model_effort"] && typeof p["model_effort"] === "object")
+          ? p["model_effort"] : {};
+        const cur = modelEffort[effKey] || spec?.default_level || "auto";
+        setThinkingLevel(String(cur).toLowerCase());
       } catch (e) {
         if (e instanceof ApiError && e.status !== 401) Alert.alert("加载失败", e.message);
       } finally {
@@ -294,6 +307,28 @@ export default function ModelParamsScreen() {
       }
     })();
   }, []);
+
+  const thinkingLevels: string[] = (thinkingSpec?.levels || [])
+    .filter((lv: string) => lv !== "off" || thinkingSpec?.can_disable);
+  const showReasoning = !!thinkingSpec?.supported
+    && thinkingLevels.filter((lv) => lv !== "auto").length > 0;
+  const effectiveThinkingLevel = thinkingLevels.includes(thinkingLevel)
+    ? thinkingLevel
+    : (thinkingLevels.includes(thinkingSpec?.default_level) ? thinkingSpec.default_level : "auto");
+
+  const saveThinkingLevel = useCallback((level: string) => {
+    if (!selectedModelKey.api_id || !selectedModelKey.model_id) return;
+    const prev = thinkingLevel;
+    setThinkingLevel(level);
+    settings.reasoning({
+      api_id: selectedModelKey.api_id,
+      model_id: selectedModelKey.model_id,
+      level,
+    }).catch((e: unknown) => {
+      setThinkingLevel(prev);
+      Alert.alert("保存失败", e instanceof ApiError ? e.message : "请重试");
+    });
+  }, [selectedModelKey, thinkingLevel]);
 
   // The canonical JSON shown in the brass scroll at the bottom — same shape the desktop
   // shows so the scribe can copy-paste between clients.
@@ -312,12 +347,18 @@ export default function ModelParamsScreen() {
         stop: params.stop.split("|").filter(Boolean),
         nsfw: nsfw.mode === "block" ? null : { mode: nsfw.mode, intensity: nsfw.intensity, extra: nsfw.extra_prompt },
         ...(advanced ? { mirostat_mode: params.mirostat_mode, mirostat_tau: params.mirostat_tau, mirostat_eta: params.mirostat_eta } : {}),
-        ...(showReasoning ? { reasoning_effort: reasoningEffort } : {}),
+        ...(showReasoning ? {
+          thinking: {
+            api_id: selectedModelKey.api_id,
+            model_id: selectedModelKey.model_id,
+            level: effectiveThinkingLevel,
+          },
+        } : {}),
       },
       null,
       2,
     ),
-    [params, nsfw, advanced, showReasoning, reasoningEffort],
+    [params, nsfw, advanced, showReasoning, selectedModelKey, effectiveThinkingLevel],
   );
 
   return (
@@ -401,17 +442,21 @@ export default function ModelParamsScreen() {
           {showReasoning ? (
             <View style={styles.section}>
               <Text style={styles.sectionTitle}>推理强度</Text>
-              <Text style={styles.subProse}>当前模型支持推理深度切换。省力更快、竭力更深思熟虑。</Text>
+              <Text style={styles.subProse}>
+                当前模型支持思考控制。这里设置对所有对话生效；对话内的模型浮层会覆盖本对话。
+              </Text>
               <View style={styles.tierRow}>
-                {EFFORT_TIERS.map((e) => {
-                  const active = reasoningEffort === e.key;
+                {thinkingLevels.map((level) => {
+                  const active = effectiveThinkingLevel === level;
                   return (
                     <Pressable
-                      key={e.key}
-                      onPress={() => { setReasoningEffort(e.key); write("reasoning_effort", e.key); }}
+                      key={level}
+                      onPress={() => saveThinkingLevel(level)}
                       style={[styles.tierChip, active && styles.tierChipActive]}
                     >
-                      <Text style={[styles.tierChipLabel, active && { color: theme.color.accentBright }]}>{e.label}</Text>
+                      <Text style={[styles.tierChipLabel, active && { color: theme.color.accentBright }]}>
+                        {THINKING_LABELS[level] || level}
+                      </Text>
                     </Pressable>
                   );
                 })}

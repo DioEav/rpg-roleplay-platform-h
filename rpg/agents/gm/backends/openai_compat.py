@@ -11,6 +11,11 @@ import httpx
 from agents.gm.backends._dsml import DsmlStreamFilter, resolve_tool_ref
 from agents.gm.helpers import _openai_text_marker_loop
 from core.logging import get_logger
+from model_reasoning import (
+    build_openai_params,
+    effective_max_tokens,
+    resolve_spec_for_call,
+)
 
 log = get_logger(__name__)
 
@@ -52,6 +57,18 @@ def _is_temperature_rejected(exc: Exception) -> bool:
 _OPTIONAL_TUNING_KEYS = ("temperature", "top_p", "frequency_penalty", "presence_penalty",
                          "seed", "stop", "extra_body", "reasoning_effort")
 
+# 采样参数与思考参数必须能**分别**剥离:
+# 中转站拒 top_k / temperature 很常见,旧实现会把 reasoning_effort/thinking 一起剥掉并永久
+# 记住,导致用户「设了思考档位却永远不生效」。这里拆成两组,400 时先剥采样、再剥思考。
+_SAMPLING_TOP_KEYS = ("temperature", "top_p", "frequency_penalty", "presence_penalty",
+                      "seed", "stop")
+_REASONING_TOP_KEYS = ("reasoning_effort",)
+_SAMPLING_EXTRA_KEYS = ("top_k", "repetition_penalty")
+_REASONING_EXTRA_KEYS = (
+    "thinking", "enable_thinking", "thinking_budget", "reasoning",
+    "chat_template_kwargs",
+)
+
 
 def _is_bad_request(exc: Exception) -> bool:
     """是不是 400 BadRequest(与 _is_tools_unsupported 同一判据,只是语义不同)。"""
@@ -62,8 +79,64 @@ def _is_bad_request(exc: Exception) -> bool:
     return isinstance(exc, BadRequestError)
 
 
+def _pop_extra(kwargs: dict, keys: tuple[str, ...]) -> None:
+    extra = kwargs.get("extra_body")
+    if not isinstance(extra, dict):
+        return
+    for k in keys:
+        extra.pop(k, None)
+    if not extra:
+        kwargs.pop("extra_body", None)
+
+
+def _strip_sampling_only(kwargs: dict) -> None:
+    """只剥采样参数,保留思考控制。"""
+    for k in _SAMPLING_TOP_KEYS:
+        kwargs.pop(k, None)
+    _pop_extra(kwargs, _SAMPLING_EXTRA_KEYS)
+
+
+def _strip_reasoning_only(kwargs: dict) -> None:
+    """只剥思考控制,保留采样参数。
+
+    extra_body 里除已知采样键(top_k/repetition_penalty)以外的内容都视为思考/调优
+    字段(包括用户自定义方言的任意键)。这样 custom_json 的未知键也能在 400 时退掉。
+    """
+    for k in _REASONING_TOP_KEYS:
+        kwargs.pop(k, None)
+    extra = kwargs.get("extra_body")
+    if isinstance(extra, dict):
+        for k in list(extra.keys()):
+            if k not in _SAMPLING_EXTRA_KEYS:
+                extra.pop(k, None)
+        if not extra:
+            kwargs.pop("extra_body", None)
+
+
+def _has_sampling(kwargs: dict) -> bool:
+    if any(k in kwargs for k in _SAMPLING_TOP_KEYS):
+        return True
+    extra = kwargs.get("extra_body")
+    return isinstance(extra, dict) and any(k in extra for k in _SAMPLING_EXTRA_KEYS)
+
+
+def _has_reasoning(kwargs: dict) -> bool:
+    if any(k in kwargs for k in _REASONING_TOP_KEYS):
+        return True
+    extra = kwargs.get("extra_body")
+    if not isinstance(extra, dict):
+        return False
+    # 已知思考键,或自定义方言塞进 extra_body 的任意非采样键。
+    return any(k in extra for k in _REASONING_EXTRA_KEYS) or any(
+        k not in _SAMPLING_EXTRA_KEYS for k in extra.keys())
+
+
 def _strip_sampling(kwargs: dict) -> None:
-    """就地剥掉所有可选调参(含 extra_body 里的 top_k/repetition_penalty/thinking)→ 退回模型默认。"""
+    """兼容旧调用/测试:剥掉**全部**可选调参(采样 + 思考)。
+
+    `_create` 已改用 `_strip_sampling_only` / `_strip_reasoning_only` 两段式;
+    这个函数保留给历史测试和「彻底退默认」的极端路径。
+    """
     for _sp in _OPTIONAL_TUNING_KEYS:
         kwargs.pop(_sp, None)
 
@@ -75,11 +148,21 @@ _EFFORT_TO_DEEPSEEK = {
 }
 
 
+def _deep_merge_dict(dst: dict, src: dict) -> dict:
+    for k, v in (src or {}).items():
+        if isinstance(v, dict) and isinstance(dst.get(k), dict):
+            _deep_merge_dict(dst[k], v)
+        else:
+            dst[k] = v
+    return dst
+
+
 def _merge_tuning(*parts: dict) -> dict:
     """把多份请求调参字典并成一份,**extra_body 做深合并而不是互相覆盖**。
 
     采样参数(top_k/repetition_penalty)和 DeepSeek 的 thinking 开关都住在 extra_body 里,
     两边各自 `**` 展开进 create() 会撞出 `multiple values for keyword 'extra_body'` TypeError。
+    深合并同时兼容未来更复杂的嵌套模板(如 chat_template_kwargs)。
     """
     out: dict[str, Any] = {}
     extra: dict[str, Any] = {}
@@ -88,7 +171,7 @@ def _merge_tuning(*parts: dict) -> dict:
             continue
         for k, v in part.items():
             if k == "extra_body":
-                extra.update(v or {})
+                _deep_merge_dict(extra, v or {})
             else:
                 out[k] = v
     if extra:
@@ -128,35 +211,85 @@ class _OpenAICompatBackend:
     # 已知限制：进程内缓存，多 worker 模式下各自独立学习（不跨进程共享），可接受。
     _fixed_temp_combos: set[tuple[str, str]] = set()
 
-    def _create(self, **kwargs):
-        """self.client.chat.completions.create 的包装,带 temperature 自愈。
+    # 与 _fixed_temp_combos 同构，但分开记忆：采样被拒 ≠ 思考被拒。
+    # 旧实现把两者塞进同一个 _strip_sampling，导致中转站拒 top_k 时把 reasoning_effort
+    # 也永久剥掉 —— 用户看到保存成功，实际思考控制从此静默失效。
+    _sampling_rejected_combos: set[tuple[str, str]] = set()
+    _reasoning_rejected_combos: set[tuple[str, str]] = set()
 
-        moonshot kimi 部分模型 / openai o-series 等「只允许 temperature=1」,平台默认发
-        0.9/0.1 会被 400 拒(原表现:整轮失败,用户只见随机错误码)。这里首次被拒后去掉
-        temperature 用模型默认重试**并记忆**,本进程同 (api_id, model) 后续直接不发 →
-        当轮即成功,不再失败。stream=True 时请求在 create() 即发出,400 也在此抛,可拦。
+    @staticmethod
+    def _copy_kwargs(kwargs: dict) -> dict:
+        out = dict(kwargs)
+        if isinstance(out.get("extra_body"), dict):
+            out["extra_body"] = dict(out["extra_body"])
+        return out
+
+    def _create(self, **kwargs):
+        """self.client.chat.completions.create 的包装,带分组退参自愈。
+
+        400 时按「先采样、后思考」两段重试:
+          1. 只剥采样参数(temperature/top_p/seed/stop/top_k/...),保留 reasoning_effort/thinking;
+          2. 若仍 400,再剥思考参数。
+        只有真正被拒的那一组才会被记住,不再连坐。记忆放在重试成功之后 —— 若退参也没救
+        回来,说明 400 另有原因,不能把该 combo 永久标成「拒调参」。
+
+        stream=True 时请求在 create() 即发出,400 也在此抛,可拦;尚未 yield 任何增量,
+        重发不会重复输出。
         """
         combo = (self.api_id, self.model_name, self.user_id)
-        if combo in self._fixed_temp_combos:
-            _strip_sampling(kwargs)  # 本进程已知该 combo 拒可选调参 → 直接剥掉不再发
+        if combo in self._fixed_temp_combos or combo in self._sampling_rejected_combos:
+            _strip_sampling_only(kwargs)
+        if combo in self._reasoning_rejected_combos:
+            _strip_reasoning_only(kwargs)
+        # 思考开启时给正文留出输出预算(仅当本次请求真的带了思考字段;结构化 JSON 调用
+        # 不带思考字段,不会走到这里)。放在 _create 而不是每个上层调用点,保证
+        # call / stream / 工具循环三条路径一致,也避免没有思考字段时白查一次用户偏好。
+        if _has_reasoning(kwargs) and "max_tokens" in kwargs:
+            try:
+                kwargs["max_tokens"] = self._effective_max_tokens(int(kwargs["max_tokens"]))
+            except Exception:
+                pass
+        self._last_effective_max_tokens = kwargs.get("max_tokens")
         try:
             return self.client.chat.completions.create(**kwargs)
         except Exception as exc:
-            # provider 拒绝任一可选调参(采样参数 / reasoning_effort / extra_body 里的 top_k / thinking)
-            # → 剥掉全部可选调参用模型默认重试。保证「预设接线」不会让任何 provider 400 断轮。
-            #
-            # 判据用「是不是 400 + 我们确实发了可选调参」,不再依赖报错文本点名字段:中转站的
-            # 400 文案五花八门,点名式嗅探漏一个就是整轮崩。反正 400 本来就要失败,退参重试一次
-            # 只可能变好。**记忆放在重试成功之后** —— 若退参也没救回来,说明 400 另有原因,
-            # 不能就此把该 combo 永久标成「拒采样参数」、白白吃掉用户的生成参数预设。
-            if not (_is_bad_request(exc) and any(
-                    k in kwargs for k in _OPTIONAL_TUNING_KEYS)):
+            if not _is_bad_request(exc) or not (_has_sampling(kwargs) or _has_reasoning(kwargs)):
                 raise
-            _strip_sampling(kwargs)
-            log.info(f"[GM] {self.api_id}/{self.model_name} 拒绝可选调参(400)→ 用模型默认重试")
-            resp = self.client.chat.completions.create(**kwargs)
-            self._fixed_temp_combos.add(combo)
-            return resp
+            original_exc = exc
+
+            # 第 1 段：只剥采样，保留思考。若成功，说明 400 来自采样参数。
+            if _has_sampling(kwargs):
+                trial = self._copy_kwargs(kwargs)
+                _strip_sampling_only(trial)
+                try:
+                    resp = self.client.chat.completions.create(**trial)
+                except Exception as exc2:
+                    if not _is_bad_request(exc2):
+                        raise
+                    original_exc = exc2
+                else:
+                    log.info(f"[GM] {self.api_id}/{self.model_name} 拒绝采样参数(400)→ 保留思考设置重试")
+                    self._sampling_rejected_combos.add(combo)
+                    self._fixed_temp_combos.add(combo)
+                    return resp
+
+            # 第 2 段：采样已剥(或本来没有)，再剥思考。
+            if _has_reasoning(kwargs):
+                trial = self._copy_kwargs(kwargs)
+                _strip_sampling_only(trial)
+                _strip_reasoning_only(trial)
+                try:
+                    resp = self.client.chat.completions.create(**trial)
+                except Exception:
+                    # 400 与调参无关（或退参也没救回来）：什么都不记，原样上抛。
+                    raise
+                log.info(f"[GM] {self.api_id}/{self.model_name} 拒绝思考参数(400)→ 用模型默认重试")
+                # 只记「思考被拒」。采样是否也被拒无法从本次结果断言（第 1 段已证明
+                # 仅剥采样不够），不顺手把采样也永久关掉。
+                self._reasoning_rejected_combos.add(combo)
+                return resp
+
+            raise original_exc from exc
 
     def _sampling_kwargs(self, default_temperature: float) -> dict[str, Any]:
         """叙事调用的采样参数 = 用户预设(只覆盖设过的键)叠加在后端默认 temperature 上。
@@ -184,7 +317,8 @@ class _OpenAICompatBackend:
         return out
 
     def __init__(self, model: str, base_url: str, env_key: str, display_kind: str = "openai_compat",
-                 user_id: int | None = None, api_id: str | None = None):
+                 user_id: int | None = None, api_id: str | None = None,
+                 model_meta: dict[str, Any] | None = None):
         from openai import OpenAI
 
         from platform_app.user_credentials import (
@@ -231,14 +365,17 @@ class _OpenAICompatBackend:
         # 覆盖 openai SDK 默认 UA(`OpenAI/Python x.y.z`)→ 浏览器 UA。否则挂在 Cloudflare 后的
         # 中转站会按 UA 用 WAF 把它当 AI 爬虫拦掉(403「Your request was blocked」/ error 1010),
         # 导致这类中转站聊天/校验/拉取模型全部「不可访问」。详见 core.outbound_ua(已实测)。
+        # provider 专属头(目前只有 OpenCode Go 的 x-opencode-session)也在这里按 effective_base
+        # 作用域注入,其它渠道的请求头保持零变化。
         from core.outbound import safe_httpx_client
-        from core.outbound_ua import openai_default_headers
+        from core.outbound_ua import openai_default_headers_for
         kwargs: dict[str, Any] = {
             # key 已由 resolved_auth_token 归一:有 key 用 key,免鉴权用占位 token
             # (绝不能是空串 —— openai SDK 对空串同样抛 Missing credentials,构造即崩)。
             "api_key": key,
             "timeout": httpx.Timeout(_read_to, connect=10.0),
-            "default_headers": openai_default_headers(),
+            "default_headers": openai_default_headers_for(
+                effective_base, user_id=user_id, api_id=api_id or display_kind),
             # SEC(H-5 + 审计): base_url_override 是 user/admin 可控 → 必须走 SSRF 安全出站层。
             # 裸 httpx.Client 只 follow_redirects=False,挡 30x 但挡不住 DNS rebinding(写时闸过后
             # TTL 过期即可把域名指向 169.254.169.254 / 内网)。safe_httpx_client 在传输层 use-time
@@ -252,44 +389,54 @@ class _OpenAICompatBackend:
         self.kind = display_kind
         self.api_id = api_id or display_kind
         self.user_id = user_id  # task 141: 给 _reasoning_param 用
+        # 模型目录元数据(capabilities/reasoning),让 backend 与 /api/models 用同一份能力判断。
+        self._model_meta = model_meta
+        # 存档级覆盖({"api_id","model_id","level"})由 GameMaster 每回合写入。
+        self._reasoning_override: dict[str, Any] | None = None
         self.last_usage: dict[str, Any] = {}
         log.info(f"[GM] {display_kind} · {model} (base={effective_base or 'default'}, key from {result.get('source')})")
 
-    def _reasoning_param(self) -> dict:
-        """task 141: 按用户偏好返回思考控制字段。返 {} 表示不传(off / provider 不支持)。
-
-        两家的方言不同,各自适配:
-        - `openai`:reasoning_effort 字符串(o-series / gpt-5)。
-        - `deepseek`:V4.1 起**思考默认开、默认 effort=high**。OpenAI 格式下用
-          `reasoning_effort` 调档、`extra_body.thinking.type` 开关(官方 api-docs「Thinking Mode」)。
-          此前本函数对非 openai 一律返 {},于是游戏内/设置页的 Effort 选择器对 deepseek
-          写了偏好、弹了成功提示,后端却整段丢弃 —— 用户想关思考关不掉(UI 存在≠生效)。
-
-        其余 provider(Qwen / Hunyuan / 中转 / 本地)仍返 {}:模型自己内置 thinking 行为,
-        没有权威的开关字段,乱传只会 400。
-        """
+    def _reasoning_state(self):
+        """返回 (spec, level);异常时退化为「不支持/auto」,绝不让思考控制影响主链路。"""
         try:
-            if self.api_id == "openai":
-                from ._effort import resolve_openai_reasoning
-                effort = resolve_openai_reasoning(self.user_id, self.api_id, self.model_name)
-                return {"reasoning_effort": effort} if effort else {}
-            if self.api_id == "deepseek":
-                from ._effort import resolve_effort
-                effort = resolve_effort(self.user_id, self.api_id, self.model_name)
-                if effort == "off":
-                    # 唯一需要显式关的场合。开着是官方默认,不必多传一个字段去冒 400 的险。
-                    return {"extra_body": {"thinking": {"type": "disabled"}}}
-                mapped = _EFFORT_TO_DEEPSEEK.get(effort)
-                return {"reasoning_effort": mapped} if mapped else {}
-            return {}
+            return resolve_spec_for_call(
+                self.user_id, self.api_id, self.model_name,
+                model_dict=getattr(self, "_model_meta", None),
+                override=getattr(self, "_reasoning_override", None),
+            )
         except Exception as exc:
-            log.warning(f"[openai_compat] _reasoning_param failed: {exc}")
+            log.warning(f"[openai_compat] reasoning resolve failed: {exc}")
+            return ({"supported": False, "levels": ["auto"]}, "auto")
+
+    def _reasoning_param(self, state=None) -> dict:
+        """按模型级 spec + 方言返回思考控制字段。返 {} = 不传。
+
+        不再按 `api_id` 写死 openai/deepseek:GLM/Kimi/Qwen/Grok/豆包/OpenRouter/
+        自建中转都走 `model_reasoning.build_openai_params`。未知模型默认不发字段。
+        state: 可选的已解析 (spec, level),避免一次请求里重复读用户偏好。
+        """
+        spec, level = state if state is not None else self._reasoning_state()
+        try:
+            return build_openai_params(spec, level)
+        except Exception as exc:
+            log.warning(f"[openai_compat] build reasoning params failed: {exc}")
             return {}
 
-    def _tuning_kwargs(self, default_temperature: float) -> dict[str, Any]:
+    def _effective_max_tokens(self, max_tokens: int, state=None) -> int:
+        """思考开启时的输出上限兜底,避免 reasoning 吃光 max_tokens 后正文为空。"""
+        spec, level = state if state is not None else self._reasoning_state()
+        try:
+            return effective_max_tokens(spec, level, int(max_tokens))
+        except Exception:
+            return max_tokens
+
+    def _tuning_kwargs(self, default_temperature: float, state=None) -> dict[str, Any]:
         """叙事调用的全部可选调参 = 采样参数 + 思考控制,extra_body 已深合并。
         三个调用点(call / stream / stream_with_mcp_loop)统一走这里,免得 extra_body 撞车。"""
-        return _merge_tuning(self._sampling_kwargs(default_temperature), self._reasoning_param())
+        return _merge_tuning(
+            self._sampling_kwargs(default_temperature),
+            self._reasoning_param(state),
+        )
 
     def _to_messages(self, system: str, messages: list[dict]) -> list[dict]:
         out = []
@@ -326,7 +473,7 @@ class _OpenAICompatBackend:
         self._capture_usage(
             resp,
             finish_reason=getattr(choice, "finish_reason", None),
-            max_tokens=max_tokens,
+            max_tokens=getattr(self, "_last_effective_max_tokens", max_tokens),
         )
         return (resp.choices[0].message.content or "").strip()
 
@@ -378,6 +525,22 @@ class _OpenAICompatBackend:
         if max_tokens:
             self.last_usage["max_tokens"] = int(max_tokens)
 
+    def probe(self, timeout_sec: float | None = None) -> str:
+        """最小连通性请求:不带 system / 采样 / 思考参数。
+
+        与 call() 分开:探查只回答「这个模型能不能正常返回」,不应该被用户的
+        temperature/top_p 或思考档位影响。timeout_sec 透传给 SDK 单次请求超时。
+        """
+        kwargs: dict[str, Any] = {
+            "model": self.model_name,
+            "messages": [{"role": "user", "content": "1"}],
+            "max_tokens": 64,
+        }
+        if timeout_sec:
+            kwargs["timeout"] = float(timeout_sec)
+        resp = self.client.chat.completions.create(**kwargs)
+        return ((resp.choices[0].message.content or "") if resp.choices else "").strip()
+
     def call_structured(self, system: str, messages: list[dict], max_tokens: int) -> str:
         from core.prompt_log import log_llm_prompt
         log_llm_prompt(kind="gm_structured", api_id=self.api_id, model=self.model_name,
@@ -412,11 +575,13 @@ class _OpenAICompatBackend:
             stream_options={"include_usage": True},  # 末尾 chunk 带 usage
             **_tuning,
         )
+        # _create 可能因思考预算抬高了 max_tokens;记账用实际发出的值。
+        _max_tokens = getattr(self, "_last_effective_max_tokens", max_tokens)
         for chunk in stream:
             # 末尾 usage chunk 的 choices 可能为空
             try:
                 if getattr(chunk, "usage", None):
-                    self._capture_usage(chunk, finish_reason=finish_reason, max_tokens=max_tokens)
+                    self._capture_usage(chunk, finish_reason=finish_reason, max_tokens=_max_tokens)
                 if chunk.choices:
                     choice = chunk.choices[0]
                     fr = getattr(choice, "finish_reason", None)
@@ -424,7 +589,7 @@ class _OpenAICompatBackend:
                         finish_reason = str(fr)
                         if self.last_usage:
                             self.last_usage["finish_reason"] = finish_reason
-                            self.last_usage["max_tokens"] = int(max_tokens)
+                            self.last_usage["max_tokens"] = int(_max_tokens)
                     delta = choice.delta.content
                     if delta:
                         yield delta
@@ -547,10 +712,11 @@ class _OpenAICompatBackend:
                     stream_options={"include_usage": True},
                     **_tuning,
                 )
+                _max_tokens = getattr(self, "_last_effective_max_tokens", max_tokens)
                 for chunk in stream:
                     try:
                         if getattr(chunk, "usage", None):
-                            self._capture_usage(chunk, finish_reason=finish_reason, max_tokens=max_tokens)
+                            self._capture_usage(chunk, finish_reason=finish_reason, max_tokens=_max_tokens)
                         if not chunk.choices:
                             continue
                         choice = chunk.choices[0]
@@ -585,7 +751,7 @@ class _OpenAICompatBackend:
                             finish_reason = str(fr)
                             if self.last_usage:
                                 self.last_usage["finish_reason"] = finish_reason
-                                self.last_usage["max_tokens"] = int(max_tokens)
+                                self.last_usage["max_tokens"] = int(_max_tokens)
                     except Exception:
                         continue
             except Exception as exc:

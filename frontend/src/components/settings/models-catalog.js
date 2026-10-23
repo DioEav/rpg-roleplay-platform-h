@@ -14,11 +14,18 @@ const catalogApiIdForCredential = credentialToCatalogId;
 
 /** @param {import("../types/rust/catalog/CatalogSource").CatalogSource} source */
 function sourceLabel(source, _t) {
+  // 前四个是 Rust CatalogSource 的枚举值;后四个来自 Python 端 _inject_pricing /
+  // get_pricing 的 source 字段(catalog / static / static-prefix / static-inferred)。
+  // 两套命名都要映射,否则表格会直接显示英文原值。
   const MAP = {
     LiveApi:        "Live API",
-    StaticCatalog:  "Static",
+    StaticCatalog:  _t ? _t('settings.more.source_static_catalog', { defaultValue: "Static" }) : "Static",
     UserOverride:   _t ? _t('settings.more.source_user_override') : "User Override",
     OpenRouterProxy:"OpenRouter Proxy",
+    catalog:        _t ? _t('settings.more.source_catalog', { defaultValue: "Catalog" }) : "Catalog",
+    static:         _t ? _t('settings.more.source_static', { defaultValue: "Static" }) : "Static",
+    "static-prefix": _t ? _t('settings.more.source_static_prefix', { defaultValue: "Static prefix" }) : "Static prefix",
+    "static-inferred": _t ? _t('settings.more.source_static_inferred', { defaultValue: "Static inferred" }) : "Static inferred",
   };
   return MAP[source] || source || "—";
 }

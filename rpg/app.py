@@ -831,6 +831,11 @@ def _kb_backed_state(state: GameState, save_id: int, commit_id: int) -> GameStat
     _blob_sm = (getattr(state, "data", {}) or {}).get("session_model") or {}
     if isinstance(_blob_sm, dict) and _blob_sm.get("model_id"):
         data["session_model"] = _blob_sm
+    # session_reasoning 与 session_model 同层:游戏内「本对话思考档位」是 out-of-turn 瞬态,
+    # 只落 runtime_checkouts working-tree。materialize 从 KB 拿不到它,必须以 blob 为准。
+    _blob_sr = (getattr(state, "data", {}) or {}).get("session_reasoning") or {}
+    if isinstance(_blob_sr, dict) and _blob_sr.get("level"):
+        data["session_reasoning"] = _blob_sr
     # 同 session_model:酒馆 tavern 子树(卡快照/persona/system_prompt/绑定剧本/沉浸模式)是 out-of-turn
     # 编辑的 working-tree 状态,不随回合 import 进 kb_worldline_vars → materialize 拿到的是上次回合旧值,
     # 会把刚编辑的 system_prompt 打回(反馈#94「酒馆系统提示词无法保存」)。以 blob(runtime 优先级1)为准。
@@ -882,6 +887,17 @@ def _ensure_loaded(api_user: dict[str, Any] | None = None, *, ensure_gm: bool = 
                     (_rt_sm.get("model_id"), _rt_sm.get("api_id"))
                     != (_cur_sm.get("model_id"), _cur_sm.get("api_id"))
                 )
+                # 思考档位漂移(跨 worker):/api/models/reasoning 只 patch runtime snapshot,
+                # 不 bump commit。另一 worker 的 cached state 若仍是旧档位,下一轮会把
+                # 「本对话」的新设置吞掉。与 model_drift 同源,用 DB 真值比对。
+                _rt_sr = _rt.get("session_reasoning") or {}
+                _cur_sr = (getattr(cached, "data", {}) or {}).get("session_reasoning") or {}
+                # 与 model_drift 同口径:只在 DB 确有值时判漂移。persist 失败时不能
+                # 反过来用空 DB 把本 worker 内存里的新档位清掉。
+                reasoning_drift = bool(_rt_sr.get("level")) and (
+                    (_rt_sr.get("api_id"), _rt_sr.get("model_id"), _rt_sr.get("level"))
+                    != (_cur_sr.get("api_id"), _cur_sr.get("model_id"), _cur_sr.get("level"))
+                )
                 # 侧改漂移(跨 worker):固定记忆/笔记增删等 out-of-turn 编辑 bump runtime snapshot_hash
                 # 但**不 bump commit**(persist_runtime_state 设计上不建新回合),save/commit/model drift
                 # 都抓不到 → 另一 worker 缓存仍是旧 state,用户「删了固定记忆、加新的时已删的又回来」根因。
@@ -889,7 +905,7 @@ def _ensure_loaded(api_user: dict[str, Any] | None = None, *, ensure_gm: bool = 
                 _rt_hash = _rt.get("snapshot_hash")
                 _cached_hash = _lru_get(_state_snaphash_by_user, uid)
                 hash_drift = bool(_rt_hash) and bool(_cached_hash) and _rt_hash != _cached_hash
-                if save_drift or commit_drift or model_drift or hash_drift:
+                if save_drift or commit_drift or model_drift or reasoning_drift or hash_drift:
                     cached = None
                 if model_drift:
                     _gm_by_user.pop(uid, None)

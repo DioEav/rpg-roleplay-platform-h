@@ -104,6 +104,25 @@ async def run_gm_phase(
     bundle = ctx.bundle
     agent_result = ctx.agent_result
 
+    # 会话级思考档位:在每次生成前把本存档的 override 挂到 backend。backend 是长生命周期
+    # 的(按用户缓存),不能只在构造时读一次 —— 玩家在对话框里改档位要立即生效。
+    # sub_gm 若与主 GM 是同一实例,这里只设一次;独立 override 的 sub_gm 也同步本存档档位。
+    try:
+        _sr = (
+            state.get_session_reasoning()
+            if hasattr(state, "get_session_reasoning")
+            else ((getattr(state, "data", {}) or {}).get("session_reasoning") or None)
+        )
+        # 无本存档覆盖时必须**清掉**旧值:backend 是按用户缓存的长生命周期实例,
+        # 从「设过档位的存档 A」切到「没设过的存档 B」时,旧 override 会误套到 B 上。
+        if hasattr(gm, "_backend"):
+            gm._backend._reasoning_override = _sr or None
+        _sub = getattr(ctx, "sub_gm", None)
+        if _sub is not None and _sub is not gm and hasattr(_sub, "_backend"):
+            _sub._backend._reasoning_override = _sr or None
+    except Exception as _sr_err:
+        log.warning(f"[chat] session_reasoning 注入跳过: {_sr_err}")
+
     # Q 分层缓存:回合动态前置项(Phase D 注入 + 短输入镜头指令)在 tiered 路径下要进「动态块最前」
     # 而非 prepend 到整串最前(否则污染缓存前缀)。这里收集起来,flag-on 时随 prompt_segments 一并传给 GM;
     # 同时保留对 bundle["prompt"] 的 prepend,供 flag-off(单串)回退路径使用。两路径互斥,不会重复注入。
@@ -350,6 +369,12 @@ async def run_gm_phase(
                 setattr(_bgm, _attr, getattr(gm, _attr))
             except Exception:
                 pass
+        # 备用渠道沿用本存档的思考档位(它自己的模型 spec 会决定是否支持该档位)。
+        try:
+            _bgm._backend._reasoning_override = getattr(
+                getattr(gm, "_backend", None), "_reasoning_override", None)
+        except Exception:
+            pass
         try:
             import model_probe
             model_probe.note_channel_failure(getattr(gm, "api_id", ""),

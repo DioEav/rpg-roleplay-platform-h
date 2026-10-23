@@ -77,6 +77,41 @@ def test_call_structured_default_uses_resolved_budget(monkeypatch):
     assert cfg.thinking_config.thinking_budget == 4096
 
 
+def _vertex_spec(**overrides):
+    spec = {
+        "supported": True,
+        "dialect": "gemini_budget",
+        "can_disable": True,
+        "levels": ["auto", "off", "low", "medium", "high"],
+        "budget_tokens": {"low": 1024, "medium": 4096, "high": 8192},
+        "reasoning_counts_in_output": True,
+        "output_reserve_tokens": 512,
+    }
+    spec.update(overrides)
+    return spec
+
+
+def test_vertex_max_output_uses_custom_reserve(monkeypatch):
+    """输出上限 = budget + 用户配置的 reserve,不再硬编码 1024。"""
+    import agents.gm.backends.vertex as V
+    monkeypatch.setattr(V, "resolve_spec_for_call", lambda *a, **k: (_vertex_spec(), "high"))
+    be = _make_vertex()
+    be._model_meta = {"real_name": "gemini-3.5-flash"}
+    be.call_structured("sys", [{"role": "user", "content": "hi"}], max_tokens=4096)
+    assert be.client.models.captured["config"].max_output_tokens == 8192 + 512
+
+
+def test_vertex_max_output_respects_counts_in_output_false(monkeypatch):
+    """用户关闭「思考 token 占用输出上限」后不再抬高 max_output_tokens。"""
+    import agents.gm.backends.vertex as V
+    spec = _vertex_spec(reasoning_counts_in_output=False)
+    monkeypatch.setattr(V, "resolve_spec_for_call", lambda *a, **k: (spec, "high"))
+    be = _make_vertex()
+    be._model_meta = {"real_name": "gemini-3.5-flash"}
+    be.call_structured("sys", [{"role": "user", "content": "hi"}], max_tokens=4096)
+    assert be.client.models.captured["config"].max_output_tokens == 4096
+
+
 def test_harness_vertex_structured_threads_no_think(monkeypatch):
     """call_agent_json("vertex_ai", no_think=True) → call_structured 收到 thinking_budget=0;
     no_think=False → thinking_budget=None(沿用现行为)。与「call_agent_json 必须 no_think」对齐。"""

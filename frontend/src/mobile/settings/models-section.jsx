@@ -24,7 +24,7 @@ function ProviderDetail({ api, onBack, onSync, onToggleModel, onDeleteKey, nav }
           <span className="sub">{t('mobile.settings.models.provider_byok')}</span>
         </div>
         <div className="pl-head-actions">
-          <button className="pl-headbtn" onClick={onSync} title={t('mobile.settings.models.sync_models')}><Icon name="refresh" size={17} /></button>
+          <button className="pl-headbtn" onClick={onSync} disabled={api.enabled===false} title={t('mobile.settings.models.sync_models')}><Icon name="refresh" size={17} /></button>
           <button className="pl-headbtn" onClick={onDeleteKey} title={t('mobile.settings.models.delete_key')} style={{ color: 'var(--danger)' }}><Icon name="trash" size={17} /></button>
         </div>
       </div>
@@ -54,10 +54,11 @@ function ProviderDetail({ api, onBack, onSync, onToggleModel, onDeleteKey, nav }
               <div style={{ display: 'flex', justifyContent: 'space-between' }}>
                 <span style={{ color: 'var(--muted)' }}>{t('mobile.settings.models.connectivity')}</span>
                 <span style={{
-                  color: conn.status==='ok' ? 'var(--ok)' : conn.status==='err' ? 'var(--danger)' : 'var(--muted)',
+                  color: api.enabled===false ? 'var(--muted)' : conn.status==='ok' ? 'var(--ok)' : conn.status==='err' ? 'var(--danger)' : 'var(--muted)',
                   fontSize: 12
                 }}>
-                  {conn.status==='ok' ? `✓ ${t('mobile.settings.models.conn_ok')}${conn.latency_ms ? ` · ${conn.latency_ms}ms` : ''}` :
+                  {api.enabled===false ? t('common.disabled') :
+                   conn.status==='ok' ? `✓ ${t('mobile.settings.models.conn_ok')}${conn.latency_ms ? ` · ${conn.latency_ms}ms` : ''}` :
                    conn.status==='err' ? `✗ ${t('common.error')}` :
                    conn.status==='checking' ? t('mobile.settings.models.conn_syncing') : t('mobile.settings.models.conn_untested')}
                 </span>
@@ -173,7 +174,8 @@ function ModelsSection({ nav, onBack }) {
   }, [mapModel]);
 
   const syncRemote = useCallback(async (api, silent=false) => {
-    if (!api) return;
+    // 停用的供应商不发起连通性探测,也不显示探测失败原因。
+    if (!api || api.enabled === false) return;
     const aId = catId(api.id);
     setApis(arr => arr.map(a => a.id===aId ? { ...a, connectivity: { ...a.connectivity, status:'checking' } } : a));
     try {
@@ -202,6 +204,7 @@ function ModelsSection({ nav, onBack }) {
   useEffect(() => {
     if (loading) return;
     apis.forEach(api => {
+      if (api.enabled === false) return;
       if (autoSynced.current.has(api.id)) return;
       autoSynced.current.add(api.id);
       syncRemote(api, true);
@@ -280,9 +283,10 @@ function ModelsSection({ nav, onBack }) {
           {!loading && !loadErr && apis.map(pv => {
             const conn = pv.connectivity || {};
             const enabledCnt = pv.models.filter(m => m.enabled).length;
-            const statusOk = conn.status==='ok';
-            const statusErr = conn.status==='err';
-            const statusBusy = conn.status==='checking';
+            const disabled = pv.enabled===false;
+            const statusOk = !disabled && conn.status==='ok';
+            const statusErr = !disabled && conn.status==='err';
+            const statusBusy = !disabled && conn.status==='checking';
             return (
               <button key={pv.id} className="pl-prov" style={{ width:'100%', textAlign:'left', marginBottom:10 }}
                 onClick={() => setSelected(pv.id)}>
@@ -295,11 +299,13 @@ function ModelsSection({ nav, onBack }) {
                     </strong>
                     <span className="key mono">•••• {pv.key_hint}</span>
                   </span>
-                  <span className={`pl-status ${statusOk?'online':''}`}>
-                    <span className="d" style={statusErr ? { background:'var(--danger)' } : statusBusy ? { background:'var(--warn)' } : {}} />
-                    {statusOk ? `✓ ${conn.latency_ms||''}${conn.latency_ms?'ms':t('mobile.settings.models.status_connected')}` :
-                     statusErr ? `✗ ${t('common.error')}` : statusBusy ? t('mobile.settings.models.status_syncing') : t('mobile.settings.models.conn_untested')}
-                  </span>
+                  {disabled ? null : (
+                    <span className={`pl-status ${statusOk?'online':''}`}>
+                      <span className="d" style={statusErr ? { background:'var(--danger)' } : statusBusy ? { background:'var(--warn)' } : {}} />
+                      {statusOk ? `✓ ${conn.latency_ms||''}${conn.latency_ms?'ms':t('mobile.settings.models.status_connected')}` :
+                       statusErr ? `✗ ${t('common.error')}` : statusBusy ? t('mobile.settings.models.status_syncing') : t('mobile.settings.models.conn_untested')}
+                    </span>
+                  )}
                   <Icon name="chevron_right" size={16} style={{ color:'var(--muted-3)', marginLeft:4 }} />
                 </div>
                 {pv.models.slice(0,2).map(m => (

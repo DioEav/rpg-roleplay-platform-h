@@ -18,10 +18,14 @@ import CSTable from '@cloudscape-design/components/table';
 import CSTabs from '@cloudscape-design/components/tabs';
 import CSKeyValuePairs from '@cloudscape-design/components/key-value-pairs';
 
+// 只有非对话能力(embedding/TTS/ASR/图像/音频/rerank)的模型不做连通性探查。
+const NON_CHAT_CAPS = new Set(['embedding', 'image_gen', 'audio_gen', 'asr', 'audio', 'rerank']);
+const CHAT_CAPS = new Set(['text', 'reasoning', 'tools', 'tool_use', 'vision', 'function_calling']);
+
 
 /* API 详情面板 —— 选中某个已配置 Key 后在列表下方展开。
    Tabs:模型列表(ApiModelsList)/ API 用量(简略)。头部:编辑 / 管理显示 / 校验 / 删除 Key。 */
-function ApiDetailPanel({ api, onEdit, onVisibility, onValidate, onDeleteKey, onToggleModel, onRenameModel, onAddModel }) {
+function ApiDetailPanel({ api, onEdit, onVisibility, onValidate, onDeleteKey, onToggleModel, onRenameModel, onAddModel, onEditModel, onProbeModel, onDeleteModel }) {
   const { t } = useTranslation();
   // 用量里的成本项已隐藏(2026-10):恢复 = 改回 true。(与用量页 SHOW_USAGE_COST 同批)
   const SHOW_API_USAGE_COST = false;
@@ -83,7 +87,7 @@ function ApiDetailPanel({ api, onEdit, onVisibility, onValidate, onDeleteKey, on
     }>
       <CSTabs activeTabId={tab} onChange={({ detail }) => setTab(detail.activeTabId)} tabs={[
         { id: 'models', label: t('settings.models.tab_models', { count: api.models.length }), content: (
-          <ApiModelsList api={api} onToggleModel={onToggleModel} onRenameModel={onRenameModel} />
+          <ApiModelsList api={api} onToggleModel={onToggleModel} onRenameModel={onRenameModel} onEditModel={onEditModel} onProbeModel={onProbeModel} onDeleteModel={onDeleteModel} />
         ) },
         { id: 'usage', label: t('settings.models.tab_usage'), content: (
           usage == null
@@ -106,18 +110,41 @@ function ApiDetailPanel({ api, onEdit, onVisibility, onValidate, onDeleteKey, on
   );
 }
 
-function ApiModelsList({ api, onToggleModel, onRenameModel }) {
+function ApiModelsList({ api, onToggleModel, onRenameModel, onEditModel, onProbeModel, onDeleteModel }) {
   const { t } = useTranslation();
+  // 价格 /M 列已隐藏(2026-10):恢复显示 = 改回 true。
+  const SHOW_MODEL_PRICE = false;
+  // 来源列已隐藏(2026-10):恢复显示 = 改回 true。
+  const SHOW_MODEL_SOURCE = false;
+  // 上下文列已隐藏(2026-10):恢复显示 = 改回 true。
+  const SHOW_MODEL_CONTEXT = false;
   const [q, setQ] = useStatePL("");
   const [capFilter, setCapFilter] = useStatePL(null);
   const [statusFilter, setStatusFilter] = useStatePL("all");
   const [showAll, setShowAll] = useStatePL(false);
-  const [sortKey, setSortKey] = useStatePL("smart");
+  const [showHidden, setShowHidden] = useStatePL(false);
+  // 单模型探查进行中集合(m.id)。允许多行并行探查,每行独立禁用/显示“探查中”。
+  const [probingIds, setProbingIds] = useStatePL(() => new Set());
   const PAGE = 6;
 
-  // Only models marked visible — visibility is controlled via the API card's
-  // "编辑显示" modal, not per-row.
-  const visibleModels = api.models.filter(m => m.visible !== false);
+  const probeOne = async (m) => {
+    if (!onProbeModel || probingIds.has(m.id)) return;
+    setProbingIds(prev => { const next = new Set(prev); next.add(m.id); return next; });
+    try { await onProbeModel(m); } finally {
+      setProbingIds(prev => {
+        if (!prev.has(m.id)) return prev;
+        const next = new Set(prev);
+        next.delete(m.id);
+        return next;
+      });
+    }
+  };
+
+  // 默认只显示 visible；打开“显示已隐藏”后，隐藏模型也进入列表，
+  // 这样每个模型都有编辑入口（用户要求“每一个模型”都能编辑）。
+  const visibleModels = showHidden
+    ? api.models
+    : api.models.filter(m => m.visible !== false);
 
   // helpers to normalize capabilities (Wave 11.5-A: 复用 components/catalog-helpers.js,
   // 老 array / 新 typed object 两种 shape 都兼容)
@@ -126,7 +153,16 @@ function ApiModelsList({ api, onToggleModel, onRenameModel }) {
   const filtered = visibleModels.filter(m => {
     if (q) {
       const s = q.toLowerCase();
-      if (!m.display.toLowerCase().includes(s) && !m.real_name.toLowerCase().includes(s)) return false;
+      // 占位文案承诺「名称 / ID / 能力」三者都可搜:能力既支持原始 ID
+      // (vision / reasoning / tools…),也支持界面上的本地化标签(视觉 / 推理)。
+      const capText = getCaps(m).flatMap(c => [
+        c,
+        t('settings.capabilities.' + c, { defaultValue: CAP_LABEL[c] || c }),
+      ]);
+      const hit = m.display.toLowerCase().includes(s)
+        || (m.real_name || "").toLowerCase().includes(s)
+        || capText.some(c => String(c).toLowerCase().includes(s));
+      if (!hit) return false;
     }
     if (capFilter && !getCaps(m).includes(capFilter)) return false;
     if (statusFilter === "enabled" && !m.enabled) return false;
@@ -136,22 +172,10 @@ function ApiModelsList({ api, onToggleModel, onRenameModel }) {
     return true;
   });
 
+  // 固定「智能排序」:启用优先,其次按显示名。搜索框旁的排序下拉已隐藏。
   const sorted = [...filtered].sort((a, b) => {
-    if (sortKey === "smart") {
-      if (a.enabled !== b.enabled) return b.enabled - a.enabled;
-      return a.display.localeCompare(b.display, "zh-CN");
-    }
-    if (sortKey === "name") return a.display.localeCompare(b.display, "zh-CN");
-    if (sortKey === "context") {
-      // Wave 11-C: 优先用 context_window 数值,兼容旧 context 字符串
-      const getCtx = (m) => m.context_window ?? parseInt(m.context) ?? 0;
-      return getCtx(b) - getCtx(a);
-    }
-    if (sortKey === "health") {
-      const order = { ok: 0, degraded: 1, untested: 2, err: 3 };
-      return (order[a.health] ?? 4) - (order[b.health] ?? 4);
-    }
-    return 0;
+    if (a.enabled !== b.enabled) return b.enabled - a.enabled;
+    return a.display.localeCompare(b.display, "zh-CN");
   });
 
   const visible = showAll ? sorted : sorted.slice(0, PAGE);
@@ -159,10 +183,18 @@ function ApiModelsList({ api, onToggleModel, onRenameModel }) {
   const filtersActive = q || capFilter || statusFilter !== "all";
   const allCaps = [...new Set(visibleModels.flatMap(m => getCaps(m)))];
   const showSearch = visibleModels.length > 5;
-  const hiddenCount = api.models.length - visibleModels.length;
+  const hiddenCount = api.models.filter(m => m.visible === false).length;
 
   return (
     <>
+      {hiddenCount > 0 && (
+        <div className="pl-model-toolbar" style={{ marginBottom: 6 }}>
+          <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 11.5 }} className="muted">
+            <input type="checkbox" checked={showHidden} onChange={(e) => setShowHidden(e.target.checked)} />
+            {t('settings.model_edit.show_hidden', { defaultValue: '显示已隐藏模型' })} ({hiddenCount})
+          </label>
+        </div>
+      )}
       {showSearch && (
         <div className="pl-model-toolbar">
           <div className="pl-model-search">
@@ -187,15 +219,6 @@ function ApiModelsList({ api, onToggleModel, onRenameModel }) {
               {t('settings.model_list.filter_err')} <span className="muted-2" style={{marginLeft: 4, fontSize: 10.5}}>{visibleModels.filter(m => m.health === "err").length}</span>
             </button>
           </div>
-          <select
-            value={sortKey} onChange={(e) => setSortKey(e.target.value)}
-            style={{height: 26, fontSize: 11.5, padding: "0 8px", width: "auto", flexShrink: 0}}
-          >
-            <option value="smart">{t('settings.model_list.sort_smart')}</option>
-            <option value="name">{t('settings.model_list.sort_name')}</option>
-            <option value="context">{t('settings.model_list.sort_context')}</option>
-            <option value="health">{t('settings.model_list.sort_health')}</option>
-          </select>
         </div>
       )}
       {showSearch && allCaps.length > 0 && (
@@ -216,6 +239,11 @@ function ApiModelsList({ api, onToggleModel, onRenameModel }) {
               <Icon name="close" size={9} /> {t('settings.model_list.clear_filter')}
             </button>
           )}
+        </div>
+      )}
+      {onProbeModel && (
+        <div className="muted-2" style={{ fontSize: 11, margin: "0 0 8px" }}>
+          {t('settings.model_list.probe_hint')}
         </div>
       )}
       {sorted.length === 0 ? (
@@ -258,7 +286,7 @@ function ApiModelsList({ api, onToggleModel, onRenameModel }) {
                 </div>
               ),
             },
-            {
+            ...(SHOW_MODEL_PRICE ? [{
               id: "price",
               header: t('settings.model_list.col_price'),
               cell: (m) => (
@@ -271,8 +299,8 @@ function ApiModelsList({ api, onToggleModel, onRenameModel }) {
                     : (m.price || "—")}
                 </span>
               ),
-            },
-            {
+            }] : []),
+            ...(SHOW_MODEL_CONTEXT ? [{
               id: "context",
               header: t('settings.model_list.col_context'),
               cell: (m) => (
@@ -286,8 +314,8 @@ function ApiModelsList({ api, onToggleModel, onRenameModel }) {
                   )}
                 </span>
               ),
-            },
-            {
+            }] : []),
+            ...(SHOW_MODEL_SOURCE ? [{
               id: "source",
               header: t('settings.model_list.col_source'),
               width: 70,
@@ -309,12 +337,76 @@ function ApiModelsList({ api, onToggleModel, onRenameModel }) {
                   </span>
                 );
               },
+            }] : []),
+            {
+              id: "probe",
+              header: t('settings.model_list.col_probe'),
+              width: 76,
+              cell: (m) => {
+                const busy = probingIds.has(m.id);
+                const caps = getCaps(m);
+                const nonChat = caps.length > 0
+                  && !caps.some((c) => CHAT_CAPS.has(c))
+                  && caps.some((c) => NON_CHAT_CAPS.has(c));
+                return (
+                  <button
+                    type="button"
+                    className="pl-model-probe"
+                    disabled={busy || !onProbeModel || nonChat}
+                    onClick={(e) => { e.stopPropagation(); probeOne(m); }}
+                    title={nonChat
+                      ? t('settings.model_list.probe_not_chat')
+                      : t('settings.model_list.probe_tip')}
+                  >
+                    {busy
+                      ? t('settings.model_list.probe_running')
+                      : t('settings.model_list.probe_btn')}
+                  </button>
+                );
+              },
+            },
+            {
+              id: "edit",
+              header: t('settings.model_list.col_edit'),
+              width: 56,
+              cell: (m) => (
+                <button
+                  className="iconbtn"
+                  title={t('settings.model_edit.title', { defaultValue: '编辑模型' })}
+                  onClick={(e) => { e.stopPropagation(); onEditModel?.(m); }}
+                >
+                  <Icon name="edit" size={12} />
+                </button>
+              ),
             },
             {
               id: "toggle",
-              header: "",
-              width: 48,
+              header: t('settings.model_list.col_toggle'),
+              width: 64,
               cell: (m) => <SettingsToggle on={m.enabled} set={() => onToggleModel(m.id)} />,
+            },
+            {
+              id: "delete",
+              header: t('settings.model_list.col_delete'),
+              width: 56,
+              cell: (m) => {
+                // 只有用户 overlay 里的模型(同步/手填)能从这里删;全局目录模型
+                // 非 admin 无删除权限,按钮禁用并提示用开关隐藏。
+                const deletable = !!m.synced || m.source === 'manual';
+                return (
+                  <button
+                    type="button"
+                    className="iconbtn pl-model-delete"
+                    disabled={!deletable || !onDeleteModel}
+                    title={deletable
+                      ? t('settings.model_list.delete_tip')
+                      : t('settings.model_list.delete_global')}
+                    onClick={(e) => { e.stopPropagation(); onDeleteModel?.(m); }}
+                  >
+                    <Icon name="trash" size={12} />
+                  </button>
+                );
+              },
             },
           ]}
         />
@@ -330,7 +422,7 @@ function ApiModelsList({ api, onToggleModel, onRenameModel }) {
           <Icon name="chevron_up" size={12} /> {t('settings.model_list.collapse')}
         </button>
       )}
-      {hiddenCount > 0 && (
+      {hiddenCount > 0 && !showHidden && (
         <div className="pl-model-hidden-note muted-2">
           {t('settings.model_list.hidden_note', { count: hiddenCount })}
         </div>
@@ -386,6 +478,11 @@ function ModelNameCell({ m, onRename, deprecated }) {
         {deprecated && <span style={{marginLeft: 4, fontSize: 11, color: "var(--warn)"}}><Icon name="warn" size={10} /></span>}
       </strong>
       <span className="muted-2 mono">{m.real_name}</span>
+      {m.customReasoning && (
+        <span className="pl-cap-tag" style={{ marginLeft: 4, fontSize: 10, color: 'var(--accent)', borderColor: 'var(--accent)' }}>
+          {t('settings.model_edit.custom_badge', { defaultValue: '自定义思考' })}
+        </span>
+      )}
     </div>
   );
 }

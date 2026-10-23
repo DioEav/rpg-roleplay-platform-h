@@ -200,7 +200,8 @@ def _attach_db_state(payload: dict[str, Any]) -> dict[str, Any]:
                 row = db.execute(
                     """
                     select dirty, snapshot_hash, turn_at_commit, turn_runtime, commit_id, ref_id,
-                           state_snapshot->'session_model' as session_model
+                           state_snapshot->'session_model' as session_model,
+                           state_snapshot->'session_reasoning' as session_reasoning
                     from runtime_checkouts
                     where user_id = %s and save_id = %s
                     """,
@@ -216,6 +217,10 @@ def _attach_db_state(payload: dict[str, Any]) -> dict[str, Any]:
                     _sm = row.get("session_model")
                     if isinstance(_sm, dict):
                         payload["session_model"] = _sm
+                    # 思考档位与 session_model 同层:跨 worker 缓存也靠它检测漂移。
+                    _sr = row.get("session_reasoning")
+                    if isinstance(_sr, dict):
+                        payload["session_reasoning"] = _sr
     except Exception:
         pass
     return payload

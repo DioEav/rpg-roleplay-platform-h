@@ -884,6 +884,8 @@ class GameState(ApplyOpsMixin, RulesGameplayMixin, PendingMixin):
             "suggestions": self.suggestions(),
             # A1: 存档级模型覆盖，前端 ModelPicker 据此显示当前选中状态
             "session_model": dict(self.data.get("session_model") or {}),
+            # 2026-10: 存档级思考档位覆盖(对话框里的「本对话」作用域),前端 Effort 控件回显。
+            "session_reasoning": dict(self.data.get("session_reasoning") or {}),
             # 酒馆模式:把 state.data["tavern"]（AI 角色卡快照 + persona 绑定 + system_prompt 等）
             # 透到 /api/state 顶层,供 Tavern 前端读角色名/角色卡视图。普通 game 存档无此 key → 空 dict,
             # 前端按 falsy 兜底,对 Game Console 零影响。
@@ -1403,6 +1405,33 @@ class GameState(ApplyOpsMixin, RulesGameplayMixin, PendingMixin):
         sm = self.data.get("session_model") or {}
         if sm.get("model_id") and sm.get("api_id"):
             return (str(sm["model_id"]), str(sm["api_id"]))
+        return None
+
+    # ── 会话级思考档位覆盖 ───────────────────────────────────────
+    def set_session_reasoning(self, api_id: str, model_id: str, level: str) -> None:
+        """写入当前存档的主 GM 思考档位；只影响本对话,不改其他存档。
+
+        带 api_id/model_id 是为了在用户切模型后自动失效 —— 旧档位属于旧模型,
+        不能拿去套新模型的 spec(不同模型支持的档位不同)。
+        """
+        self.data["session_reasoning"] = {
+            "api_id": str(api_id),
+            "model_id": str(model_id),
+            "level": str(level),
+        }
+
+    def clear_session_reasoning(self) -> None:
+        self.data["session_reasoning"] = {}
+
+    def get_session_reasoning(self) -> dict[str, str] | None:
+        """返回当前存档的思考档位覆盖,没有则 None。"""
+        sr = self.data.get("session_reasoning") or {}
+        if sr.get("api_id") and sr.get("model_id") and sr.get("level"):
+            return {
+                "api_id": str(sr["api_id"]),
+                "model_id": str(sr["model_id"]),
+                "level": str(sr["level"]),
+            }
         return None
 
     def request_time_jump(self, target: str, raw: str):

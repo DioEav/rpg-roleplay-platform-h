@@ -69,8 +69,13 @@ class OutboundUaHelper(unittest.TestCase):
 
 class BothSdkSitesOverrideUa(unittest.TestCase):
     def test_generation_passes_default_headers(self):
-        self.assertIn("from core.outbound_ua import openai_default_headers", OPENAI_COMPAT_PY)
-        self.assertIn('"default_headers": openai_default_headers()', OPENAI_COMPAT_PY)
+        # 生成路径走 openai_default_headers_for(base_url,...):UA 逻辑复用同一真源,
+        # 同时按 provider 作用域附加专属头(OpenCode Go 的 x-opencode-session)。
+        self.assertIn("from core.outbound_ua import openai_default_headers_for", OPENAI_COMPAT_PY)
+        self.assertRegex(
+            OPENAI_COMPAT_PY,
+            r'"default_headers":\s*openai_default_headers_for\(',
+        )
 
     def test_model_listing_passes_default_headers(self):
         self.assertIn("from core.outbound_ua import openai_default_headers", MODEL_PROBE_PY)
