@@ -93,13 +93,22 @@ function ModelParamsSection() {
   const [selectedModelKey, setSelectedModelKey] = useStatePL("");
   const [selectedReasoning, setSelectedReasoning] = useStatePL(null);
   const [selectedApiKind, setSelectedApiKind] = useStatePL("");
+  const [selectedApiFormat, setSelectedApiFormat] = useStatePL("chat_completions");
   const [thinkingLevel, setThinkingLevel] = useStatePL("auto");
   const [dialectOverride, setDialectOverride] = useStatePL("auto");
   useEffectPL(() => {
     let cancelled = false;
     (async () => {
       try {
-        const models = await window.api.models.list().catch(() => ({}));
+        // 同时读凭据：api_format 是「凭据覆盖 > 目录默认」，只看 /api/models 的
+        // catalog 字段会漏掉用户在「添加 API Key」里选的 Responses。
+        const [models, creds] = await Promise.all([
+          window.api.models.list().catch(() => ({})),
+          // 旧测试/嵌入场景可能没有 credentials API；不要让整段 effect 因读取属性而中断。
+          window.api.credentials?.list
+            ? window.api.credentials.list().catch(() => ({ items: [] }))
+            : Promise.resolve({ items: [] }),
+        ]);
         if (cancelled) return;
         // ⚠️ 优先顶层 selected(当前真正生效的模型:存档 session_model > GM 偏好),
         // 而不是 models.models.selected —— 后者是 /api/models 里 catalog 自带的
@@ -120,8 +129,16 @@ function ModelParamsSection() {
             : (sel.capabilities ? Object.keys(sel.capabilities) : []);
           setSelectedModelCaps(caps);
           // /api/models 已在每个 model 上附加 reasoning;selected 只有投影,需要在 apis 里找回。
-          const api = (models?.models?.apis || []).find((a) => a.id === apiId);
+          const apis = (models?.models?.apis || []);
+          const api = apis.find((a) => a.id === apiId);
           setSelectedApiKind((api && (api.kind || api.api_kind)) || "");
+          const credFmt = {};
+          for (const c of (creds?.items || creds?.credentials || [])) {
+            credFmt[c.api_id || c.id] = c.api_format || "";
+          }
+          setSelectedApiFormat(
+            credFmt[apiId] || (api && (api.api_format || api.apiFormat)) || "chat_completions",
+          );
           const m = ((api && api.models) || []).find(
             (mm) => (mm.real_name || mm.id) === modelId || mm.id === modelId);
           modelSpec = (m && m.reasoning) || null;
@@ -294,6 +311,71 @@ function ModelParamsSection() {
     || (selectedReasoning && selectedReasoning.confidence !== "verified")
   );
 
+  // —— 协议能力矩阵（与后端实际发送字段保持一致）——
+  // Chat: _gen_params → temperature/top_p/top_k/repetition/frequency/presence/seed/stop
+  // Anthropic: temperature/top_p/top_k/stop；Vertex: 另加 seed
+  // Responses: 官方只支持 temperature/top_p（max_tokens→max_output_tokens、思考档位单独处理）
+  const isOpenAIFormatApplicable = !selectedApiKind
+    || selectedApiKind === "openai" || selectedApiKind === "openai_compat";
+  const isResponses = selectedApiFormat === "responses" && isOpenAIFormatApplicable;
+  const RESPONSES_UNSUPPORTED = new Set([
+    "top_k", "repetition_penalty", "frequency_penalty", "presence_penalty", "seed", "stop",
+  ]);
+  const paramDesc = (descKey) => {
+    const base = t(`settings.modelparams.${descKey}`);
+    const field = descKey.replace(/_desc$/, "");
+    return isResponses && RESPONSES_UNSUPPORTED.has(field)
+      ? `${base} · ${t('settings.modelparams.unsupported_responses')}`
+      : base;
+  };
+  const protocolKey = isResponses
+    ? "responses"
+    : selectedApiKind === "anthropic"
+      ? "anthropic"
+      : selectedApiKind === "vertex_ai"
+        ? "vertex_ai"
+        : "chat_completions";
+  const protocolLabel = protocolKey === "responses"
+    ? "Responses (/responses)"
+    : protocolKey === "anthropic"
+      ? "Anthropic Messages"
+      : protocolKey === "vertex_ai"
+        ? "Vertex AI"
+        : "Chat Completions (/chat/completions)";
+  const PROTOCOL_SENT_KEYS = {
+    chat_completions: ["temperature", "top_p", "top_k", "repetition_penalty",
+      "frequency_penalty", "presence_penalty", "seed", "stop"],
+    anthropic: ["temperature", "top_p", "top_k", "stop"],
+    vertex_ai: ["temperature", "top_p", "top_k", "seed", "stop"],
+    responses: ["temperature", "top_p"],
+  };
+  const sentKeySet = new Set(PROTOCOL_SENT_KEYS[protocolKey] || []);
+  const stopDisplay = typeof params.stop === "string"
+    ? params.stop
+    : (Array.isArray(params.stop) ? params.stop.filter((s) => typeof s === "string").join("|") : "");
+  const stopList = stopDisplay.split("|").map((s) => s.trim()).filter(Boolean).slice(0, 4);
+  const allSampling = {
+    temperature: params.temperature,
+    top_p: params.top_p,
+    top_k: params.top_k,
+    repetition_penalty: params.repetition_penalty,
+    frequency_penalty: params.frequency_penalty,
+    presence_penalty: params.presence_penalty,
+    seed: params.seed >= 0 ? params.seed : null,
+    stop: stopList,
+  };
+  const sentPreview = Object.fromEntries(
+    Object.entries(allSampling).filter(([k]) => sentKeySet.has(k)),
+  );
+  // max_tokens 是真正的请求预算：Responses 下叫 max_output_tokens。
+  sentPreview[protocolKey === "responses" ? "max_output_tokens" : "max_tokens"] = params.max_tokens;
+  const notSentPreview = Object.fromEntries(
+    Object.entries(allSampling).filter(([k]) => !sentKeySet.has(k)),
+  );
+  // 未设置（seed=-1 / 空 stop）不在“不会发送”里刷存在感。
+  if (notSentPreview.seed == null) delete notSentPreview.seed;
+  if (Array.isArray(notSentPreview.stop) && notSentPreview.stop.length === 0) delete notSentPreview.stop;
+
   return (
     <SetGroup title={t('settings.modelparams.title')} description={t('settings.modelparams.description')}>
       <SetRow label={t('settings.modelparams.preset')} description={t('settings.modelparams.preset_desc')}>
@@ -303,6 +385,17 @@ function ModelParamsSection() {
           ))}
         </CSSpaceBetween>
       </SetRow>
+
+      {isResponses && (
+        <div style={{
+          marginBottom: 12, padding: "10px 12px",
+          border: "1px solid var(--line-soft)", borderRadius: "var(--r-2)",
+          background: "var(--bg-deep)", fontSize: 12, lineHeight: 1.6,
+          color: "var(--text-quiet)",
+        }}>
+          {t('settings.modelparams.responses_note')}
+        </div>
+      )}
 
       {/* 2026-10: 能力驱动的思考控件,放在温度上方(用户要求的顺序)。
           供应商白名单已删除 —— GLM/Kimi/Qwen/Grok/中转只要 model.reasoning
@@ -360,20 +453,24 @@ function ModelParamsSection() {
         value={params.top_p} min={0} max={1} step={0.01} unit=""
         onChange={(v) => { setPreset("custom"); u("top_p", v); }} />
 
-      <ParamSlider label={t('settings.modelparams.top_k')} desc={t('settings.modelparams.top_k_desc')}
+      <ParamSlider label={t('settings.modelparams.top_k')} desc={paramDesc('top_k_desc')}
         value={params.top_k} min={0} max={200} step={1} unit=""
+        disabled={isResponses}
         onChange={(v) => { setPreset("custom"); u("top_k", v); }} />
 
-      <ParamSlider label={t('settings.modelparams.repetition_penalty')} desc={t('settings.modelparams.repetition_penalty_desc')}
+      <ParamSlider label={t('settings.modelparams.repetition_penalty')} desc={paramDesc('repetition_penalty_desc')}
         value={params.repetition_penalty} min={1} max={2} step={0.01} unit=""
+        disabled={isResponses}
         onChange={(v) => { setPreset("custom"); u("repetition_penalty", v); }} />
 
-      <ParamSlider label={t('settings.modelparams.frequency_penalty')} desc={t('settings.modelparams.frequency_penalty_desc')}
+      <ParamSlider label={t('settings.modelparams.frequency_penalty')} desc={paramDesc('frequency_penalty_desc')}
         value={params.frequency_penalty} min={-2} max={2} step={0.05} unit=""
+        disabled={isResponses}
         onChange={(v) => { setPreset("custom"); u("frequency_penalty", v); }} />
 
-      <ParamSlider label={t('settings.modelparams.presence_penalty')} desc={t('settings.modelparams.presence_penalty_desc')}
+      <ParamSlider label={t('settings.modelparams.presence_penalty')} desc={paramDesc('presence_penalty_desc')}
         value={params.presence_penalty} min={-2} max={2} step={0.05} unit=""
+        disabled={isResponses}
         onChange={(v) => { setPreset("custom"); u("presence_penalty", v); }} />
 
       <SetRow label={t('settings.modelparams.max_tokens')} description={t('settings.modelparams.max_tokens_desc')}>
@@ -403,17 +500,18 @@ function ModelParamsSection() {
         />
       </SetRow>
 
-      <SetRow label={t('settings.modelparams.seed')} description={t('settings.modelparams.seed_desc')}>
-        <CSInput type="number" value={String(params.seed)}
+      <SetRow label={t('settings.modelparams.seed')} description={paramDesc('seed_desc')}>
+        <CSInput type="number" value={String(params.seed)} disabled={isResponses}
           onChange={({ detail }) => u("seed", Number(detail.value))}
           placeholder="-1" />
       </SetRow>
 
-      <SetRow label={t('settings.modelparams.stop')} description={t('settings.modelparams.stop_desc')}>
+      <SetRow label={t('settings.modelparams.stop')} description={paramDesc('stop_desc')}>
         {/* stop 以竖线分隔串存入 user_preferences(如 "player:|system:")。
-            Preview JSON 仅展示拆分后的数组形态;后端当前不消费此字段(尚未接入 LLM call),
-            存储格式保持竖线串,待后端接入时在 app.py 里 split("|") 转数组传给模型。 */}
-        <CSInput value={params.stop} onChange={({ detail }) => u("stop", detail.value)}
+            Preview JSON 仅展示拆分后的数组形态;后端 Chat/Anthropic/Vertex 会消费,
+            Responses 官方协议不支持 stop(不会发送)。 */}
+        <CSInput value={stopDisplay} disabled={isResponses}
+          onChange={({ detail }) => u("stop", detail.value)}
           placeholder="player:|system:" />
       </SetRow>
 
@@ -462,21 +560,26 @@ function ModelParamsSection() {
           {/* 分组不是装饰:同一页里的参数去向完全不同 —— 有的真进请求体,有的只改本站行为,
               有的走提示词,还有的在本架构里根本没有通道。此前一个扁平 JSON 把它们混在一起,
               配上「发送给 API 的实际采样参数」这句说明,等于对用户撒谎。 */}
-          <PreviewGroup title={t('settings.modelparams.preview_sent')} note={t('settings.modelparams.preview_sent_note')} data={{
-            temperature: params.temperature,
-            top_p: params.top_p,
-            top_k: params.top_k,
-            repetition_penalty: params.repetition_penalty,
-            frequency_penalty: params.frequency_penalty,
-            presence_penalty: params.presence_penalty,
-            seed: params.seed >= 0 ? params.seed : null,
-            stop: params.stop.split("|").filter(Boolean),
-          }} />
-          <PreviewGroup title={t('settings.modelparams.preview_local')} data={{
-            max_tokens: params.max_tokens,
-            context_size: params.context_size,
-            request_timeout: reqTimeout,
-          }} />
+          <PreviewGroup
+            title={`${t('settings.modelparams.preview_sent')} · ${protocolLabel}`}
+            note={t('settings.modelparams.preview_sent_note')}
+            data={sentPreview}
+          />
+          {Object.keys(notSentPreview).length > 0 && (
+            <PreviewGroup
+              title={`${t('settings.modelparams.preview_not_sent')} · ${protocolLabel}`}
+              note={t('settings.modelparams.preview_not_sent_note')}
+              data={notSentPreview}
+            />
+          )}
+          <PreviewGroup
+            title={t('settings.modelparams.preview_local')}
+            note={t('settings.modelparams.preview_local_note')}
+            data={{
+              context_size: params.context_size,
+              request_timeout: reqTimeout,
+            }}
+          />
           <PreviewGroup title={t('settings.modelparams.preview_prompt')} data={{
             mode: nsfw.mode,
             intensity: nsfw.intensity,
@@ -505,14 +608,14 @@ function PreviewGroup({ title, data, note }) {
   );
 }
 
-function ParamSlider({ label, desc, value, min, max, step, unit, onChange }) {
+function ParamSlider({ label, desc, value, min, max, step, unit, onChange, disabled = false }) {
   return (
     <SetRow label={label} description={desc}>
-      <div style={{display: "flex", alignItems: "center", gap: 8}}>
-        <input type="range" min={min} max={max} step={step} value={value}
+      <div style={{display: "flex", alignItems: "center", gap: 8, opacity: disabled ? 0.55 : 1}}>
+        <input type="range" min={min} max={max} step={step} value={value} disabled={disabled}
           onChange={(e) => onChange(Number(e.target.value))}
           style={{flex: 1, minWidth: 120}} />
-        <input type="number" min={min} max={max} step={step} value={value}
+        <input type="number" min={min} max={max} step={step} value={value} disabled={disabled}
           onChange={(e) => onChange(Number(e.target.value))}
           className="mono" style={{width: 70, textAlign: "right"}} />
       </div>

@@ -23,10 +23,10 @@ function SetGroup({ title, children, action }) {
   );
 }
 
-function MSlider({ label, desc, value, min, max, step, onChange }) {
+function MSlider({ label, desc, value, min, max, step, onChange, disabled = false }) {
   const decimals = step < 1 ? (String(step).split('.')[1]||'').length : 0;
   return (
-    <div className="pl-field">
+    <div className="pl-field" style={{ opacity: disabled ? 0.55 : 1 }}>
       <div className="pl-slider-head">
         <span className="lab">{label}</span>
         <span className="val">{Number(value).toFixed(decimals)}</span>
@@ -34,7 +34,7 @@ function MSlider({ label, desc, value, min, max, step, onChange }) {
       {desc && <span className="desc" style={{ fontSize: 11, color: 'var(--muted-2)', marginBottom: 6, display: 'block' }}>{desc}</span>}
       <input
         className="pl-slider"
-        type="range" min={min} max={max} step={step} value={value}
+        type="range" min={min} max={max} step={step} value={value} disabled={disabled}
         onChange={(e) => onChange(Number(e.target.value))}
       />
     </div>

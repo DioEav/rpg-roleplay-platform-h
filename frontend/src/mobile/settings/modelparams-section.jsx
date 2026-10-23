@@ -41,6 +41,8 @@ function ModelParamsSection() {
   const [thinkingSpec, setThinkingSpec] = useState(null);
   const [thinkingLevel, setThinkingLevel] = useState('auto');
   const [selectedModelKey, setSelectedModelKey] = useState('');
+  const [selectedApiKind, setSelectedApiKind] = useState('');
+  const [selectedApiFormat, setSelectedApiFormat] = useState('chat_completions');
   const [showJson, setShowJson] = useState(false);
 
   useEffect(() => {
@@ -78,7 +80,12 @@ function ModelParamsSection() {
 
         // 思考档位:与桌面/游戏浮层同源,按 /api/models 的 model.reasoning 能力驱动。
         try {
-          const md = await window.api.models.list().catch(() => ({}));
+          const [md, creds] = await Promise.all([
+            window.api.models.list().catch(() => ({})),
+            window.api.credentials?.list
+              ? window.api.credentials.list().catch(() => ({ items: [] }))
+              : Promise.resolve({ items: [] }),
+          ]);
           // 与桌面端同口径:顶层 selected = 当前真正生效的模型;models.models.selected
           // 是 catalog 自带兜底,可能指向另一个模型,不能优先用。
           const sel = (md && md.selected) || (md && md.models && md.models.selected) || {};
@@ -89,6 +96,14 @@ function ModelParamsSection() {
               || mm.id === (sel.real_name || sel.model_id || sel.id));
           const spec = (model && model.reasoning) || null;
           setThinkingSpec(spec);
+          setSelectedApiKind((api && (api.kind || api.api_kind)) || '');
+          const credFmt = {};
+          for (const c of (creds?.items || creds?.credentials || [])) {
+            credFmt[c.api_id || c.id] = c.api_format || '';
+          }
+          setSelectedApiFormat(
+            credFmt[sel.api_id] || (api && (api.api_format || api.apiFormat)) || 'chat_completions',
+          );
           const effKey = sel.api_id && model
             ? `${sel.api_id}:${model.real_name || model.id}`
             : '';
@@ -143,6 +158,67 @@ function ModelParamsSection() {
     }
   };
 
+  // —— 协议能力矩阵（与桌面/后端一致）——
+  const isOpenAIFormatApplicable = !selectedApiKind
+    || selectedApiKind === 'openai' || selectedApiKind === 'openai_compat';
+  const isResponses = selectedApiFormat === 'responses' && isOpenAIFormatApplicable;
+  const RESPONSES_UNSUPPORTED = new Set([
+    'top_k', 'repetition_penalty', 'frequency_penalty', 'presence_penalty', 'seed', 'stop',
+  ]);
+  const paramDesc = (descKey) => {
+    const base = t(`mobile.settings.modelparams.${descKey}`);
+    const field = descKey.replace(/_desc$/, '');
+    return isResponses && RESPONSES_UNSUPPORTED.has(field)
+      ? `${base} · ${t('mobile.settings.modelparams.unsupported_responses')}`
+      : base;
+  };
+  const protocolKey = isResponses
+    ? 'responses'
+    : selectedApiKind === 'anthropic'
+      ? 'anthropic'
+      : selectedApiKind === 'vertex_ai'
+        ? 'vertex_ai'
+        : 'chat_completions';
+  const protocolLabel = protocolKey === 'responses'
+    ? 'Responses (/responses)'
+    : protocolKey === 'anthropic'
+      ? 'Anthropic Messages'
+      : protocolKey === 'vertex_ai'
+        ? 'Vertex AI'
+        : 'Chat Completions (/chat/completions)';
+  const PROTOCOL_SENT_KEYS = {
+    chat_completions: ['temperature', 'top_p', 'top_k', 'repetition_penalty',
+      'frequency_penalty', 'presence_penalty', 'seed', 'stop'],
+    anthropic: ['temperature', 'top_p', 'top_k', 'stop'],
+    vertex_ai: ['temperature', 'top_p', 'top_k', 'seed', 'stop'],
+    responses: ['temperature', 'top_p'],
+  };
+  const sentKeySet = new Set(PROTOCOL_SENT_KEYS[protocolKey] || []);
+  const stopDisplay = typeof params.stop === 'string'
+    ? params.stop
+    : (Array.isArray(params.stop) ? params.stop.filter((s) => typeof s === 'string').join('|') : '');
+  const stopList = stopDisplay.split('|').map((s) => s.trim()).filter(Boolean).slice(0, 4);
+  const allSampling = {
+    temperature: params.temperature,
+    top_p: params.top_p,
+    top_k: params.top_k,
+    repetition_penalty: params.repetition_penalty,
+    frequency_penalty: params.frequency_penalty,
+    presence_penalty: params.presence_penalty,
+    seed: params.seed >= 0 ? params.seed : null,
+    stop: stopList,
+  };
+  const sentPreview = Object.fromEntries(
+    Object.entries(allSampling).filter(([k]) => sentKeySet.has(k)),
+  );
+  // max_tokens 是真正的请求预算：Responses 下叫 max_output_tokens。
+  sentPreview[protocolKey === 'responses' ? 'max_output_tokens' : 'max_tokens'] = params.max_tokens;
+  const notSentPreview = Object.fromEntries(
+    Object.entries(allSampling).filter(([k]) => !sentKeySet.has(k)),
+  );
+  if (notSentPreview.seed == null) delete notSentPreview.seed;
+  if (Array.isArray(notSentPreview.stop) && notSentPreview.stop.length === 0) delete notSentPreview.stop;
+
   return (
     <>
       {/* 预设 */}
@@ -153,6 +229,17 @@ function ModelParamsSection() {
           onChange={applyPreset}
         />
       </MField>
+
+      {isResponses && (
+        <div style={{
+          marginBottom: 12, padding: '10px 12px',
+          border: '1px solid var(--line-soft)', borderRadius: 12,
+          background: 'var(--bg-deep)', fontSize: 12, lineHeight: 1.6,
+          color: 'var(--muted)',
+        }}>
+          {t('mobile.settings.modelparams.responses_note')}
+        </div>
+      )}
 
       {/* 2026-10: 能力驱动的思考档位(用户级,对所有对话生效;对话框浮层可覆盖本对话)。
           放在温度上方,与桌面设置同序。 */}
@@ -188,20 +275,20 @@ function ModelParamsSection() {
         value={params.top_p} min={0} max={1} step={0.01}
         onChange={(v) => { setPreset('custom'); u('top_p', v); }} />
 
-      <MSlider label={t('mobile.settings.modelparams.top_k')} desc={t('mobile.settings.modelparams.top_k_desc')}
-        value={params.top_k} min={0} max={200} step={1}
+      <MSlider label={t('mobile.settings.modelparams.top_k')} desc={paramDesc('top_k_desc')}
+        value={params.top_k} min={0} max={200} step={1} disabled={isResponses}
         onChange={(v) => { setPreset('custom'); u('top_k', v); }} />
 
-      <MSlider label={t('mobile.settings.modelparams.rep_penalty')} desc={t('mobile.settings.modelparams.rep_penalty_desc')}
-        value={params.repetition_penalty} min={1} max={2} step={0.01}
+      <MSlider label={t('mobile.settings.modelparams.rep_penalty')} desc={paramDesc('rep_penalty_desc')}
+        value={params.repetition_penalty} min={1} max={2} step={0.01} disabled={isResponses}
         onChange={(v) => { setPreset('custom'); u('repetition_penalty', v); }} />
 
-      <MSlider label={t('mobile.settings.modelparams.freq_penalty')} desc={t('mobile.settings.modelparams.freq_penalty_desc')}
-        value={params.frequency_penalty} min={-2} max={2} step={0.05}
+      <MSlider label={t('mobile.settings.modelparams.freq_penalty')} desc={paramDesc('freq_penalty_desc')}
+        value={params.frequency_penalty} min={-2} max={2} step={0.05} disabled={isResponses}
         onChange={(v) => { setPreset('custom'); u('frequency_penalty', v); }} />
 
-      <MSlider label={t('mobile.settings.modelparams.presence_penalty')} desc={t('mobile.settings.modelparams.presence_penalty_desc')}
-        value={params.presence_penalty} min={-2} max={2} step={0.05}
+      <MSlider label={t('mobile.settings.modelparams.presence_penalty')} desc={paramDesc('presence_penalty_desc')}
+        value={params.presence_penalty} min={-2} max={2} step={0.05} disabled={isResponses}
         onChange={(v) => { setPreset('custom'); u('presence_penalty', v); }} />
 
       {/* 数值输入 */}
@@ -219,13 +306,13 @@ function ModelParamsSection() {
         </select>
       </MField>
 
-      <MField label={t('mobile.settings.modelparams.seed')} desc={t('mobile.settings.modelparams.seed_desc')}>
-        <input className="pl-input" type="number" value={params.seed}
+      <MField label={t('mobile.settings.modelparams.seed')} desc={paramDesc('seed_desc')}>
+        <input className="pl-input" type="number" value={params.seed} disabled={isResponses}
           onChange={(e) => u('seed', Number(e.target.value))} placeholder="-1" />
       </MField>
 
-      <MField label={t('mobile.settings.modelparams.stop')} desc={t('mobile.settings.modelparams.stop_desc')}>
-        <input className="pl-input" value={params.stop}
+      <MField label={t('mobile.settings.modelparams.stop')} desc={paramDesc('stop_desc')}>
+        <input className="pl-input" value={stopDisplay} disabled={isResponses}
           onChange={(e) => u('stop', e.target.value)} placeholder="player:|system:" />
       </MField>
 
@@ -274,16 +361,25 @@ function ModelParamsSection() {
         {showJson && (
           <div>
             {/* 按真正去向分组,而不是一个扁平 JSON —— 见桌面端同处的说明。 */}
-            <MobilePreviewGroup title={t('mobile.settings.modelparams.preview_sent')} note={t('mobile.settings.modelparams.preview_sent_note')} data={{
-              temperature: params.temperature, top_p: params.top_p, top_k: params.top_k,
-              repetition_penalty: params.repetition_penalty, frequency_penalty: params.frequency_penalty,
-              presence_penalty: params.presence_penalty,
-              seed: params.seed >= 0 ? params.seed : null,
-              stop: params.stop.split('|').filter(Boolean),
-            }} />
-            <MobilePreviewGroup title={t('mobile.settings.modelparams.preview_local')} data={{
-              max_tokens: params.max_tokens, context_size: params.context_size,
-            }} />
+            <MobilePreviewGroup
+              title={`${t('mobile.settings.modelparams.preview_sent')} · ${protocolLabel}`}
+              note={t('mobile.settings.modelparams.preview_sent_note')}
+              data={sentPreview}
+            />
+            {Object.keys(notSentPreview).length > 0 && (
+              <MobilePreviewGroup
+                title={`${t('mobile.settings.modelparams.preview_not_sent')} · ${protocolLabel}`}
+                note={t('mobile.settings.modelparams.preview_not_sent_note')}
+                data={notSentPreview}
+              />
+            )}
+            <MobilePreviewGroup
+              title={t('mobile.settings.modelparams.preview_local')}
+              note={t('mobile.settings.modelparams.preview_local_note')}
+              data={{
+                context_size: params.context_size,
+              }}
+            />
             <MobilePreviewGroup title={t('mobile.settings.modelparams.preview_prompt')} data={{
               mode: nsfw.mode, intensity: nsfw.intensity, extra_prompt: nsfw.extra_prompt,
             }} />
