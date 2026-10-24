@@ -74,8 +74,9 @@ describe('ConfirmStrip config_card — 就绪旗标', () => {
       />,
     );
 
-    // 选择器把解析出的模型画上了屏(用户看到"已经选好")
-    await waitFor(() => expect(screen.getByText('DeepSeek V4-Pro')).toBeTruthy());
+    // 没配 key 时选择器显示「尚未配置任何 API key」告警(而非画出一个用户用不了的模型名)。
+    // 本用例真正要守的是:init 回声不得点亮「继续」。
+    await waitFor(() => expect(screen.getByText(/尚未配置任何 API key|No API key configured/i)).toBeTruthy());
 
     const btn = screen.getByText('继续').closest('button');
     expect(btn).toBeTruthy();

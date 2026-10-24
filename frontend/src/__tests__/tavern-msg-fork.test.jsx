@@ -120,4 +120,27 @@ describe('游戏台 fork 零回归(未传 forkKind)', () => {
     expect(events.length).toBe(0);
     window.removeEventListener('rpg-tavern-fork', onFork);
   });
+
+  it('GM 消息走 message_index 路径时,把紧邻的玩家输入放回输入框', async () => {
+    const api = mockApi();
+    const restored = [];
+    const onRestore = (e) => restored.push(e.detail);
+    window.addEventListener('rpg-composer-restore', onRestore);
+    const { container } = render(
+      <NarrativeBlock text="GM 正文" ts="12:00" saveId={7} msgIndex={2} forkRestoreText="我推门而入" />,
+    );
+    fireEvent.click(forkButton(container));
+    const confirmBtn = await waitFor(() => {
+      const el = Array.from(document.querySelectorAll('button')).find((b) => /新建分支|create new branch/i.test(b.textContent || ''));
+      expect(el).toBeTruthy();
+      return el;
+    });
+    fireEvent.click(confirmBtn);
+    await waitFor(() => expect(api.branches.continueFrom).toHaveBeenCalledTimes(1));
+    // 没有 commitId → 走 save_id + message_index(后端解析到「该轮之前」)
+    expect(api.branches.continueFrom).toHaveBeenCalledWith(expect.objectContaining({ save_id: 7, message_index: 2 }));
+    await waitFor(() => expect(restored).toHaveLength(1), { timeout: 1500 });
+    expect(restored[0]).toEqual({ text: '我推门而入' });
+    window.removeEventListener('rpg-composer-restore', onRestore);
+  });
 });

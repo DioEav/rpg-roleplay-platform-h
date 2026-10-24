@@ -9,8 +9,8 @@ import { defaultKeymap, history, historyKeymap, indentWithTab } from '@codemirro
 import { markdown } from '@codemirror/lang-markdown';
 import { syntaxHighlighting, defaultHighlightStyle, bracketMatching, indentOnInput, codeFolding, foldGutter, foldKeymap } from '@codemirror/language';
 import { searchKeymap, highlightSelectionMatches, selectNextOccurrence } from '@codemirror/search';
-import { aiContinueExtension, cmdKKeymap } from '../lib/md-continue.js';
-import { chapterDiffExtension } from '../lib/md-diff.js';
+import { aiContinueExtension, cmdKKeymap, pendingCancelEffect } from '../lib/md-continue.js';
+import { chapterDiffExtension, chapterDiffCancelEffect } from '../lib/md-diff.js';
 import { ghostCompleteExtension } from '../lib/md-ghost.js';
 
 const { useRef, useEffect } = React;
@@ -130,7 +130,7 @@ export function baseExtensions(onChange, readOnly, getScriptId, getOnAccept, get
   ];
 }
 
-export default function CodeMirrorEditor({ value, docKey, onChange, readOnly = false, scriptId, onViewReady, onContinueAccept, chapterIndex, onSelectionChange, ghostEnabled = false, ghostFetch = null }) {
+export default function CodeMirrorEditor({ value, docKey, onChange, readOnly = false, scriptId, onViewReady, onContinueAccept, chapterIndex, onSelectionChange, ghostEnabled = false, ghostFetch = null, onAiStateDiscarded = null }) {
   const hostRef = useRef(null);
   const viewRef = useRef(null);
   const onChangeRef = useRef(onChange);
@@ -149,6 +149,8 @@ export default function CodeMirrorEditor({ value, docKey, onChange, readOnly = f
   ghostEnabledRef.current = ghostEnabled;
   const ghostFetchRef = useRef(ghostFetch);
   ghostFetchRef.current = ghostFetch;
+  const onAiStateDiscardedRef = useRef(onAiStateDiscarded);
+  onAiStateDiscardedRef.current = onAiStateDiscarded;
   const lastKeyRef = useRef(docKey);
 
   // 建一次。
@@ -168,7 +170,11 @@ export default function CodeMirrorEditor({ value, docKey, onChange, readOnly = f
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // 切标签(docKey 变)→ 整篇替换为新 value;同一 docKey 内不回灌。
+  // 切标签(docKey 变)→ 整篇替换为新 value;同一 docKey 内不回灌(避免光标乱跳)。
+  // 切走时必须同时清掉上一视图的 AI 待定区 / diff:它们存在同一个 EditorView 里,不清就会跟着
+  // 新标签继续生效(流式 token 插进新章、diff 的拒绝把旧章全文写回新章)。
+  // 清理 effect 与整篇替换放在【同一笔事务】:分成两次 dispatch 时,React 已切到新 tab 的 onChange
+  // 闭包会先收到旧标签的中间文档,把新标签内容短暂污染。
   useEffect(() => {
     const view = viewRef.current;
     if (!view) return;
@@ -176,9 +182,19 @@ export default function CodeMirrorEditor({ value, docKey, onChange, readOnly = f
     lastKeyRef.current = docKey;
     const cur = view.state.doc.toString();
     const next = value || '';
+    const effects = [];
+    const pe = pendingCancelEffect(view);
+    if (pe) effects.push(pe);
+    // agent 提议改章可以安全 reject(同步后端待确认);conflict diff 不自动回调,
+    // 避免用户只是切个标签就替他把本地版本 force-save 覆盖服务端新文。
+    const de = chapterDiffCancelEffect(view, { reject: true });
+    if (de) effects.push(de);
     if (cur !== next) {
-      view.dispatch({ changes: { from: 0, to: cur.length, insert: next }, selection: { anchor: 0 } });
+      view.dispatch({ changes: { from: 0, to: cur.length, insert: next }, selection: { anchor: 0 }, effects });
+    } else if (effects.length) {
+      view.dispatch({ effects });
     }
+    if (effects.length) { try { onAiStateDiscardedRef.current?.(); } catch (_) {} }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [docKey]);
 

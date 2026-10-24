@@ -102,10 +102,17 @@ function Composer({
   // task 141: 从玩家消息新建分支后,把那条玩家消息塞回输入框 — 让用户能改
   // (默认 fork 行为是消息全消失,玩家会觉得自己输入丢了)。MsgActions doFork
   // 检测 role==='user' 时 dispatch rpg-composer-restore event 触发。
+  // 用 ref 读当前草稿:用户可能已经打了一半,回填不能把未发送内容覆盖掉。
+  const textRef = useRefC(text);
+  React.useEffect(() => { textRef.current = text; }, [text]);
   React.useEffect(() => {
     const handler = (ev) => {
       const restored = (ev && ev.detail && ev.detail.text) || "";
       if (!restored) return;
+      if (String(textRef.current || "").trim()) {
+        window.__apiToast?.(t('game.composer.restore_kept_draft'), { kind: "info", duration: 2600 });
+        return;
+      }
       setText(restored);
       setTimeout(() => {
         const ta = taRef.current;
@@ -117,7 +124,7 @@ function Composer({
     };
     window.addEventListener("rpg-composer-restore", handler);
     return () => window.removeEventListener("rpg-composer-restore", handler);
-  }, [setText]);
+  }, [setText, t]);
 
   // PR #14: 选择斜杠命令后自动聚焦输入框,可直接回车发送或继续输入参数。
   React.useEffect(() => {

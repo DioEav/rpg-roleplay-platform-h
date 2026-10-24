@@ -8,7 +8,7 @@ import { createNode, renameNode, deleteNode, fetchGroupList } from './node-crud.
 const { useState, useEffect, useCallback, useRef } = React;
 
 // ── 文件树:VSCode 风资源管理器(多组展开 / 搜索 / 图标 / 工具栏 / 键盘 / 右键 / 增删改 / 拖拽)──
-function FileTree({ scriptId, openNode, activeKey, reloadKey, onMutate }) {
+function FileTree({ scriptId, openNode, activeKey, reloadKey, onMutate, onChaptersDeleted, onBeforeDelete, onMutatingChange }) {
   const { t } = useTranslation();
   const groupLabel = (kind) => t(`md_editor.tree.group.${kind}`);
   const [expanded, setExpanded] = useState(() => new Set(lsGet('mde.tree.expanded2', ['chapter']) || ['chapter']));
@@ -23,15 +23,20 @@ function FileTree({ scriptId, openNode, activeKey, reloadKey, onMutate }) {
   const [dragK, setDragK] = useState(null); // 拖拽中的 worldbook nodeKey
   const bodyRef = useRef(null);
   const submittingRef = useRef(false);      // 提交锁:防 Enter(onKeyDown)+ disabled 翻转引发的 onBlur 二次提交→重复新建
+  const scriptIdRef = useRef(scriptId);     // 切剧本时旧分组请求晚回来不能覆盖新剧本列表
+  scriptIdRef.current = scriptId;
 
   const persistExpanded = (s) => lsSet('mde.tree.expanded2', [...s]);
   const loadGroup = useCallback(async (kind) => {
-    if (!scriptId) return;
+    if (!scriptId || scriptIdRef.current !== scriptId) return;   // 旧剧本的过期回调
+    const sid = scriptId;
     setLists((s) => ({ ...s, [kind]: { ...(s[kind] || {}), loading: true } }));
     try {
-      const items = await fetchGroupList(kind, scriptId);
+      const items = await fetchGroupList(kind, sid);
+      if (scriptIdRef.current !== sid) return;
       setLists((s) => ({ ...s, [kind]: { loading: false, items } }));
     } catch (e) {
+      if (scriptIdRef.current !== sid) return;
       setLists((s) => ({ ...s, [kind]: { loading: false, error: e?.message || String(e), items: [] } }));
     }
   }, [scriptId]);
@@ -96,20 +101,26 @@ function FileTree({ scriptId, openNode, activeKey, reloadKey, onMutate }) {
   const doDelete = async (kind, it) => {
     setCtx(null);
     if (!CAN_DELETE[kind]) { toast(t('md_editor.toast.delete_unsupported'), { kind: 'warning' }); return; }
+    // 删除会关闭/重映射标签;编辑页面在「有未处理 AI 改动」或「切剧本前保存中」时通过该回调拦下。
+    if (onBeforeDelete && !onBeforeDelete()) return;
     const extra = kind === 'chapter' ? '\n' + t('md_editor.confirm.chapter_delete_extra') : '';
     const ok = await (window.__confirm
       ? window.__confirm({ title: t('md_editor.confirm.delete_item'), message: `${it.label}\n${t('md_editor.confirm.irreversible')}${extra}`, danger: true, confirmText: t('common.delete') })
       : Promise.resolve(confirm(t('md_editor.confirm.delete_item_plain', { label: it.label }))));
     if (!ok) return;
+    // 确认框等待期间自动保存可能刚好启动:再检查一次,避免保存与章节重排并发。
+    if (onBeforeDelete && !onBeforeDelete()) return;
+    onMutatingChange?.(true);
     setBusy(true);
     try {
       await deleteNode(kind, scriptId, it.id);
       await loadGroup(kind);
-      onMutate?.('delete', kind, it.id);
+      if (kind === 'chapter' && onChaptersDeleted) onChaptersDeleted([it.id]);
+      else onMutate?.('delete', kind, it.id);
       setSelSet(new Set());
       toast(t('md_editor.toast.deleted'), { kind: 'ok', duration: 1100 });
     } catch (err) { toast(t('md_editor.toast.delete_failed'), { kind: 'danger', detail: err?.message }); }
-    finally { setBusy(false); }
+    finally { setBusy(false); onMutatingChange?.(false); }
   };
 
   // 批量删除(多选)。章节走批量端点(删整批 → 单次重排,逐章删会 index 漂移删错);其余逐条删各自端点。
@@ -123,19 +134,30 @@ function FileTree({ scriptId, openNode, activeKey, reloadKey, onMutate }) {
     const total = Object.values(byKind).reduce((n, a) => n + a.length, 0);
     if (!total) { toast(t('md_editor.toast.nothing_to_delete'), { kind: 'warning' }); return; }
     const hasChapter = (byKind.chapter || []).length > 0;
+    if (onBeforeDelete && !onBeforeDelete()) return;
     const extra = hasChapter ? '\n' + t('md_editor.confirm.chapter_batch_delete_extra') : '';
     const ok = await (window.__confirm
       ? window.__confirm({ title: t('md_editor.confirm.delete_selected', { count: total }), message: `${t('md_editor.confirm.irreversible')}${extra}`, danger: true, confirmText: t('common.delete') })
       : Promise.resolve(confirm(t('md_editor.confirm.delete_selected', { count: total }))));
     if (!ok) return;
+    // 确认框等待期间自动保存可能刚好启动:再检查一次。
+    if (onBeforeDelete && !onBeforeDelete()) return;
+    onMutatingChange?.(true);
     setBusy(true);
     let failed = 0;
     const A = api();
+    let deletedChapterIds = [];
     try {
       if ((byKind.chapter || []).length) {
-        try { await A.scripts.deleteChapters(scriptId, byKind.chapter.map((it) => it.id)); byKind.chapter.forEach((it) => onMutate?.('delete', 'chapter', it.id)); }
-        catch (e) { failed += byKind.chapter.length; toast(t('md_editor.toast.chapter_batch_delete_failed'), { kind: 'danger', detail: e?.message }); }
+        try {
+          await A.scripts.deleteChapters(scriptId, byKind.chapter.map((it) => it.id));
+          deletedChapterIds = byKind.chapter.map((it) => it.id);
+          // 有专门的重映射回调时由它统一处理(关闭被删标签 + 给其他章节改号);
+          // 没有时保持旧行为:逐个通知 onMutate 关闭标签。
+          if (!onChaptersDeleted) deletedChapterIds.forEach((id) => onMutate?.('delete', 'chapter', id));
+        } catch (e) { failed += byKind.chapter.length; toast(t('md_editor.toast.chapter_batch_delete_failed'), { kind: 'danger', detail: e?.message }); }
       }
+      if (deletedChapterIds.length && onChaptersDeleted) onChaptersDeleted(deletedChapterIds);
       for (const kind of Object.keys(byKind)) {
         if (kind === 'chapter') continue;
         for (const it of byKind[kind]) {
@@ -144,7 +166,7 @@ function FileTree({ scriptId, openNode, activeKey, reloadKey, onMutate }) {
         }
       }
       await Promise.all(Object.keys(byKind).map((k) => loadGroup(k)));
-    } finally { setSelSet(new Set()); setBusy(false); }
+    } finally { setSelSet(new Set()); setBusy(false); onMutatingChange?.(false); }
     toast(failed ? t('md_editor.toast.delete_partial', { failed }) : t('md_editor.toast.deleted_count', { count: total }), { kind: failed ? 'warn' : 'ok', duration: 1500 });
   };
 
@@ -182,6 +204,11 @@ function FileTree({ scriptId, openNode, activeKey, reloadKey, onMutate }) {
   // 键盘:↑↓ 移动游标(Shift=范围扩选)/ Cmd·Ctrl+A 全选 / Enter 打开 / F2 改名 / Delete 删(支持多选)。
   const onKeyDown = (ev) => {
     if (editing) return;
+    // 键盘事件挂在树根上(包含工具栏里的搜索框),必须放行输入控件:
+    // 否则在搜索框按 Backspace 会触发「删除选中章节」、↑/↓/Enter 也会操作树。
+    const tgt = ev.target;
+    if (tgt && (tgt.tagName === 'INPUT' || tgt.tagName === 'TEXTAREA' || tgt.isContentEditable
+      || (typeof tgt.closest === 'function' && tgt.closest('input, textarea, [contenteditable="true"]')))) return;
     if (!flat.length) return;
     const order = flat.map((f) => nodeKey(f.kind, f.id));
     const idx = order.indexOf(sel);

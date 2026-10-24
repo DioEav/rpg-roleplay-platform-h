@@ -29,12 +29,28 @@ export const pendingField = StateField.define({
 
 function pendingState(view) { return view.state.field(pendingField, false) || null; }
 
+// 供切标签/卸载前判断:当前视图是否还有 AI 待定区(生成中或已生成待接受)。
+export function hasPendingContinue(view) {
+  return !!pendingState(view);
+}
+
+// 安全清理:中止在飞请求并清空待定区,但【不还原原文】。
+// 调用方即将整篇替换文档(切标签/切剧本),此时还原只会制造一次无意义的中间文档。
+// 若需要保留旧标签内容,调用方应先用 rejectPending(会还原原文)。
+export function pendingCancelEffect(view) {
+  const p = pendingState(view);
+  if (!p) return null;
+  try { p.ctrl?.abort(); } catch (_) {}
+  return setPending.of(null);
+}
+
 export function acceptPending(view) {
   const p = pendingState(view);
   if (!p) return false;
   // 接受前先抓住这段被接受的正文,清空待定区后回调(用于「续写后同步设定到知识库」桥接)。
   const text = view.state.doc.sliceString(p.from, p.to);
   view.dispatch({ effects: setPending.of(null) });
+  try { p.ctrl?.abort(); } catch (_) {}   // 用户 Tab 提前采纳时,立即停掉剩余流
   view.focus();
   if (text && text.trim() && typeof p.onAccept === 'function') {
     try { p.onAccept(text, { rewrite: !!p.rewrite }); } catch (_) {}
@@ -45,6 +61,7 @@ export function acceptPending(view) {
 export function rejectPending(view) {
   const p = pendingState(view);
   if (!p) return false;
+  try { p.ctrl?.abort(); } catch (_) {}   // Esc 取消时立即断流,不等下一个 token
   // 删掉插入的待定文本;改写模式还原原文。
   view.dispatch({
     changes: { from: p.from, to: p.to, insert: p.original || '' },
@@ -102,11 +119,12 @@ export async function runContinue(view, opts = {}) {
     view.dispatch({ changes: { from: sel.from, to: sel.to, insert: '' } });
     insertAt = sel.from;
   }
-  // 建空待定区(busy)。onAccept/rewrite 随待定区一路携带,接受时回调用于「同步到知识库」桥接。
-  view.dispatch({ effects: setPending.of({ from: insertAt, to: insertAt, original: selectionText, busy: true, onAccept: opts.onAccept, rewrite }) });
+  // 建空待定区(busy)。onAccept/rewrite/ctrl 随待定区一路携带,接受时回调用于「同步到知识库」桥接,
+  // ctrl 用于切标签/取消时确定性中止在飞请求(否则流会继续打到已经换过文档的视图上)。
+  const ctrl = new AbortController();
+  view.dispatch({ effects: setPending.of({ from: insertAt, to: insertAt, original: selectionText, busy: true, onAccept: opts.onAccept, rewrite, ctrl }) });
   view.focus();
 
-  const ctrl = new AbortController();
   let got = false;
   opts.onState?.('busy');
 
@@ -119,7 +137,7 @@ export async function runContinue(view, opts = {}) {
     const at = p.to;
     view.dispatch({
       changes: { from: at, insert: text },
-      effects: setPending.of({ from: p.from, to: at + text.length, original: p.original, busy: true, onAccept: p.onAccept, rewrite: p.rewrite }),
+      effects: setPending.of({ from: p.from, to: at + text.length, original: p.original, busy: true, onAccept: p.onAccept, rewrite: p.rewrite, ctrl: p.ctrl }),
       scrollIntoView: true,
     });
     got = true;
@@ -160,9 +178,11 @@ export async function runContinue(view, opts = {}) {
       return;
     }
     // 完成:留高亮 + 提示条,等用户 Tab 接受 / Esc 放弃。
-    view.dispatch({ effects: setPending.of({ from: p.from, to: p.to, original: p.original, busy: false, onAccept: p.onAccept, rewrite: p.rewrite }) });
+    view.dispatch({ effects: setPending.of({ from: p.from, to: p.to, original: p.original, busy: false, onAccept: p.onAccept, rewrite: p.rewrite, ctrl: p.ctrl }) });
     opts.onState?.('done');
   } catch (e) {
+    // 切标签 / Esc / 主动 abort 不是错误:静默收尾,不弹「AI 续写出错」红条。
+    if (ctrl.signal.aborted) { opts.onState?.('cancel'); return; }
     if (pendingState(view) && !got) rejectPending(view);
     opts.onState?.('error', e?.message);
     try { window.__apiToast?.('AI 续写出错', { kind: 'danger', detail: e?.message }); } catch (_) {}

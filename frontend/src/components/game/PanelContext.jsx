@@ -234,7 +234,7 @@ function PanelContext({ state }) {
   // tokens_used / retrieval_chunks 是后端从不写入的死字段(恒 0)。改读真实值:
   // estimated_tokens 由 context_engine 每轮写入;层数取 layers 数组长度。
   const tokensUsed = lastCtx.estimated_tokens || 0;
-  const retrievalChunks = Array.isArray(lastCtx.layers) ? lastCtx.layers.length : 0;
+  const layerCount = Array.isArray(lastCtx.layers) ? lastCtx.layers.length : 0;
   const chapterRefs = Array.isArray(lastCtx.chapter_refs) ? lastCtx.chapter_refs : [];
   // task 86：curator_plan 真实写入路径是 state.memory.last_context_agent.curator_plan；
   // spec prop 顺序是 state.last_context_agent → state.last_context.debug → memory.last_context_agent → {}
@@ -250,12 +250,26 @@ function PanelContext({ state }) {
       <div className="gp-section">
         <div className="section-head">
           <h3>{t('game.context.title')}<span className="muted-2" style={{marginLeft: 8, fontSize: 11, textTransform: "none"}}>{t('game.context.tokens', { count: tokensUsed })}</span></h3>
-          <span className="pill mono">{retrievalChunks} chunks</span>
+          <span className="pill mono">{t('game.context.layers_count', { count: layerCount })}</span>
         </div>
         <ul className="gp-flat-list">
-          {chapterRefs.map((c, i) => (
-            <li key={i}><span><Icon name="quote" size={12} style={{verticalAlign: "-2px", marginRight: 6}} />{typeof c === "string" ? c : (c?.title || c?.label || JSON.stringify(c))}</span><span className="muted-2 mono" style={{fontSize: 11}}>0.{84 - i * 7}</span></li>
-          ))}
+          {chapterRefs.map((c, i) => {
+            // 后端目前不写 chapter_refs;旧版这里用 0.84/0.77… 递减假分数充数。
+            // 若未来写入 score/relevance/similarity 就展示真值,否则不显示分数。
+            const rawScore = (c && typeof c === "object")
+              ? (c.score ?? c.relevance ?? c.similarity)
+              : null;
+            const scoreNum = (rawScore != null && String(rawScore).trim() !== "")
+              ? Number(rawScore)
+              : NaN;
+            const score = Number.isFinite(scoreNum) ? scoreNum.toFixed(2) : "";
+            return (
+              <li key={i}>
+                <span><Icon name="quote" size={12} style={{verticalAlign: "-2px", marginRight: 6}} />{typeof c === "string" ? c : (c?.title || c?.label || JSON.stringify(c))}</span>
+                {score ? <span className="muted-2 mono" style={{fontSize: 11}}>{score}</span> : null}
+              </li>
+            );
+          })}
           {chapterRefs.length === 0 && (
             <li><span className="muted-2">{t('game.context.no_chapter_refs')}</span></li>
           )}

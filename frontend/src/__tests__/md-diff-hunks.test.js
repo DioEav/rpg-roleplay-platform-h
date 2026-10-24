@@ -12,7 +12,7 @@ import { EditorState } from '@codemirror/state';
 import { EditorView } from '@codemirror/view';
 import {
   chapterDiffExtension, showChapterDiff, acceptChapterDiff, rejectChapterDiff,
-  hasChapterDiff, lineDiff,
+  hasChapterDiff, lineDiff, chapterDiffCancelEffect,
 } from '../lib/md-diff.js';
 
 function mkView(text) {
@@ -100,6 +100,41 @@ describe('md-diff 逐块审阅', () => {
     expect(onReject).toHaveBeenCalledTimes(1);              // 全 reject → 走 onReject 而非 onMixed
     expect(onMixed).not.toHaveBeenCalled();
     expect(v.state.doc.toString()).toBe('P\nQ\nR');
+    v.destroy();
+  });
+
+  it('已有未处理 diff 时拒绝叠加第二份(避免第一份回调悬空)', () => {
+    const v = mkView('A');
+    const r1 = showChapterDiff(v, 'A', 'B', { kind: 'agent', onAccept: vi.fn(), onReject: vi.fn(), onMixed: vi.fn() });
+    const r2 = showChapterDiff(v, 'B', 'C', { kind: 'agent', onAccept: vi.fn(), onReject: vi.fn(), onMixed: vi.fn() });
+    expect(r1).toBe(true);
+    expect(r2).toBe(false);
+    expect(hasChapterDiff(v)).toBe(true);
+    expect(v.state.doc.toString()).toBe('B');
+    v.destroy();
+  });
+
+  it('切标签安全清理:agent diff 只清状态并 reject,不把旧文写回新文档', () => {
+    const v = mkView('A');
+    const onReject = vi.fn();
+    showChapterDiff(v, 'A', 'B', { kind: 'agent', onAccept: vi.fn(), onReject, onMixed: vi.fn() });
+    const eff = chapterDiffCancelEffect(v, { reject: true });
+    v.dispatch({ changes: { from: 0, to: v.state.doc.length, insert: 'NEW-TAB' }, effects: eff });
+    expect(onReject).toHaveBeenCalledTimes(1);
+    expect(hasChapterDiff(v)).toBe(false);
+    expect(v.state.doc.toString()).toBe('NEW-TAB');
+    v.destroy();
+  });
+
+  it('conflict diff 清理不回调 onReject(避免静默 force-save 本地版本)', () => {
+    const v = mkView('A');
+    const onReject = vi.fn();
+    showChapterDiff(v, 'A', 'B', { kind: 'conflict', onAccept: vi.fn(), onReject, onMixed: vi.fn() });
+    const eff = chapterDiffCancelEffect(v, { reject: true });
+    v.dispatch({ changes: { from: 0, to: v.state.doc.length, insert: 'NEW-TAB' }, effects: eff });
+    expect(onReject).not.toHaveBeenCalled();
+    expect(hasChapterDiff(v)).toBe(false);
+    expect(v.state.doc.toString()).toBe('NEW-TAB');
     v.destroy();
   });
 });

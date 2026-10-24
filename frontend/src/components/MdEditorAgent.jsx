@@ -58,6 +58,15 @@ const WRITE_TOOL_MAP = {
   update_npc_card: { kind: 'card', idArg: 'card_id' },
   update_anchor: { kind: 'anchor', idArg: 'anchor_id' },
   upsert_canon_entity: { kind: 'canon', idArg: 'logical_key' },
+  // 删除类:成功后关闭对应已打开标签并重拉树。
+  delete_worldbook_entry: { kind: 'worldbook', idArg: 'entry_id', deleted: true },
+  delete_anchor: { kind: 'anchor', idArg: 'anchor_id', deleted: true },
+  // 新建类工具 args 里没有新实体 id → tryRefresh 会退化成「只刷新文件树」。
+  create_script_chapter: { kind: 'chapter', idArg: 'chapter_index' },
+  create_npc_card: { kind: 'card', idArg: 'card_id' },
+  // 整本章节结构变化:旧 chapter_index 到新序号的映射不可知 → 交给父级关闭全部章节标签并重拉树。
+  resplit_script: { kind: 'chapter', restructure: true },
+  import_document_as_chapters: { kind: 'chapter', restructure: true },
 };
 
 // 落库前「改动预览」:章节正文给当前→改为对照(供作者落库前看清改了什么),结构化写给「将写入」。
@@ -239,7 +248,7 @@ const WRITING_SKILLS = [
     prompt: '请用 get_chapter_text 读【当前章节】(必要时 get_script_chapters 跨章回看),梳理本章埋下或呼应的伏笔/线索:哪些已回收、哪些悬而未决、哪些可能与既有设定冲突。只输出清单与建议,不改库。' },
 ];
 
-const MdEditorAgent = forwardRef(function MdEditorAgent({ scriptId, activeTab, onWriteComplete, onContinue, onProposeChapterEdit, selLen = 0, getSelectionContext, onIssuesReported }, ref) {
+const MdEditorAgent = forwardRef(function MdEditorAgent({ scriptId, activeTab, onWriteComplete, onRestructure, onContinue, onProposeChapterEdit, selLen = 0, getSelectionContext, onIssuesReported }, ref) {
   const { t } = useTranslation();
   const [messages, setMessages] = useState([]);   // [{role, text, tools:[{call_id,tool,args,status,result}]}]
   const [input, setInput] = useState('');
@@ -251,6 +260,13 @@ const MdEditorAgent = forwardRef(function MdEditorAgent({ scriptId, activeTab, o
   const convIdRef = useRef(null);
   const scrollRef = useRef(null);
   const abortRef = useRef(null);
+  const scriptIdRef = useRef(scriptId);
+  const scriptSessionRef = useRef(0);
+  // 切剧本时在渲染期就递增会话号:在途 SSE/对话/上传结果回来时据此丢弃,避免污染新剧本。
+  if (scriptIdRef.current !== scriptId) {
+    scriptIdRef.current = scriptId;
+    scriptSessionRef.current += 1;
+  }
   // 三级权限(Q3):AI 改库的写入权限 read_only / review(默认) / full_access。持久化 editor.write_mode。
   const [writeMode, setWriteMode] = useState('review');
   // 复用游戏聊天框 Composer 所需的浮层开关(只用权限/写模式浮层;模型/上下文环/斜杠/附件/生图在右栏全隐藏)。
@@ -266,6 +282,7 @@ const MdEditorAgent = forwardRef(function MdEditorAgent({ scriptId, activeTab, o
   const [refPicker, setRefPicker] = useState(null);   // null | {items|null, q}
   const openRefPicker = useCallback(async () => {
     if (!scriptId) return;
+    const session = scriptSessionRef.current;
     setRefPicker({ items: null, q: '' });
     try {
       const A = window.api;
@@ -274,12 +291,16 @@ const MdEditorAgent = forwardRef(function MdEditorAgent({ scriptId, activeTab, o
         A?.cards?.scriptList?.(scriptId).catch(() => null),
         A?.scripts?.worldbook?.(scriptId).catch(() => null),
       ]);
+      if (scriptSessionRef.current !== session) return;   // 期间已切剧本
       const items = [];
       for (const c of ((chs?.chapters || chs?.items) || [])) items.push({ kind: 'chapter', id: c.chapter_index, label: `第${c.chapter_index}章 ${(c.title || '').replace(/^\s*第\s*[0-9一二三四五六七八九十百千]+\s*章\s*/, '')}`.trim() });
       for (const c of (Array.isArray(cards) ? cards : (cards?.items || []))) items.push({ kind: 'card', id: c.id, label: c.name || `卡#${c.id}` });
       for (const w of ((wb?.entries || wb?.items) || (Array.isArray(wb) ? wb : []))) items.push({ kind: 'worldbook', id: w.id, label: w.title || `世界书#${w.id}` });
       setRefPicker((p) => p ? { ...p, items } : p);
-    } catch (_) { setRefPicker((p) => p ? { ...p, items: [] } : p); }
+    } catch (_) {
+      if (scriptSessionRef.current !== session) return;
+      setRefPicker((p) => p ? { ...p, items: [] } : p);
+    }
   }, [scriptId]);
   const addRef = useCallback((r) => {
     setPinnedRefs((arr) => (arr.some((x) => x.kind === r.kind && x.id === r.id) ? arr : [...arr, r]).slice(0, 12));
@@ -300,6 +321,7 @@ const MdEditorAgent = forwardRef(function MdEditorAgent({ scriptId, activeTab, o
       return;
     }
     setUploading(true);
+    const session = scriptSessionRef.current;
     try {
       const buf = await file.arrayBuffer();
       const bytes = new Uint8Array(buf);
@@ -310,6 +332,7 @@ const MdEditorAgent = forwardRef(function MdEditorAgent({ scriptId, activeTab, o
         body: JSON.stringify({ filename: name, content_b64: btoa(bin) }),
       });
       const j = await res.json();
+      if (scriptSessionRef.current !== session) return;   // 期间已切剧本:附件不能挂到新剧本
       if (j && j.ok) {
         setAttached({ doc_id: j.doc_id, filename: j.filename || name, chars: j.chars || 0 });
         window.__apiToast?.(t('components.md_editor_agent.doc.attached', { name: j.filename || name, defaultValue: `已附加「${j.filename || name}」,在下方说出要求(如「拆成章节」)` }), { kind: 'ok' });
@@ -317,8 +340,9 @@ const MdEditorAgent = forwardRef(function MdEditorAgent({ scriptId, activeTab, o
         window.__apiToast?.((j && j.error) || t('components.md_editor_agent.doc.fail', { defaultValue: '文档上传失败' }), { kind: 'danger' });
       }
     } catch (e) {
+      if (scriptSessionRef.current !== session) return;
       window.__apiToast?.(t('components.md_editor_agent.doc.fail', { defaultValue: '文档上传失败' }), { kind: 'danger', detail: e?.message });
-    } finally { setUploading(false); }
+    } finally { if (scriptSessionRef.current === session) setUploading(false); }
   }, [scriptId, t]);
 
   const onDocDragOver = useCallback((e) => {
@@ -361,28 +385,41 @@ const MdEditorAgent = forwardRef(function MdEditorAgent({ scriptId, activeTab, o
   }, [messages]);
 
   // 切剧本 / 刷新 → 先清空,再尝试从 localStorage 取回本剧本上次的对话 id 并拉回历史(刷新不丢)。
-  const scriptIdRef = useRef(scriptId);
-  scriptIdRef.current = scriptId;
   useEffect(() => {
     let cancelled = false;
+    // 切走时中止旧剧本的在途聊天,并清掉只属于旧剧本的附件/@引用/输入草稿。
+    try { abortRef.current?.abort(); } catch (_) {}
+    abortRef.current = null;
+    setBusy(false);
+    setUploading(false);
+    setDragOver(false);
+    setInput('');
+    setAttached(null);
+    setPinnedRefs([]);
+    setRefPicker(null);
     convIdRef.current = null;
     setMessages([]);
-    if (!scriptId) return undefined;
-    let cid = null;
-    cid = lsGet(`mde.conv.${scriptId}`);
-    if (!cid) return undefined;
-    convIdRef.current = cid;
-    (async () => {
-      try {
-        const res = await fetch(`/api/console_assistant/conversations/${encodeURIComponent(cid)}/messages`, { credentials: 'include' });
-        if (cancelled || !res.ok) return;
-        const j = await res.json();
-        if (cancelled || !j?.ok || !Array.isArray(j.messages) || !j.messages.length) return;
-        // 恢复工具调用历史(后端 ui_turns 现带 tools:名/参数/状态/结果)→ 折叠块可还原。
-        setMessages(j.messages.map((m) => ({ role: m.role, text: m.text, tools: Array.isArray(m.tools) ? m.tools : [] })));
-      } catch (_) { /* 还原失败静默,照常新会话 */ }
-    })();
-    return () => { cancelled = true; };
+    if (scriptId) {
+      const cid = lsGet(`mde.conv.${scriptId}`);
+      if (cid) {
+        convIdRef.current = cid;
+        (async () => {
+          try {
+            const res = await fetch(`/api/console_assistant/conversations/${encodeURIComponent(cid)}/messages`, { credentials: 'include' });
+            if (cancelled || !res.ok) return;
+            const j = await res.json();
+            if (cancelled || !j?.ok || !Array.isArray(j.messages) || !j.messages.length) return;
+            // 恢复工具调用历史(后端 ui_turns 现带 tools:名/参数/状态/结果)→ 折叠块可还原。
+            setMessages(j.messages.map((m) => ({ role: m.role, text: m.text, tools: Array.isArray(m.tools) ? m.tools : [] })));
+          } catch (_) { /* 还原失败静默,照常新会话 */ }
+        })();
+      }
+    }
+    return () => {
+      cancelled = true;
+      scriptSessionRef.current += 1;   // 卸载/切走后旧请求的结果一律丢弃
+      try { abortRef.current?.abort(); } catch (_) {}
+    };
   }, [scriptId]);
 
   // ── 对话管理:新对话 / 历史列表 / 切换 / 删除(后端 console_assistant 早有 4 端点,编辑器此前没接) ──
@@ -390,20 +427,24 @@ const MdEditorAgent = forwardRef(function MdEditorAgent({ scriptId, activeTab, o
   const [showConvList, setShowConvList] = useState(false);
 
   const loadConversation = useCallback(async (cid) => {
+    const session = scriptSessionRef.current;
     convIdRef.current = cid || null;
     setMessages([]);
     if (scriptIdRef.current && cid) lsSet(`mde.conv.${scriptIdRef.current}`, cid);
     if (!cid) return;
     try {
       const j = await window.api?.consoleAssistant?.getMessages?.(cid);
+      if (scriptSessionRef.current !== session) return;   // 期间已切剧本
       if (!j?.ok || !Array.isArray(j.messages)) return;
       setMessages(j.messages.map((m) => ({ role: m.role, text: m.text, tools: Array.isArray(m.tools) ? m.tools : [] })));
     } catch (_) { /* 静默 */ }
   }, []);
 
   const newConversation = useCallback(async () => {
+    const session = scriptSessionRef.current;
     let nid = null;
     try { nid = (await window.api?.consoleAssistant?.newConversation?.())?.conversation_id || null; } catch (_) {}
+    if (scriptSessionRef.current !== session) return;   // 期间已切剧本:新对话不绑到新剧本
     convIdRef.current = nid;
     if (scriptIdRef.current) {
       if (nid) lsSet(`mde.conv.${scriptIdRef.current}`, nid);
@@ -473,9 +514,9 @@ const MdEditorAgent = forwardRef(function MdEditorAgent({ scriptId, activeTab, o
       return;
     }
     if (event === 'tool_result') {
-      // 关键修复:后端 tool_call 事件不带 call_id、tool_result 不带 tool 名 → 原「按 tool/call_id 配对」
-      // 永不命中 → 工具永远卡在「执行中」。工具按调用顺序串行执行,故把【最早一个仍 running 的】工具
-      // 标完成(FIFO),既治卡死、又能正确对应顺序(重名工具如多次 get_script_character_card 不再错配)。
+      // 状态配对:tool_call 仍不带 call_id(直接写路径的 tool_result 已带 tool,供写库后刷新),
+      // 单靠 call_id 仍可能配不上 → 用 FIFO 把【最早一个仍 running 的】工具标完成,既治卡死、
+      // 又能正确对应顺序(重名工具如多次 get_script_character_card 不再错配)。
       setMessages((m) => m.map((msg, i) => {
         if (i !== assistantIdx) return msg;
         let patched = false;
@@ -540,14 +581,29 @@ const MdEditorAgent = forwardRef(function MdEditorAgent({ scriptId, activeTab, o
         for (const tc of (m[i].tools || [])) {
           const map = WRITE_TOOL_MAP[tc.tool];
           if (map && (tc.call_id === data.call_id || tc.tool === data.tool)) {
-            if (map.batch) { try { onWriteComplete?.(map.kind, null); } catch (_) {} }  // 批量:只刷新该组树
-            else { const id = tc.args?.[map.idArg]; if (id != null) { try { onWriteComplete?.(map.kind, id); } catch (_) {} } }
+            if (map.restructure) { try { onRestructure?.(); } catch (_) {} }
+            else if (map.deleted) {
+              const id = tc.args?.[map.idArg];
+              try { onWriteComplete?.(map.kind, id != null ? id : null, { deleted: true }); } catch (_) {}
+            }
+            else if (map.batch) {
+              // 批量世界书:entries 里带 entry_id 的逐条刷新对应标签;没有 id 的(新建)只刷新树。
+              const entries = Array.isArray(tc.args?.entries) ? tc.args.entries : [];
+              const ids = entries.map((e) => e && e.entry_id).filter((id) => id != null);
+              if (ids.length) ids.forEach((id) => { try { onWriteComplete?.(map.kind, id); } catch (_) {} });
+              else { try { onWriteComplete?.(map.kind, null); } catch (_) {} }
+            } else {
+              const id = tc.args?.[map.idArg];
+              // 新建类(create_anchor / create_script_chapter / create_npc_card / 无 entry_id 的 upsert)
+              // args 里没有 id:传 null 只刷新文件树,不误加载一个未知 id 的标签。
+              try { onWriteComplete?.(map.kind, id != null ? id : null); } catch (_) {}
+            }
           }
         }
       }
       return m;
     });
-  }, [onWriteComplete]);
+  }, [onWriteComplete, onRestructure]);
   const tryRefreshRef = useRef(null);
   tryRefreshRef.current = tryRefresh;
 
@@ -579,6 +635,7 @@ const MdEditorAgent = forwardRef(function MdEditorAgent({ scriptId, activeTab, o
   const send = useCallback(async (text) => {
     const raw = (text ?? input).trim();
     if (!raw || busy) return;
+    const session = scriptSessionRef.current;
     // 选区上下文:有选中且未关闭 → 把选中正文前置进【发送内容】(librarian 即知「这段/选中」指什么);
     // 界面气泡仍只显示用户原话,不让长正文淹没对话。
     let sentMsg = raw;
@@ -615,22 +672,31 @@ const MdEditorAgent = forwardRef(function MdEditorAgent({ scriptId, activeTab, o
       return next;
     });
     try {
-      abortRef.current = new AbortController();
+      const ctrl = new AbortController();
+      abortRef.current = ctrl;
       const res = await fetch('/api/console_assistant/chat', {
-        method: 'POST', credentials: 'include', signal: abortRef.current.signal,
+        method: 'POST', credentials: 'include', signal: ctrl.signal,
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ message: sentMsg, conversation_id: convIdRef.current || undefined, page_context: pageContext() }),
       });
-      await consumeSSE(res, makeHandler(assistantIdx));
+      const handler = makeHandler(assistantIdx);
+      await consumeSSE(res, (ev, data) => {
+        if (scriptSessionRef.current === session) handler(ev, data);   // 已切剧本:丢弃旧流
+      });
     } catch (e) {
-      setMessages((m) => m.map((msg2, i) => i === assistantIdx ? { ...msg2, error: e?.message || String(e) } : msg2));
-    } finally { setBusy(false); abortRef.current = null; }
+      if (scriptSessionRef.current === session) {
+        setMessages((m) => m.map((msg2, i) => i === assistantIdx ? { ...msg2, error: e?.message || String(e) } : msg2));
+      }
+    } finally {
+      if (scriptSessionRef.current === session) { setBusy(false); abortRef.current = null; }
+    }
   }, [input, busy, pageContext, makeHandler, selLen, selCtxOff, getSelectionContext, attached, pinnedRefs]);
 
   // 按 call_id 直接发 /confirm(approve|reject)——既给 sidebar 确认块用,也给编辑器内联 diff 的
   // 「全部批准/拒绝」回调用(见 makeHandler 的 confirmation_required 拦截)。
   const confirmCall = useCallback(async (callId, decision) => {
     if (!callId || busy) return;
+    const session = scriptSessionRef.current;
     setBusy(true);
     let assistantIdx = -1;
     setMessages((m) => { const next = [...m, { role: 'assistant', text: '', tools: [] }]; assistantIdx = next.length - 1; return next; });
@@ -640,10 +706,17 @@ const MdEditorAgent = forwardRef(function MdEditorAgent({ scriptId, activeTab, o
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ conversation_id: convIdRef.current, call_id: callId, decision, page_context: pageContext() }),
       });
-      await consumeSSE(res, makeHandler(assistantIdx));
+      const handler = makeHandler(assistantIdx);
+      await consumeSSE(res, (ev, data) => {
+        if (scriptSessionRef.current === session) handler(ev, data);   // 已切剧本:丢弃旧流
+      });
     } catch (e) {
-      setMessages((m) => m.map((msg2, i) => i === assistantIdx ? { ...msg2, error: e?.message || String(e) } : msg2));
-    } finally { setBusy(false); }
+      if (scriptSessionRef.current === session) {
+        setMessages((m) => m.map((msg2, i) => i === assistantIdx ? { ...msg2, error: e?.message || String(e) } : msg2));
+      }
+    } finally {
+      if (scriptSessionRef.current === session) setBusy(false);
+    }
   }, [busy, pageContext, makeHandler]);
 
   const resolveConfirm = useCallback(async (msgIdx, decision) => {

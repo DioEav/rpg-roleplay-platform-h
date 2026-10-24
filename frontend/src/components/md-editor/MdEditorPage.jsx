@@ -7,13 +7,13 @@ import { lsGet, lsSet, lsGetJSON } from '../../lib/storage.js';
 import { undo, redo, selectAll } from '@codemirror/commands';
 import { openSearchPanel } from '@codemirror/search';
 import { toMd } from '../../lib/md-serialize.js';
-import { runContinue } from '../../lib/md-continue.js';
+import { runContinue, hasPendingContinue, pendingCancelEffect, rejectPending } from '../../lib/md-continue.js';
 import { copyText } from '../../lib/clipboard.js';
-import { showChapterDiff, hasChapterDiff } from '../../lib/md-diff.js';
+import { showChapterDiff, hasChapterDiff, chapterDiffCancelEffect } from '../../lib/md-diff.js';
 import MdEditorAgent from '../MdEditorAgent.jsx';
 import EditorKbPanel, { useKbHealthBadge } from '../EditorKbPanel.jsx';
 import { usePlaytest } from '../EditorPlaytest.jsx';
-import { IS_MAC, api, toast, nodeKey } from './helpers.js';
+import { IS_MAC, api, toast, nodeKey, stripChapterPrefix } from './helpers.js';
 import { ContextMenu } from './ContextMenu.jsx';
 import { TbIcon } from './TbIcon.jsx';
 import { FileTree } from './FileTree.jsx';
@@ -38,6 +38,21 @@ export default function MdEditorPage() {
   const activeViewRef = useRef(null);                      // 当前 CodeMirror 视图(供侧栏「续写到正文」)
   const agentRef = useRef(null);                           // MdEditorAgent 命令句柄(续写后同步桥接)
   const activeRef = useRef(null);                          // 当前标签(在接受续写的回调里读最新 label)
+  const tabsRef = useRef([]);                              // 标签列表镜像(openNode 里避免用过期闭包重复加载)
+  tabsRef.current = tabs;
+  const switchingRef = useRef(false);                      // 切剧本前保存期间冻结标签操作,避免边存边改
+  const inflightSavesRef = useRef(new Map());              // key -> Promise:自动保存/手动保存的在途请求
+  const structureMutatingRef = useRef(false);              // 文件树删除/章节重排进行中:冻结保存与切换
+  const scriptIdRef = useRef(scriptId);                    // 异步回调用:结果回来时确认仍是同一个剧本
+  scriptIdRef.current = scriptId;
+  const setStructureMutating = useCallback((v) => { structureMutatingRef.current = !!v; }, []);
+  // 每个标签的加载序号:打开标签 / 外部刷新可能并发,晚发出的请求先返回时不能让旧结果覆盖新内容。
+  const loadSeqRef = useRef(new Map());
+  const nextLoadSeq = useCallback((key) => {
+    const n = (loadSeqRef.current.get(key) || 0) + 1;
+    loadSeqRef.current.set(key, n);
+    return n;
+  }, []);
   const [syncNudge, setSyncNudge] = useState(null);        // 接受续写后提示同步:{text, label, rewrite} | null
   const [selLen, setSelLen] = useState(0);                 // 正文当前选中字数(右栏「选区改写」+ 选区上下文芯片)
   const [cursor, setCursor] = useState({ line: 1, col: 1, total: 0 });   // 底部状态栏:光标行:列 + 总字数
@@ -88,7 +103,172 @@ export default function MdEditorPage() {
     // eslint-disable-next-line
   }, []);
 
-  const pickScript = (id) => { setScriptId(id); lsSet('mde.scriptId', id); setTabs([]); setActiveKey(null); setMenu(null); };
+  // 切标签/切剧本前的统一守卫:编辑器只有一个 CodeMirror 视图,AI 待定区/内联 diff 都挂在这个
+  // 视图的 EditorState 上。直接换文档会把它们带到新文档(续写 token 插进新章、拒绝 diff 写回旧章),
+  // 所以正常切换必须先让用户处理完。
+  const guardLiveAiState = useCallback(() => {
+    if (switchingRef.current) return false;   // 切剧本前的保存进行中:先等保存结束
+    if (structureMutatingRef.current) {       // 删章/重排等结构操作进行中:先等它完成
+      toast(t('md_editor.toast.structure_busy'), { kind: 'warn', duration: 2200 });
+      return false;
+    }
+    const v = activeViewRef.current;
+    if (!v) return true;
+    if (hasChapterDiff(v) || hasPendingContinue(v)) {
+      toast(t('md_editor.toast.pending_ai_resolve'), { kind: 'warn', duration: 3200 });
+      return false;
+    }
+    return true;
+  }, [t]);
+
+  // 强制切换(切剧本/删除剧本/结构变化关闭标签)前的确定性清理:中止续写流、清空待定区。
+  // rejectAgentDiff=true 时才回调 agent diff 的 onReject(会发一次 /confirm SSE):
+  //   · 同一剧本内(删标签/章节重切)需要它把后端待确认的提议收尾;
+  //   · 切剧本时不能发 —— 旧对话的 SSE 回来可能污染新剧本的助手会话,只清本地状态即可。
+  // conflict diff 永远只清状态,绝不替用户 force-save 本地版本。
+  // 不还原待定区原文 —— 调用方马上就会整篇替换或直接卸载这个标签。
+  const discardActiveAiState = useCallback(({ rejectAgentDiff = false } = {}) => {
+    const v = activeViewRef.current;
+    if (!v) return false;
+    const effects = [];
+    const pe = pendingCancelEffect(v);
+    if (pe) effects.push(pe);
+    const de = chapterDiffCancelEffect(v, { reject: rejectAgentDiff });
+    if (de) effects.push(de);
+    if (!effects.length) return false;
+    try { v.dispatch({ effects }); } catch (_) { return false; }
+    toast(t('md_editor.toast.ai_state_discarded'), { kind: 'warn', duration: 3200 });
+    return true;
+  }, [t]);
+
+  // 切剧本前把当前剧本的未保存标签落库。编辑器自动保存有 2.5s 窗口,用户改完立刻切工作区会丢改动。
+  // 逐条保存;遇到 409/网络错误、或保存期间内容又发生了变化,就中止切换并保留当前剧本。
+  const flushDirtyTabs = useCallback(async () => {
+    const sid = scriptId;
+    if (scriptIdRef.current !== sid) return false;   // 旧剧本的过期回调
+    const dirty = tabsRef.current.filter((x) => x.dirty);
+    if (!dirty.length) return true;
+    toast(t('md_editor.toast.saving_before_switch', { count: dirty.length }), { kind: 'info', duration: 1600 });
+    const saved = new Map();   // key -> {content, ts}
+    // 标记已保存的标签:除了 React state,还要看活动标签的实时 CodeMirror 文档 ——
+    // 用户最后一笔输入可能还没回填到 state,不能把它连同标签一起标成已保存。
+    const applySaved = () => setTabs((cur) => cur.map((x) => {
+      const s = saved.get(x.key);
+      if (!s) return x;
+      const view = activeRef.current?.key === x.key ? activeViewRef.current : null;
+      const viewChanged = !!(view && view.state.doc.toString() !== s.content);
+      return {
+        ...x,
+        original: s.content,
+        dirty: viewChanged || x.content !== s.content,
+        saving: false,
+        conflict: false,
+        baseUpdatedAt: s.ts || x.baseUpdatedAt,
+      };
+    }));
+    for (const tab of dirty) {
+      // 同一标签可能正好有一次自动保存/手动保存在途(非章节没有乐观锁):等它落地再判断,
+      // 避免旧快照后到、把刚写的新内容覆盖掉。
+      const inflight = inflightSavesRef.current.get(`${sid}:${tab.key}`);
+      if (inflight) { try { await inflight; } catch (_) {} }
+      if (scriptIdRef.current !== sid) return false;   // 期间已切剧本:旧标签的结果不能再写回
+      const latest = tabsRef.current.find((x) => x.key === tab.key);
+      if (!latest || !latest.dirty) continue;
+      try {
+        const ts = await saveNodeContent(latest.kind, sid, latest.id, latest.content, latest.original, latest.baseUpdatedAt);
+        saved.set(latest.key, { content: latest.content, ts });
+      } catch (e) {
+        // 自动保存可能刚好在同一内容上赢了竞态:服务端已有同一版本 → 视为成功。
+        if (latest.kind === 'chapter' && e && e.status === 409 && e.payload && e.payload.conflict) {
+          const server = e.payload.server_chapter || {};
+          if (toMd('chapter', server) === latest.content) {
+            saved.set(latest.key, { content: latest.content, ts: server.updated_at || latest.baseUpdatedAt });
+            continue;
+          }
+          applySaved();
+          toast(t('md_editor.toast.switch_blocked_conflict'), { kind: 'warn', duration: 3600 });
+          return false;
+        }
+        applySaved();
+        toast(t('md_editor.toast.save_failed'), { kind: 'danger', detail: e?.message });
+        return false;
+      }
+    }
+    // 保存期间用户可能又改了内容、切到别的标签继续写、甚至开了新标签:有任何未保存/内容变化就中止。
+    if (scriptIdRef.current !== sid) return false;
+    const unsavedDirty = tabsRef.current.filter((x) => x.dirty && !saved.has(x.key));
+    const changedSaved = Array.from(saved.entries()).some(([key, s]) => {
+      const cur = tabsRef.current.find((x) => x.key === key);
+      if (!cur) return false;                       // 标签已被关闭:无需再管
+      if (cur.content !== s.content) return true;
+      if (key === activeRef.current?.key && activeViewRef.current) {
+        return activeViewRef.current.state.doc.toString() !== s.content;
+      }
+      return false;
+    });
+    if (unsavedDirty.length || changedSaved) {
+      applySaved();                                 // 已成功保存的仍然更新基线;有新输入的保持 dirty
+      toast(t('md_editor.toast.switch_blocked_changed'), { kind: 'warn', duration: 3200 });
+      return false;
+    }
+    applySaved();
+    return true;
+  }, [scriptId, t]);
+
+  // 保存期间冻结标签切换/关闭/新建:避免"边保存边改"导致最后几笔又被写丢。
+  const flushBeforeSwitch = useCallback(async () => {
+    if (switchingRef.current) return false;
+    if (!tabsRef.current.some((x) => x.dirty)) return true;
+    switchingRef.current = true;
+    try {
+      return await flushDirtyTabs();
+    } catch (e) {
+      toast(t('md_editor.toast.save_failed'), { kind: 'danger', detail: e?.message });
+      return false;
+    } finally { switchingRef.current = false; }
+  }, [flushDirtyTabs, t]);
+
+  const pickScript = useCallback(async (id, opts = {}) => {
+    if (!opts.force && switchingRef.current) return false;
+    // 点当前工作区不应清空/重载已打开标签(以前会 flush + 清空,看起来像误操作)。
+    if (!opts.force && String(id) === String(scriptId)) { setMenu(null); return true; }
+    if (opts.force) {
+      discardActiveAiState();
+    } else {
+      if (!guardLiveAiState()) return false;
+      setMenu(null);
+      if (!(await flushBeforeSwitch())) return false;
+    }
+    setScriptId(id); lsSet('mde.scriptId', id); setTabs([]); setActiveKey(null); setMenu(null);
+    setSyncNudge(null);   // 旧剧本正文的「同步设定」提示不能带到新剧本
+    setSelLen(0); setCursor({ line: 1, col: 1, total: 0 });   // 旧剧本的选区/光标不能带到新剧本
+    return true;
+  }, [guardLiveAiState, discardActiveAiState, flushBeforeSwitch, scriptId]);
+
+  // EditorView 在 docKey 变化时兜底清掉了 AI 待定区/diff(正常路径会被上面的守卫拦住,
+  // 这里是删除剧本、删标签等强制路径的兜底):给用户一个明确反馈。
+  const onAiStateDiscarded = useCallback(() => {
+    toast(t('md_editor.toast.ai_state_discarded'), { kind: 'warn', duration: 3200 });
+  }, [t]);
+
+  // 文件树删除(尤其删章会重排 chapter_index)前:除了 AI 状态,也要避开在途保存。
+  // 否则 remap 后旧 key 的保存结果对不上新标签,或在途章节写回错位。
+  const guardMutateStructure = useCallback(() => {
+    if (!guardLiveAiState()) return false;
+    if (inflightSavesRef.current.size > 0) {
+      toast(t('md_editor.toast.save_in_progress'), { kind: 'warn', duration: 2400 });
+      return false;
+    }
+    return true;
+  }, [guardLiveAiState, t]);
+
+  // 标签持久化 effect 在空列表时故意不写(避免切剧本瞬间把新剧本的缓存冲掉)。
+  // 但「删章/重切章节导致所有标签被主动关闭」必须显式清缓存,否则刷新页面会把已失效的
+  // 旧 chapter_index 标签重新打开。
+  const clearTabsCacheIfEmpty = useCallback((nextTabs) => {
+    if (!scriptId || (nextTabs && nextTabs.length)) return;
+    try { lsSet('mde.tabs.' + scriptId, '[]'); lsSet('mde.activeKey.' + scriptId, ''); } catch (_) {}
+  }, [scriptId]);
 
   // ── 顶栏菜单 + 可拖拽分栏 ──────────────────────────────────────────────
   const [menu, setMenu] = useState(null);   // 'ws' | 'file' | 'edit' | null
@@ -148,10 +328,12 @@ export default function MdEditorPage() {
     const nm = name.trim(); if (!nm) return;
     try { await api().scripts.rename(scriptId, nm); setScripts((prev) => (prev || []).map((s) => s.id === scriptId ? { ...s, title: nm } : s)); toast(t('md_editor.toast.renamed'), { kind: 'ok', duration: 1200 }); }
     catch (e) { toast(t('md_editor.toast.rename_failed'), { kind: 'danger', detail: e?.message }); }
-  }, [scriptId, scripts]);
+  }, [scriptId, scripts, t]);
   const deleteScript = useCallback(async () => {
     setMenu(null);
     if (!scriptId) return;
+    if (switchingRef.current) return;   // 切剧本前的保存进行中:不要并发删当前剧本
+    if (structureMutatingRef.current) return;   // 文件树结构操作进行中
     const cur = (scripts || []).find((s) => s.id === scriptId);
     const ok = await (window.__confirm
       ? window.__confirm({ title: t('md_editor.confirm.delete_script'), message: t('md_editor.confirm.delete_script_msg', { title: cur?.title || scriptId }), danger: true, confirmText: t('common.delete') })
@@ -161,11 +343,11 @@ export default function MdEditorPage() {
       await api().scripts.delete(scriptId, { force: true });
       const rest = (scripts || []).filter((s) => s.id !== scriptId);
       setScripts(rest);
-      if (rest[0]) pickScript(rest[0].id);
-      else { setScriptId(null); lsSet('mde.scriptId', null); setTabs([]); setActiveKey(null); }
+      if (rest[0]) await pickScript(rest[0].id, { force: true });
+      else { discardActiveAiState(); setScriptId(null); lsSet('mde.scriptId', null); setTabs([]); setActiveKey(null); setSyncNudge(null); setSelLen(0); setCursor({ line: 1, col: 1, total: 0 }); }
       toast(t('md_editor.toast.script_deleted'), { kind: 'ok', duration: 1400 });
     } catch (e) { toast(t('md_editor.toast.delete_failed'), { kind: 'danger', detail: e?.message }); }
-  }, [scriptId, scripts]);
+  }, [scriptId, scripts, pickScript, discardActiveAiState, t]);
 
   // 顶栏菜单:点击外部关闭。
   useEffect(() => {
@@ -175,19 +357,26 @@ export default function MdEditorPage() {
     return () => window.removeEventListener('mousedown', onDown);
   }, [menu]);
 
-  // 作者优先:从零新建空白剧本 → 切到它(自动带第1章)。
+  // 作者优先:从零新建空白剧本 → 先保存当前剧本的未保存标签,再创建并切过去(自动带第1章)。
   const createBlankScript = async () => {
     try {
+      if (!guardLiveAiState()) return;
+      if (!(await flushBeforeSwitch())) return;
       const r = await api().scripts.createBlank(t('md_editor.node_defaults.script'));
       if (!r?.script_id) throw new Error(r?.error || t('md_editor.errors.create_failed'));
       setScripts((prev) => [{ id: r.script_id, title: r.title }, ...(prev || [])]);
-      pickScript(r.script_id);
       toast(t('md_editor.toast.blank_script_created'), { kind: 'ok', duration: 1400 });
+      // 创建 API 期间用户可能又改了当前剧本、甚至开了 AI 续写:切走前再守一次、再落一次。
+      if (!guardLiveAiState()) return;
+      if (!(await flushBeforeSwitch())) return;
+      await pickScript(r.script_id, { force: true });
     } catch (e) { toast(t('md_editor.toast.script_create_failed'), { kind: 'danger', detail: e?.message }); }
   };
-  // 给当前剧本追加一章并打开。
+  // 给当前剧本追加一章并打开。先守卫:有未处理的 AI 改动/正在保存时不要切走当前章节。
   const addChapter = async () => {
     if (!scriptId) return;
+    if (switchingRef.current) return;
+    if (!guardLiveAiState()) return;
     try {
       const r = await api().scripts.addChapter(scriptId, '');
       if (!r?.chapter_index) throw new Error(r?.error || t('md_editor.errors.create_failed'));
@@ -198,20 +387,33 @@ export default function MdEditorPage() {
   };
 
   // 打开节点 → 新标签(或激活已开)。
+  // 已存在的标签只激活、不重新拉服务端内容:否则点一下文件树就会把该标签里未保存的改动覆盖掉。
+  // 只有「新建标签」或「上次加载失败」才走网络加载。
   const openNode = useCallback(async (node) => {
+    if (switchingRef.current) return;   // 保存并切换期间冻结标签结构
+    if (scriptIdRef.current !== scriptId) return;   // 旧剧本的过期回调
+    const sid = scriptId;
     const key = nodeKey(node.kind, node.id);
+    if (key !== activeRef.current?.key && !guardLiveAiState()) return;
+    const existing = tabsRef.current.find((x) => x.key === key);
+    if (existing && !existing.error) { setActiveKey(key); return; }
+    const seq = nextLoadSeq(key);
     setActiveKey(key);
     setTabs((cur) => {
-      if (cur.some((t) => t.key === key)) return cur;
+      if (cur.some((t) => t.key === key)) {
+        return cur.map((t) => t.key === key ? { ...t, loading: true, error: null } : t);
+      }
       return [...cur, { key, kind: node.kind, id: node.id, label: node.label, content: '', original: '', loading: true, error: null, dirty: false }];
     });
     try {
-      const meta = await loadNodeContentMeta(node.kind, scriptId, node.id);
+      const meta = await loadNodeContentMeta(node.kind, sid, node.id);
+      if (loadSeqRef.current.get(key) !== seq || scriptIdRef.current !== sid) return;   // 期间被外部刷新/重开/切剧本
       setTabs((cur) => cur.map((t) => t.key === key ? { ...t, content: meta.content, original: meta.content, baseUpdatedAt: meta.updatedAt, loading: false } : t));
     } catch (e) {
+      if (loadSeqRef.current.get(key) !== seq || scriptIdRef.current !== sid) return;
       setTabs((cur) => cur.map((t) => t.key === key ? { ...t, loading: false, error: e?.message || String(e) } : t));
     }
-  }, [scriptId]);
+  }, [scriptId, guardLiveAiState, nextLoadSeq]);
 
   const onEdit = useCallback((key, val) => {
     setTabs((cur) => cur.map((t) => t.key === key ? { ...t, content: val, dirty: val !== t.original } : t));
@@ -253,6 +455,10 @@ export default function MdEditorPage() {
   }, [tabs, activeKey, scriptId]);
 
   const closeTab = useCallback(async (key) => {
+    if (switchingRef.current) return;   // 保存并切换期间冻结标签结构
+    const sid = scriptId;
+    // 关闭当前标签会切换(或卸载)实时视图:有未处理的 AI 待定区/diff 时先让用户处理。
+    if (key === activeKey && !guardLiveAiState()) return;
     // 修复:局部 `const t` 曾遮蔽 useTranslation 的 t() → t('…') 把 tab 对象当函数调 = TypeError;
     // 且 message: tab.label 引用了未定义的 `tab`(实际变量被命名为遮蔽的 t)→ ReferenceError。
     // 关闭「有未保存改动」的标签必崩。改名局部为 tab,恢复 t() 为翻译函数。
@@ -261,19 +467,24 @@ export default function MdEditorPage() {
       const ok = await (window.__confirm ? window.__confirm({ title: t('md_editor.confirm.discard_changes'), message: tab.label, danger: true, confirmText: t('md_editor.confirm.discard') }) : Promise.resolve(confirm(t('md_editor.confirm.discard_changes'))));
       if (!ok) return;
     }
+    if (scriptIdRef.current !== sid) return;   // 确认框期间已切剧本:不要动新剧本的同名标签
     setTabs((cur) => {
       const idx = cur.findIndex((x) => x.key === key);
       const next = cur.filter((x) => x.key !== key);
       if (activeKey === key) setActiveKey(next[Math.max(0, idx - 1)]?.key || null);
       return next;
     });
-  }, [tabs, activeKey]);
+  }, [tabs, activeKey, guardLiveAiState, t, scriptId]);
 
   // 批量关闭标签(关闭其他/右侧/已保存/全部):若集合里有未保存的,先确认一次。
   const closeTabs = useCallback(async (keys) => {
+    if (switchingRef.current) return;   // 保存并切换期间冻结标签结构
+    const sid = scriptId;
     const set = keys instanceof Set ? keys : new Set(keys);
     const targets = tabs.filter((t) => set.has(t.key));
     if (!targets.length) return;
+    // 批量关闭包含当前标签时同样会切走实时视图:有未处理 AI 改动先拦下。
+    if (set.has(activeKey) && !guardLiveAiState()) return;
     const dirtyCnt = targets.filter((t) => t.dirty).length;
     if (dirtyCnt) {
       const ok = await (window.__confirm
@@ -281,12 +492,13 @@ export default function MdEditorPage() {
         : Promise.resolve(confirm(t('md_editor.confirm.discard_tabs_plain', { count: dirtyCnt }))));
       if (!ok) return;
     }
+    if (scriptIdRef.current !== sid) return;   // 确认框期间已切剧本
     setTabs((cur) => {
       const next = cur.filter((t) => !set.has(t.key));
       if (set.has(activeKey)) setActiveKey(next[next.length - 1]?.key || null);
       return next;
     });
-  }, [tabs, activeKey]);
+  }, [tabs, activeKey, guardLiveAiState, t, scriptId]);
 
   // 冲突三方合并(P0):把「服务端新版 vs 本地未保存」丢进现成逐块 diff 审阅。
   // 全部批准=采用对方;全部拒绝=保留自己(以服务端版本为基线强制落库);逐块=合并保存。
@@ -295,18 +507,27 @@ export default function MdEditorPage() {
     const view = activeViewRef.current;
     const a = activeRef.current;
     if (!view || !a || a.key !== key || a.kind !== 'chapter') return false;
+    // 有未接受的续写待定区时先撤掉,用还原后的原文作为本地版本,避免把半截 AI 文本带进冲突合并。
+    if (hasPendingContinue(view)) {
+      rejectPending(view);
+      localContent = view.state.doc.toString();
+    }
     const applyTab = (content, ts) => setTabs((cur) => cur.map((x) => x.key === key
       ? { ...x, content, original: content, dirty: false, saving: false, conflict: false, baseUpdatedAt: ts } : x));
+    const sid = scriptId;
     const forceSave = async (finalText, okMsg) => {
       try {
-        const ts = await saveNodeContent('chapter', scriptId, a.id, finalText, serverMd, serverTs);
+        const ts = await saveNodeContent('chapter', sid, a.id, finalText, serverMd, serverTs);
+        if (scriptIdRef.current !== sid) return;   // 期间已切剧本:不要改新剧本的同名标签
         applyTab(finalText, ts || serverTs);
         toast(okMsg, { kind: 'ok', duration: 1600 });
       } catch (e2) {
+        if (scriptIdRef.current !== sid) return;
         toast(t('md_editor.toast.save_failed'), { kind: 'danger', detail: e2?.message });
       }
     };
     const ok = showChapterDiff(view, localContent, serverMd, {
+      kind: 'conflict',
       onAccept: () => { applyTab(serverMd, serverTs); toast(t('md_editor.conflict.took_theirs'), { kind: 'ok', duration: 1600 }); },
       onReject: () => { forceSave(localContent, t('md_editor.conflict.kept_yours')); },
       onMixed: (finalText) => { forceSave(finalText, t('md_editor.conflict.mixed_saved')); },
@@ -316,30 +537,65 @@ export default function MdEditorPage() {
   }, [scriptId, t]);
 
   const saveTab = useCallback(async (key, opts) => {
+    if (switchingRef.current) return;   // 切剧本前的批量保存正在进行,避免并发写同一标签
+    if (structureMutatingRef.current) {
+      if (!(opts && opts.auto)) toast(t('md_editor.toast.structure_busy'), { kind: 'warn', duration: 2200 });
+      return;
+    }
+    if (scriptIdRef.current !== scriptId) return;   // 旧剧本的过期回调
+    const sid = scriptId;
     const tab = tabs.find((x) => x.key === key);
     if (!tab || !tab.dirty) return;
+    // 待定区/内联 diff 还没被用户确认时,文档里是「未确认的 AI 文本/提议版本」,不能直接落库。
+    // 自动保存静默跳过(避免每 2.5s 弹一次),手动保存给明确提示。
+    const liveView = activeRef.current?.key === key ? activeViewRef.current : null;
+    if (liveView && (hasPendingContinue(liveView) || hasChapterDiff(liveView))) {
+      if (!(opts && opts.auto)) toast(t('md_editor.toast.resolve_ai_before_save'), { kind: 'warn', duration: 2800 });
+      return;
+    }
     setTabs((cur) => cur.map((x) => x.key === key ? { ...x, saving: true } : x));
+    const savePromise = saveNodeContent(tab.kind, sid, tab.id, tab.content, tab.original, tab.baseUpdatedAt);
+    const inflightKey = `${sid}:${key}`;
+    inflightSavesRef.current.set(inflightKey, savePromise);
     try {
-      const newTs = await saveNodeContent(tab.kind, scriptId, tab.id, tab.content, tab.original, tab.baseUpdatedAt);
-      setTabs((cur) => cur.map((x) => x.key === key ? { ...x, original: tab.content, dirty: false, saving: false, conflict: false, baseUpdatedAt: newTs || x.baseUpdatedAt } : x));
+      const newTs = await savePromise;
+      if (scriptIdRef.current !== sid) return;   // 期间已切剧本:旧标签的结果不要再写回
+      setTabs((cur) => cur.map((x) => {
+        if (x.key !== key) return x;
+        // 保存期间用户可能又输入了:当前 content 不等于本次落库快照时不能标干净,
+        // 否则这段新输入会被静默丢掉(自动保存同样会踩)。
+        const stillSame = x.content === tab.content;
+        return { ...x, original: tab.content, dirty: !stillSame, saving: false, conflict: false, baseUpdatedAt: newTs || x.baseUpdatedAt };
+      }));
       toast(t('md_editor.toast.saved'), { kind: 'ok', duration: 1200 });
     } catch (e) {
+      if (scriptIdRef.current !== sid) return;   // 期间已切剧本:不要在新剧本上开冲突 diff/弹错
       setTabs((cur) => cur.map((x) => x.key === key ? { ...x, saving: false } : x));
       if (e && e.status === 409 && e.payload && e.payload.conflict) {
         const server = e.payload.server_chapter || {};
         const serverMd = toMd('chapter', server);
         const serverTs = server.updated_at || null;
+        const view = activeRef.current?.key === key ? activeViewRef.current : null;
+        const localContent = view ? view.state.doc.toString() : ((tabsRef.current.find((x) => x.key === key) || tab).content);
         if (opts && opts.auto) {
           setTabs((cur) => cur.map((x) => x.key === key ? { ...x, conflict: true } : x));
           toast(t('md_editor.conflict.auto_deferred'), { kind: 'warn', duration: 3600 });
           return;
         }
-        if (openConflictMerge(key, tab.content, serverMd, serverTs)) return;
+        if (switchingRef.current) {
+          // 切剧本前的批量保存进行中:不要把内联 diff 叠到即将切换的视图上,标冲突后由切换流程中止。
+          setTabs((cur) => cur.map((x) => x.key === key ? { ...x, conflict: true } : x));
+          toast(t('md_editor.toast.switch_blocked_conflict'), { kind: 'warn', duration: 3600 });
+          return;
+        }
+        if (openConflictMerge(key, localContent, serverMd, serverTs)) return;
         setTabs((cur) => cur.map((x) => x.key === key ? { ...x, conflict: true } : x));
         toast(t('md_editor.conflict.other_tab'), { kind: 'warn', duration: 3600 });
         return;
       }
       toast(t('md_editor.toast.save_failed'), { kind: 'danger', detail: e?.message });
+    } finally {
+      if (inflightSavesRef.current.get(inflightKey) === savePromise) inflightSavesRef.current.delete(inflightKey);
     }
   }, [tabs, scriptId, t, openConflictMerge]);
 
@@ -348,28 +604,71 @@ export default function MdEditorPage() {
   // 调用方已弹过自己的提示(如「已恢复到该版本之前」),再用 AI 文案会误导。
   const refreshTab = useCallback(async (kind, id, opts = {}) => {
     setTreeReloadKey((x) => x + 1);
+    if (scriptIdRef.current !== scriptId) return;   // 旧剧本的过期回调
+    if (structureMutatingRef.current) return;   // 章节结构操作进行中:标签即将重排/关闭,先不刷新
+    if (switchingRef.current) return;   // 正在保存并切换剧本:旧标签马上清空,不再刷新(避免打开冲突 diff)
+    const sid = scriptId;
     const key = nodeKey(kind, id);
+    // AI 删除实体成功:关闭对应已打开标签(活动标签先清 AI 状态),树已在上面 bump 重载。
+    if (opts.deleted) {
+      if (activeRef.current?.key === key) discardActiveAiState({ rejectAgentDiff: true });
+      setTabs((cur) => {
+        const idx = cur.findIndex((t) => t.key === key);
+        if (idx < 0) return cur;
+        const next = cur.filter((t) => t.key !== key);
+        if (activeKey === key) setActiveKey(next[Math.max(0, idx - 1)]?.key || null);
+        return next;
+      });
+      return;
+    }
     const tab = tabs.find((x) => x.key === key);
     if (!tab) return;
+    const seq = nextLoadSeq(key);
     try {
-      const meta = await loadNodeContentMeta(kind, scriptId, id);
-      if (!tab.dirty) {
-        setTabs((cur) => cur.map((x) => x.key === key ? { ...x, content: meta.content, original: meta.content, baseUpdatedAt: meta.updatedAt, dirty: false, conflict: false } : x));
+      const meta = await loadNodeContentMeta(kind, sid, id);
+      if (loadSeqRef.current.get(key) !== seq || scriptIdRef.current !== sid) return;   // 期间有更新的加载/已切剧本
+      // 等待网络期间用户可能已经开始输入:用【最新的 tab】和实时视图判断,而不是闭包里捕获的旧 tab.dirty。
+      const latest = tabsRef.current.find((x) => x.key === key) || tab;
+      const view = activeRef.current?.key === key ? activeViewRef.current : null;
+      const editedInView = !!(view && view.state.doc.toString() !== (latest.original || ''));
+      if (!latest.dirty && !editedInView) {
+        // 活动标签:必须把服务端新文同步进实时 CodeMirror 视图。只改 React state 不够 ——
+        // 同一 docKey 不会回灌,编辑器仍显示旧文;而 baseUpdatedAt 已被推进,用户随后敲一个字
+        // 保存就会把 AI/撤销/恢复后的新文覆盖掉(且不会触发 409)。选区尽量保留,越界夹到末尾。
+        if (view) {
+          const curDoc = view.state.doc.toString();
+          if (curDoc !== meta.content) {
+            const sel = view.state.selection.main;
+            const len = meta.content.length;
+            view.dispatch({
+              changes: { from: 0, to: curDoc.length, insert: meta.content },
+              selection: { anchor: Math.min(sel.from, len), head: Math.min(sel.to, len) },
+            });
+          }
+        }
+        setTabs((cur) => cur.map((x) => x.key === key ? { ...x, content: meta.content, original: meta.content, baseUpdatedAt: meta.updatedAt, loading: false, error: null, dirty: false, conflict: false } : x));
         if (!opts.silent) toast(t('md_editor.toast.ai_refreshed'), { kind: 'ok', duration: 1400 });
         return;
       }
       // P0:有未保存改动时不再只 toast(旧行为=用户随后 ⌘S 用旧底稿覆盖 AI 改动,静默丢数据)。
       // 激活章节→直接进三方合并;其他情况标记冲突,乐观锁在保存时兜底。
-      if (kind === 'chapter' && openConflictMerge(key, tab.content, meta.content, meta.updatedAt)) return;
+      const localForMerge = view ? view.state.doc.toString() : latest.content;
+      if (kind === 'chapter' && openConflictMerge(key, localForMerge, meta.content, meta.updatedAt)) return;
       setTabs((cur) => cur.map((x) => x.key === key ? { ...x, conflict: true } : x));
       toast(t('md_editor.toast.ai_edited_has_unsaved'), { kind: 'warn', duration: 3200 });
-    } catch (_) { /* 静默 */ }
-  }, [tabs, scriptId, t, openConflictMerge]);
+    } catch (e) {
+      if (loadSeqRef.current.get(key) !== seq || scriptIdRef.current !== sid) return;
+      // 原来在 loading 的标签上刷新失败:必须收掉 loading,否则它再也等不到 openNode 的结果。
+      setTabs((cur) => cur.map((x) => (x.key === key && x.loading) ? { ...x, loading: false, error: e?.message || String(e) } : x));
+    }
+  }, [tabs, scriptId, t, openConflictMerge, nextLoadSeq, activeKey, discardActiveAiState]);
 
   // 资源管理器增删改后:同步已打开的标签(删→关、改名→更新标题),并触发树重载。
   const onTreeMutate = useCallback((action, kind, id, label) => {
+    if (scriptIdRef.current !== scriptId) return;   // 旧剧本的过期回调
     const key = nodeKey(kind, id);
     if (action === 'delete') {
+      if (activeKey === key) discardActiveAiState({ rejectAgentDiff: true });   // 同剧本内删活动标签:先收尾 AI 状态再切走
       setTabs((cur) => {
         const idx = cur.findIndex((t) => t.key === key);
         const next = cur.filter((t) => t.key !== key);
@@ -379,7 +678,68 @@ export default function MdEditorPage() {
     } else if (action === 'rename' && label) {
       setTabs((cur) => cur.map((t) => t.key === key ? { ...t, label } : t));
     }
-  }, [activeKey]);
+  }, [activeKey, discardActiveAiState, scriptId]);
+
+  // 章节删除后端会整本重排 chapter_index:已打开的其他章节标签必须同步改号,否则之后保存会写错章。
+  // 被删章节的标签关闭;序号大于删除项的标签按「删掉了几个更小的序号」左移,label 重新生成。
+  const onChaptersDeleted = useCallback((deletedIds) => {
+    if (scriptIdRef.current !== scriptId) return;   // 旧剧本的过期回调
+    const del = new Set((deletedIds || []).map(Number).filter((n) => Number.isFinite(n)));
+    if (!del.size) { setTreeReloadKey((x) => x + 1); return; }
+    const shiftFor = (id) => { let n = 0; for (const d of del) if (d < id) n += 1; return n; };
+    const remapId = (id) => id - shiftFor(id);
+    const oldTabs = tabsRef.current;
+    const remapped = [];
+    let changed = false;
+    for (const tab of oldTabs) {
+      if (tab.kind !== 'chapter') { remapped.push(tab); continue; }
+      const id = Number(tab.id);
+      // 正在加载的章节标签直接关掉:它的 in-flight 请求仍按旧 key 回填,remap 后新 key 永远等不到
+      // 结果(会卡在 loading)。关掉比留下一个空标签安全,用户可重新打开。
+      if (del.has(id) || tab.loading) { changed = true; continue; }
+      const nid = remapId(id);
+      if (nid === id) { remapped.push(tab); continue; }
+      changed = true;
+      const bare = stripChapterPrefix(tab.label || '');
+      remapped.push({
+        ...tab,
+        id: nid,
+        key: nodeKey('chapter', nid),
+        label: `${t('md_editor.chapter_prefix', { index: nid })} ${bare}`.trim(),
+      });
+    }
+    const oldActive = activeRef.current;
+    const oldIdx = oldActive ? oldTabs.findIndex((x) => x.key === oldActive.key) : -1;
+    setTabs(remapped);
+    clearTabsCacheIfEmpty(remapped);
+    setActiveKey(() => {
+      if (!oldActive) return remapped[0]?.key || null;
+      const m = /^chapter:(\d+)$/.exec(oldActive.key);
+      if (!m) return oldActive.key;                    // 非章节标签:原 key 不变
+      const id = Number(m[1]);
+      if (del.has(id)) {
+        const fallback = remapped[Math.min(Math.max(oldIdx, 0), remapped.length - 1)] || remapped[0];
+        return fallback ? fallback.key : null;
+      }
+      const nk = nodeKey('chapter', remapId(id));
+      return remapped.some((x) => x.key === nk) ? nk : (remapped[0]?.key || null);
+    });
+    setTreeReloadKey((x) => x + 1);
+    if (changed) toast(t('md_editor.toast.chapters_remapped'), { kind: 'warn', duration: 2600 });
+  }, [t, clearTabsCacheIfEmpty, scriptId]);
+
+  // AI 重切/替换整本已导入章节:旧 chapter_index 到新序号的映射不可知,保守关闭全部章节标签,
+  // 保留角色卡/世界书/时间线/设定等非章节标签;用户可重新打开需要的章节。
+  const handleChaptersRestructured = useCallback(() => {
+    if (scriptIdRef.current !== scriptId) return;   // 旧剧本的过期回调
+    discardActiveAiState({ rejectAgentDiff: true });   // 同剧本内:把待确认的 agent 提议收尾
+    const next = tabsRef.current.filter((x) => x.kind !== 'chapter');
+    setTabs(next);
+    clearTabsCacheIfEmpty(next);
+    setActiveKey((prev) => (prev && prev.startsWith('chapter:') ? (next[0]?.key || null) : prev));
+    setTreeReloadKey((x) => x + 1);
+    toast(t('md_editor.toast.chapters_restructured'), { kind: 'warn', duration: 3200 });
+  }, [discardActiveAiState, clearTabsCacheIfEmpty, t, scriptId]);
 
   // 接受一段续写/改写后的桥接:够长就提示「要不要让助手把新设定同步进知识库」。
   // (续写引擎只产纯文本不落库,知识同步只能由右栏 agent 触发 —— 这条桥接把两路打通。)
@@ -396,7 +756,7 @@ export default function MdEditorPage() {
     const _a = activeRef.current;
     const _ci = (_a && _a.kind === 'chapter') ? _a.id : null;   // 章号→后端装配相关设定+防剧透
     runContinue(view, { scriptId, instruction, onAccept: onProseAccepted, chapterIndex: _ci });
-  }, [scriptId, onProseAccepted]);
+  }, [scriptId, onProseAccepted, t]);
 
   // agent 提议改某章 → 在中间编辑器内联 diff(绿增/红删)+ 顶栏「全部批准/拒绝」。
   // 仅当该章正是当前激活的 tab 时拦截到编辑器;否则返回 false → 侧栏走原确认。cbs.onAccept/onReject
@@ -407,22 +767,27 @@ export default function MdEditorPage() {
       const a = activeRef.current;
       if (!view || !a || a.kind !== 'chapter' || String(a.id) !== String(chapterIndex)) return false;
       if (newText == null) return false;
+      // 先把未接受的续写待定区撤掉(还原原文),再取 diff 基线;否则基线里会混着半截 AI 文本。
+      if (hasPendingContinue(view)) rejectPending(view);
       const oldText = view.state.doc.toString();
       // 逐块取舍(混合):后端 approve 会写【整段 newText】→ 不能用 approve。改为 reject 掉 agent 提议,
       // 再把编辑器里玩家逐块选定的实际文本经 owner 校验端点直接落库(云端隔离)。
       const onMixed = async (finalText) => {
         try { cbs.onReject?.(); } catch (_) {}
+        const sid = scriptId;
         try {
-          await saveNodeContent('chapter', scriptId, chapterIndex, finalText, oldText);
+          await saveNodeContent('chapter', sid, chapterIndex, finalText, oldText);
+          if (scriptIdRef.current !== sid) return;   // 期间已切剧本:不要改新剧本的同名标签
           const key = nodeKey('chapter', chapterIndex);
           setTabs((cur) => cur.map((x) => x.key === key ? { ...x, content: finalText, original: finalText, dirty: false } : x));
           setTreeReloadKey((x) => x + 1);
           toast(t('md_editor.diff.mixed_saved', { defaultValue: '已按你的逐段取舍保存' }), { kind: 'ok', duration: 1600 });
         } catch (e) {
+          if (scriptIdRef.current !== sid) return;
           toast(t('md_editor.toast.save_failed'), { kind: 'danger', detail: e?.message });
         }
       };
-      return showChapterDiff(view, oldText, newText, { ...cbs, onMixed });
+      return showChapterDiff(view, oldText, newText, { ...cbs, kind: 'agent', onMixed });
     } catch (_) { return false; }
   }, [scriptId, t]);
 
@@ -487,8 +852,10 @@ export default function MdEditorPage() {
     if (active.conflict) return undefined;   // 冲突已标记:等用户 ⌘S 进合并,不再重试(否则每 2.5s 409+toast 轰炸)
     const key = active.key;
     const id = setTimeout(() => {
+      if (switchingRef.current || structureMutatingRef.current) return;   // 切剧本/结构操作优先,自动保存让路
       const v = activeViewRef.current;
-      if (v && hasChapterDiff(v)) return;   // diff 审阅中,跳过
+      // diff 审阅中 / AI 续写待定区未接受:都跳过自动保存(否则会把未批准文本落库)。
+      if (v && (hasChapterDiff(v) || hasPendingContinue(v))) return;
       saveTab(key, { auto: true });
     }, 2500);
     return () => clearTimeout(id);
@@ -577,7 +944,7 @@ export default function MdEditorPage() {
       <div className={'mde-panes' + (rightOpen ? '' : ' right-collapsed') + (leftHidden ? ' left-collapsed' : '')} ref={panesRef} style={{ '--mde-left-w': leftW + 'px', '--mde-right-w': rightW + 'px' }}>
         {/* 左:文件树 */}
         <aside className="mde-left">
-          {scriptId ? <FileTree scriptId={scriptId} openNode={openNode} activeKey={activeKey} reloadKey={treeReloadKey} onMutate={onTreeMutate} /> : <div className="mde-tree-hint">{t('md_editor.ws.select_first')}</div>}
+          {scriptId ? <FileTree scriptId={scriptId} openNode={openNode} activeKey={activeKey} reloadKey={treeReloadKey} onMutate={onTreeMutate} onChaptersDeleted={onChaptersDeleted} onBeforeDelete={guardMutateStructure} onMutatingChange={setStructureMutating} /> : <div className="mde-tree-hint">{t('md_editor.ws.select_first')}</div>}
         </aside>
 
         <div className="mde-splitter mde-splitter-left" onPointerDown={onSplitDown('left')} title={t('md_editor.splitter.left')} />
@@ -586,7 +953,7 @@ export default function MdEditorPage() {
         <main className="mde-center">
           <div className="mde-tabs">
             {tabs.map((tb) => (
-              <div key={tb.key} className={'mde-tab' + (tb.key === activeKey ? ' active' : '')} onClick={() => setActiveKey(tb.key)}
+              <div key={tb.key} className={'mde-tab' + (tb.key === activeKey ? ' active' : '')} onClick={() => { if (switchingRef.current) return; if (tb.key !== activeKey && !guardLiveAiState()) return; setActiveKey(tb.key); }}
                 title={tb.label}
                 onContextMenu={(e) => { e.preventDefault(); setTabCtx({ x: e.clientX, y: e.clientY, key: tb.key }); }}
                 onMouseDown={(e) => { if (e.button === 1) { e.preventDefault(); closeTab(tb.key); } /* 中键关闭(VSCode) */ }}>
@@ -596,7 +963,7 @@ export default function MdEditorPage() {
             ))}
           </div>
           <div className="mde-editorwrap" onContextMenu={(e) => { if (!active) return; e.preventDefault(); setEditorCtx({ x: e.clientX, y: e.clientY }); }}>
-            <EditorPane tab={active} onChange={onEdit} scriptId={scriptId} onViewReady={(v) => { activeViewRef.current = v; }} onContinueAccept={onProseAccepted} chapterIndex={active && active.kind === 'chapter' ? active.id : null} onSelectionChange={onSel} ghostEnabled={autoComplete} ghostFetch={ghostFetch} />
+            <EditorPane tab={active} onChange={onEdit} scriptId={scriptId} onViewReady={(v) => { activeViewRef.current = v; }} onContinueAccept={onProseAccepted} chapterIndex={active && active.kind === 'chapter' ? active.id : null} onSelectionChange={onSel} ghostEnabled={autoComplete} ghostFetch={ghostFetch} onAiStateDiscarded={onAiStateDiscarded} />
           </div>
           {/* 底部状态栏(VSCode 风):字数 + 光标行:列 + 选中 + 保存态 */}
           <div className="mde-statusbar">
@@ -626,7 +993,7 @@ export default function MdEditorPage() {
             const saved = tabs.filter((t) => !t.dirty).map((t) => t.key);
             const items = [
               { label: t('common.close'), kbd: '⌘W', onClick: () => closeTab(tabCtx.key) },
-              { label: t('md_editor.tab_ctx.close_others'), disabled: others.length === 0, onClick: () => { setActiveKey(tabCtx.key); closeTabs(others); } },
+              { label: t('md_editor.tab_ctx.close_others'), disabled: others.length === 0, onClick: () => { if (switchingRef.current) return; if (tabCtx.key !== activeKey && !guardLiveAiState()) return; setActiveKey(tabCtx.key); closeTabs(others); } },
               { label: t('md_editor.tab_ctx.close_to_right'), disabled: toRight.length === 0, onClick: () => closeTabs(toRight) },
               { sep: true },
               { label: t('md_editor.tab_ctx.close_saved'), disabled: saved.length === 0, onClick: () => closeTabs(saved) },
@@ -662,7 +1029,7 @@ export default function MdEditorPage() {
         {/* 右:agent 直写面板(console_assistant SSE)+ 续写到正文 */}
         <aside className="mde-right">
           {scriptId
-            ? <MdEditorAgent ref={agentRef} scriptId={scriptId} activeTab={active} onWriteComplete={refreshTab} onContinue={onContinue} onProposeChapterEdit={proposeChapterDiff} selLen={selLen} getSelectionContext={getSelectionContext} onIssuesReported={() => setIssuesReloadKey((x) => x + 1)} />
+            ? <MdEditorAgent ref={agentRef} scriptId={scriptId} activeTab={active} onWriteComplete={refreshTab} onRestructure={handleChaptersRestructured} onContinue={onContinue} onProposeChapterEdit={proposeChapterDiff} selLen={selLen} getSelectionContext={getSelectionContext} onIssuesReported={() => setIssuesReloadKey((x) => x + 1)} />
             : <div className="mde-tree-hint">{t('md_editor.ws.select_first')}</div>}
         </aside>
       </div>

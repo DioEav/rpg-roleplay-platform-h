@@ -307,6 +307,9 @@ class StreamChatSSEProtocol(unittest.TestCase):
         # tool_result.ok 应为 True (list 即使空也算 ok)
         tool_results = [e["data"] for e in events if e["event"] == "tool_result"]
         self.assertTrue(tool_results[0]["ok"])
+        # 直接写路径(无二次确认)的 tool_result 必须带 tool 名:
+        # 编辑器右栏靠它匹配 WRITE_TOOL_MAP 刷新文件树/标签(完全访问模式只有这条路径)。
+        self.assertEqual(tool_results[0]["tool"], "list_my_saves")
 
     def test_destructive_yields_confirmation_required_and_pauses(self):
         """destructive 工具: stream_chat 应 yield confirmation_required, 不 dispatch, 中止本轮。"""

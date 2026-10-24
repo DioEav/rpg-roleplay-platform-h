@@ -236,6 +236,8 @@ function PanelCharacters({ state }) {
                 agenda={agendas[name]}
                 onEditStatus={async (status) => {
                   await window.api.game.relationshipSet({ character: name, status });
+                  // 关系写入不会自动回推 state → 必须主动刷新,否则 pill 停在旧值(看起来像没保存)。
+                  try { window.dispatchEvent(new CustomEvent('game-state-refresh')); } catch (_) {}
                   window.__apiToast?.(t('game.characters.relationship_updated', { name, status }), { kind: "ok", duration: 1500 });
                 }}
                 onDelete={async () => {
@@ -257,6 +259,7 @@ function PanelCharacters({ state }) {
             const st = await window.__prompt({ title: t('game.characters.relationship_status_prompt', { name: ch }), default: t('game.characters.status_default') });
             if (!st) return;
             try { await window.api.game.relationshipSet({ character: ch.trim(), status: st.trim() });
+              try { window.dispatchEvent(new CustomEvent('game-state-refresh')); } catch (_) {}
               window.__apiToast?.(t('game.characters.relationship_updated', { name: ch, status: st }), { kind: "ok" }); }
             catch (e) { window.__apiToast?.(t('game.characters.add_failed'), { kind: "danger", detail: e?.message }); }
           }}>

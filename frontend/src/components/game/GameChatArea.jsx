@@ -27,6 +27,21 @@ function ChatArea({ history, runState, runStyle, narrativeSize, hasError, errorM
   const visibleStart = Math.max(0, totalLen - HISTORY_WINDOW - extra);
   const hiddenCount = visibleStart;
   const visible = totalLen > 0 ? history.slice(visibleStart) : [];
+  // 分支按钮的"回填原文":玩家消息回填自己;GM 消息只在它紧跟玩家输入时回填该输入。
+  // 后端 message_index → commit 的口径是「该轮之前」(同轮 player/GM 都解析到父 commit),
+  // 所以从 GM 消息分支时本轮玩家输入也会从历史里消失 → 必须把它放回输入框,否则玩家丢掉自己的话。
+  // 只取紧邻的前一条:系统回执/连续 GM 分段不应把更早一轮的输入误回填。
+  const prevUserByIndex = useMemoA(() => {
+    const out = new Array(totalLen);
+    for (let i = 0; i < totalLen; i++) {
+      const m = history[i];
+      const prev = i > 0 ? history[i - 1] : null;
+      out[i] = (m && m.role === "assistant" && prev && prev.role === "user")
+        ? (prev.content || "")
+        : "";
+    }
+    return out;
+  }, [history, totalLen]);
 
   // PR#65: 组装「长记忆」复制文本(save 级,非每条消息级)。取 SearchModal 同一数据面:
   // memory.main_quest / current_objective / pinned[],空则为 "" → MsgActions 的 hasMemory
@@ -90,6 +105,7 @@ function ChatArea({ history, runState, runStyle, narrativeSize, hasError, errorM
           return m.role === "assistant" ?
           <NarrativeBlock key={`gm-${idx}`} text={m.content} ts={m.ts}
             msgIndex={idx} saveId={saveId} commitId={commitId}
+            forkRestoreText={prevUserByIndex[idx] || ""}
             thinking={m._thinking}
             images={imagesByKey[String(idx)] || (idx === lastAsstIdx ? imagesByKey['__last'] : undefined)}
             streaming={!m.streaming_done && idx === totalLen - 1 && runState.running}

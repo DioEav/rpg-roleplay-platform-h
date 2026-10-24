@@ -21,7 +21,7 @@ import { copyText } from '../../lib/clipboard.js';
 // 执行 api.tavern.fork —— 与 onRegenerate 的"只派发事件避免 prop 透传"同一先例。
 // hideFork:彻底不渲染分支按钮(游戏台误载酒馆档时的堵漏,那时 continueFrom 是
 // 半生效的指针倒回,会把原对话尾巴变成酒馆里不可达的孤儿分支)。
-function MsgActions({ text, ts, msgIndex, totalMsgs, commitId, saveId, role, meta, memoryText, forkKind, hideFork }) {
+function MsgActions({ text, ts, msgIndex, totalMsgs, commitId, saveId, role, meta, memoryText, forkKind, hideFork, forkRestoreText }) {
   // task 38：以前 msgIndex / saveId / commitId 全是 undefined，doFork 就发
   // {label} 给后端 → 后端 int(None) 直接 500。现在 NarrativeBlock / PlayerBlock
   // 把 idx + saveId 透传进来，doFork 至少发 {save_id, message_index, label}，
@@ -94,7 +94,10 @@ function MsgActions({ text, ts, msgIndex, totalMsgs, commitId, saveId, role, met
   const doFork = async () => {
     setForkOpen(false);
     // 优先 node_id (commitId)；否则发 save_id + message_index 让后端 resolve。
+    // 只有 message_index 路径会把目标解析到「该轮之前」的父 commit,回填玩家输入才是安全的;
+    // node_id 路径指向一个已存在的 commit(可能已包含本轮),不能回填,否则会重复。
     const body = { label: t('game.app.msg.fork_label') };
+    const viaMessageIndex = !(commitId != null && commitId !== "");
     if (commitId != null && commitId !== "") {
       body.node_id = commitId;
     } else if (saveId != null && msgIndex != null) {
@@ -120,22 +123,28 @@ function MsgActions({ text, ts, msgIndex, totalMsgs, commitId, saveId, role, met
         }));
         window.dispatchEvent(new CustomEvent("rpg-saves-updated"));
       } catch (_) {}
-      // task 141: 从玩家消息 fork → 那条消息其实是玩家想"在这里换说法重发",
-      // 把它塞回输入框,不要让玩家手动复制粘贴。仅对 role='user' 触发。
-      if (role === "user" && text) {
+      // 后端 message_index → commit 的口径是「该轮之前」(同轮 player/GM 都解析到父 commit),
+      // 所以从 GM 消息分支时本轮玩家输入也会从历史里消失 —— 这里统一把"该回填的原文"
+      // (玩家消息=自身;GM 消息=紧邻的前一条玩家输入)塞回输入框,避免丢话。
+      const restoreText = viaMessageIndex
+        ? (role === "user" ? (text || "") : (forkRestoreText || ""))
+        : "";
+      if (restoreText) {
         // 等 state reload 完(rpg-state-reload 触发的 fetch 跑完),再写输入框,
         // 否则 Composer 重渲染会清空。延迟一帧足够让大部分 reload 完成。
         setTimeout(() => {
           try {
             window.dispatchEvent(new CustomEvent("rpg-composer-restore", {
-              detail: { text },
+              detail: { text: restoreText },
             }));
           } catch (_) {}
         }, 250);
       }
       window.toast?.(t('game.app.msg.fork_switched'), {
         kind: "ok",
-        detail: branchHint + (role === "user" ? " · " + t('game.app.msg.fork_restore_input') : " · " + t('game.app.msg.fork_on_branch')),
+        detail: branchHint + (restoreText
+          ? " · " + t(role === "user" ? 'game.app.msg.fork_restore_input' : 'game.app.msg.fork_restore_player_input')
+          : " · " + t('game.app.msg.fork_on_branch')),
         duration: 2400,
       });
     } catch (e) {
@@ -474,7 +483,7 @@ function InlineMessageEditor({ edit, minHeight = 180 }) {
 
 // 酒馆模式复用:speakerName/speakerAvatar/tag 可选覆盖默认的 GM/主代理 标签。
 // 不传时与 Game Console 行为完全一致(默认 tag="GM", subtitle="主代理")。
-function NarrativeBlock({ text, streaming, ts, msgIndex, saveId, commitId, thinking, speakerName, speakerAvatar, tag, hideMeta, meta, images, toolOps, renderTool, memoryText, forkKind, hideFork }) {
+function NarrativeBlock({ text, streaming, ts, msgIndex, saveId, commitId, thinking, speakerName, speakerAvatar, tag, hideMeta, meta, images, toolOps, renderTool, memoryText, forkKind, hideFork, forkRestoreText }) {
   const { t } = useTranslation();
   const displayText = stripStateOpsForDisplay(text);
   // 内联编辑状态:点击 MsgActions 的编辑按钮时通过事件激活(与 PlayerBlock 共用同一 hook)
@@ -538,7 +547,7 @@ function NarrativeBlock({ text, streaming, ts, msgIndex, saveId, commitId, think
           </>
         )}
       </div>
-      {!streaming && <MsgActions text={displayText} ts={ts || "—"} msgIndex={msgIndex} saveId={saveId} commitId={commitId} role="assistant" meta={meta} memoryText={memoryText} forkKind={forkKind} hideFork={hideFork} />}
+      {!streaming && <MsgActions text={displayText} ts={ts || "—"} msgIndex={msgIndex} saveId={saveId} commitId={commitId} role="assistant" meta={meta} memoryText={memoryText} forkKind={forkKind} hideFork={hideFork} forkRestoreText={forkRestoreText} />}
     </div>);
 
 }

@@ -61,7 +61,7 @@ function PanelWorldbook({ state }) {
         </ul>
       </div>
       <div className="gp-section">
-        <div className="section-head"><h3>{t('game.worldbook.keywords')}</h3></div>
+        <div className="section-head"><h3>{t('game.worldbook.known_events')}</h3></div>
         {/* task 48：原硬编码 8 个 chip（雾港/残页/黑铁怀表/沈知微/韩司直/阿衡/北港/灯塔）
             完全不顾当前剧本/state。改为从 state.world.known_events 派生；空就空态。 */}
         <div className="gp-chips">
@@ -69,7 +69,7 @@ function PanelWorldbook({ state }) {
             ? w.known_events.map((ev, i) => (
                 <span key={i} className="gp-chip">{typeof ev === "string" ? ev : (ev?.label || ev?.text || JSON.stringify(ev))}</span>
               ))
-            : <span className="muted-2" style={{fontSize: 12}}>{t('game.worldbook.keywords_empty')}</span>}
+            : <span className="muted-2" style={{fontSize: 12}}>{t('game.worldbook.known_events_empty')}</span>}
         </div>
       </div>
     </div>

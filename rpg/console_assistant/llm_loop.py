@@ -323,8 +323,9 @@ def _run_llm_loop(
         ]
         assistant_text_acc = ""
         # UI 历史:记录本回合每个工具调用(名/参数/状态/结果),持久化进 conv["ui_turns"] →
-        # 刷新/超时后侧栏能还原工具折叠块(此前只存最终文本,工具调用全丢)。tool_call/result 无 call_id,
-        # 与前端同款 FIFO 配对。
+        # 刷新/超时后侧栏能还原工具折叠块(此前只存最终文本,工具调用全丢)。
+        # tool_call 事件不带 call_id,tool_result 带 call_id/tool;前端状态配对仍用 FIFO,
+        # 写工具刷新则靠 tool_result.tool 精确匹配(完全访问模式没有二次确认,只有这条路径)。
         ui_tools: list[dict[str, Any]] = []
 
         def _mark_tool(ok: bool, result: Any, error: Any) -> None:
@@ -340,6 +341,14 @@ def _run_llm_loop(
                     _tc["result"] = (str(_r)[:4000] if _r is not None else "")
                     _tc["error"] = str(error or "")[:500]
                     return
+
+        def _first_running_tool() -> str | None:
+            """工具按调用顺序串行执行:最早仍 running 的那条就是本次 tool_result 对应的工具。
+            必须在 _mark_tool 之前调用(它会把该条标成 done)。"""
+            for _tc in ui_tools:
+                if _tc.get("status") == "running":
+                    return _tc.get("tool")
+            return None
 
         for ev in backend.stream_with_mcp_loop(
             system=system_prompt,
@@ -427,16 +436,20 @@ def _run_llm_loop(
                         "value": _raw.get("value"),
                         "action_label": _raw.get("action_label"),
                     })
+                    _tool_name = _first_running_tool()
                     _mark_tool(True, _raw.get("ack") or "ui action 已转发前端", None)
                     yield _sse_event("tool_result", {
                         "call_id": ev.get("_call_id") or _new_call_id(),
+                        "tool": _tool_name,
                         "ok": True,
                         "result": _raw.get("ack") or "ui action 已转发前端",
                     })
                     continue
+                _tool_name = _first_running_tool()
                 _mark_tool(bool(ev.get("ok")), ev.get("result"), ev.get("error"))
                 yield _sse_event("tool_result", {
                     "call_id": ev.get("_call_id") or _new_call_id(),
+                    "tool": _tool_name,
                     "ok": bool(ev.get("ok")),
                     "result": ev.get("result"),
                     "error": ev.get("error"),

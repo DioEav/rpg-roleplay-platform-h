@@ -19,6 +19,7 @@ import '../i18n/index.js';   // 初始化 i18next + 接 interfaceLang
 import { useTranslation } from 'react-i18next';
 import i18n from '../i18n';
 import { lsGet, lsSet, lsRemove } from '../lib/storage.js';
+import { normalizePermissionForUi } from '../lib/permission-mode.js';
 import { isMobileV2Enabled } from '../lib/mobile-gate.js';
 
 // 客户端动作命令:本地执行、不发给 GM(区别于 /set /loc /time 等后端 directive,后者仍作为文本发送)。
@@ -220,8 +221,22 @@ function App() {
   const [attachments, setAttachments] = useState([]);
   const [model, setModel] = useState(null);
   const [permission, setPermission] = useState(
-    (INITIAL_STATE.permissions && INITIAL_STATE.permissions.mode) || 'full_access'
+    normalizePermissionForUi(INITIAL_STATE.permissions && INITIAL_STATE.permissions.mode)
   );
+  // 只有玩家主动改权限时才回写后端。此前用 useEffect([permission]) 在挂载时无条件 POST,
+  // 而登录态 INITIAL_STATE 的默认值是 full_access → 页面一打开就可能把存档原本的
+  // read_only/default 覆盖成完全访问(与 reloadState 的 GET 竞态,慢网/冷缓存下会永久丢原值)。
+  // 服务端下发的状态仍走原始 setPermission,不再回声写回。
+  const changePermission = useCallback((mode) => {
+    const next = normalizePermissionForUi(mode);
+    setPermission(next);
+    if (!window.api || !window.api.game || !window.api.game.permissions) return;
+    window.api.game.permissions({ mode: next }).catch((e) => {
+      // 不能静默吞:UI 已乐观切成新模式,失败时必须告知并拉回服务端真值。
+      window.__apiToast?.(t('game.permission.save_failed'), { kind: 'danger', detail: e?.message });
+      try { window.dispatchEvent(new CustomEvent('rpg-state-reload')); } catch (_) {}
+    });
+  }, [t]);
   const getRightTabForLocation = (fallback) => {
     const hash = String(location.hash || '').replace(/^#/, '');
     const tabs = PANEL_TABS || [];
@@ -368,7 +383,7 @@ function App() {
         });
         if (Array.isArray(data.history)) setHistory(data.history);
         if (data.permissions) {
-          setPermission(data.permissions.mode || 'full_access');
+          setPermission(normalizePermissionForUi(data.permissions.mode));
           setPendingWrites(data.permissions.pending_writes || []);
           setPendingQuestions(data.permissions.pending_questions || []);
         }
@@ -454,7 +469,7 @@ function App() {
                               setHistory(d2.history);
                             }
                             if (d2.permissions) {
-                              setPermission(d2.permissions.mode || 'full_access');
+                              setPermission(normalizePermissionForUi(d2.permissions.mode));
                               setPendingWrites(d2.permissions.pending_writes || []);
                               setPendingQuestions(d2.permissions.pending_questions || []);
                             }
@@ -808,7 +823,7 @@ function App() {
             return n;
           });
           if (data && data.permissions) {
-            setPermission(data.permissions.mode || 'full_access');
+            setPermission(normalizePermissionForUi(data.permissions.mode));
             setPendingWrites(data.permissions.pending_writes || []);
             setPendingQuestions(data.permissions.pending_questions || []);
           }
@@ -1088,7 +1103,7 @@ function App() {
           });
           if (payload && Array.isArray(payload.history)) setHistory(payload.history);
           if (payload && payload.permissions) {
-            setPermission(payload.permissions.mode || 'full_access');
+            setPermission(normalizePermissionForUi(payload.permissions.mode));
             setPendingWrites(payload.permissions.pending_writes || []);
             setPendingQuestions(payload.permissions.pending_questions || []);
           }
@@ -1215,7 +1230,7 @@ function App() {
     if (cmdId) {
       setText(''); setPickedCommand(null); setShowSlash(false);
       if (cmdId === 'retry') onRetry();
-      else if (cmdId === 'status') setPanelCollapsed(false);
+      else if (cmdId === 'status') { setPanelCollapsed(false); setActiveTab('status'); }
       else if (cmdId === 'debug') setSseLogOpen(true);
       else if (cmdId === 'save') {
         (async () => {
@@ -1430,11 +1445,6 @@ function App() {
     window.__apiToast?.(t('game.console.config.cancelled'), { kind: 'info', duration: 2000 });
   };
 
-  useEffect(() => {
-    if (!window.api) return;
-    window.api.game.permissions({ mode: permission }).catch(() => {});
-  }, [permission]);
-
   const rootStyle = useMemo(() => {
     const densityMap = { compact: 0.92, normal: 1, comfy: 1.1 };
     return { '--density': densityMap[tweaks.density] || 1, '--ui-size': tweaks.uiSize + 'px', '--narrative-size': tweaks.narrativeSize + 'px' };
@@ -1468,7 +1478,7 @@ function App() {
           onSend={onSend} onSendRaw={onSendRaw} onStop={onStop}
           attachments={attachments} setAttachments={setAttachments}
           model={model} setModel={setModel}
-          permission={permission} setPermission={setPermission}
+          permission={permission} setPermission={changePermission}
           pendingWrites={pendingWrites} pendingQuestions={pendingQuestions}
           onApprove={onApprove} onReject={onReject} onAnswerQuestion={onAnswerQuestion} onDismissConfirm={onDismissConfirm}
           onSlashPick={onSlashPick} onAttachPick={onAttachPick} pickedCommand={pickedCommand} onClearCommand={() => setPickedCommand(null)}
@@ -1490,7 +1500,7 @@ function App() {
           onOpenFeedback={() => { try { window.__openFeedback?.(); } catch (_) {} }}
         />
         {/* 找回的模态浮层(非主 UI 本体) */}
-        <GameSettingsModal open={showInGameSettings} onClose={() => setShowInGameSettings(false)} saveTitle={activeSave?.title || game?._raw?.save_title || ''} permission={permission} saveId={activeSave?.id ?? null} />
+        <GameSettingsModal open={showInGameSettings} onClose={() => setShowInGameSettings(false)} saveTitle={activeSave?.title || game?._raw?.save_title || ''} saveId={activeSave?.id ?? null} />
         <HistoryDrawer open={showHistoryDrawer} history={history} onClose={() => setShowHistoryDrawer(false)} />
         <SearchDrawer open={showSearchDrawer} history={history} state={game} onClose={() => setShowSearchDrawer(false)} />
         <GCWelcomeModal open={welcomeGCOpen} onClose={() => setWelcomeGCOpen(false)} />
@@ -1594,7 +1604,7 @@ function App() {
           }
         />}
         {mountStage >= 2 && <>
-          <GameSettingsModal open={showInGameSettings} onClose={() => setShowInGameSettings(false)} saveTitle={activeSave?.title || game?._raw?.save_title || ''} permission={permission} saveId={activeSave?.id ?? null} />
+          <GameSettingsModal open={showInGameSettings} onClose={() => setShowInGameSettings(false)} saveTitle={activeSave?.title || game?._raw?.save_title || ''} saveId={activeSave?.id ?? null} />
           <HistoryDrawer open={showHistoryDrawer} history={history} onClose={() => setShowHistoryDrawer(false)} />
           <SearchDrawer open={showSearchDrawer} history={history} state={game} onClose={() => setShowSearchDrawer(false)} />
         </>}
@@ -1674,7 +1684,7 @@ function App() {
             onConfigDefault={onConfigDefault} onConfigContinue={onConfigContinue} onHardConfig={onHardConfig} onConfigSettings={onConfigSettings} />
           <Composer
             text={text} setText={setText} onSend={onSend} onStop={onStop} running={runState.running}
-            onSendRaw={onSendRaw} permission={permission} setPermission={setPermission}
+            onSendRaw={onSendRaw} permission={permission} setPermission={changePermission}
             model={model} setModel={setModel} composerMode={tweaks.composerMode}
             suggestions={game.suggestions} gameState={game}
             attachments={attachments} removeAttachment={(i) => setAttachments((a) => a.filter((_, j) => j !== i))}

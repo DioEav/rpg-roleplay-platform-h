@@ -126,7 +126,10 @@ class HunkBarWidget extends WidgetType {
   ignoreEvent() { return false; }
 }
 
-// ── 状态:{ops, opHunk, hunkCount, oldText, decisions, onAccept, onReject, onMixed} | null ──
+// ── 状态:{ops, opHunk, hunkCount, oldText, decisions, kind, onAccept, onReject, onMixed} | null ──
+// kind: 'agent'(AI 提议改章) | 'conflict'(保存冲突三方合并) | 'unknown'。
+// 切标签时据此决定能否自动 reject:agent 可以安全拒绝;conflict 的 onReject 会强制落库本地版本,
+// 绝不能因为用户切个标签就替他做这个决定。
 const setChapterDiff = StateEffect.define();
 
 export const chapterDiffField = StateField.define({
@@ -137,6 +140,24 @@ export const chapterDiffField = StateField.define({
     return v;
   },
 });
+
+// 当前 diff 的来源类型(null=没有 diff)。供编辑器在切标签/卸载前判断如何清理。
+export function chapterDiffKind(view) {
+  const v = view && view.state.field(chapterDiffField, false);
+  return v ? (v.kind || 'unknown') : null;
+}
+
+// 不改变文档、只清 diff 状态的安全清理(切标签/整篇替换前的兜底)。
+// reject=true 时仅对 agent diff 回调 onReject(拒绝后端待确认的提议);conflict diff 不动,
+// 避免在用户没有明确选择时 force-save 本地版本覆盖服务端新文。
+export function chapterDiffCancelEffect(view, { reject = false } = {}) {
+  const v = view && view.state.field(chapterDiffField, false);
+  if (!v) return null;
+  if (reject && v.kind === 'agent') {
+    try { v.onReject?.(); } catch (_) {}
+  }
+  return setChapterDiff.of(null);
+}
 
 // 块装饰(删除块 / 逐块工具条)CM6 不允许由 ViewPlugin 提供,必须从 StateField 经
 // EditorView.decorations 提供 → buildDeco 直接吃 state(无 view)。
@@ -236,6 +257,9 @@ export function rejectChapterDiff(view) {
 // cbs.onAccept(全接受)/onReject(全拒绝)/onMixed(finalText,逐块取舍后的混合文本)。
 export function showChapterDiff(view, oldText, newText, cbs = {}) {
   if (!view) return false;
+  // 同一视图同时只保留一份审阅:已有未处理 diff 时不再叠加(调用方会退回侧栏确认)。
+  // 否则第二份 diff 会覆盖第一份的决策/回调,后端第一条待确认永远悬空。
+  if (view.state.field(chapterDiffField, false)) return false;
   const ops = lineDiff(oldText || '', newText || '');
   const { opHunk, hunkCount } = tagHunks(ops);
   // doc→newText 与 diff 数据一并 dispatch(一笔事务):装饰由 chapterDiffField 计算,需在 doc 更新后生效。
@@ -243,6 +267,7 @@ export function showChapterDiff(view, oldText, newText, cbs = {}) {
     changes: { from: 0, to: view.state.doc.length, insert: newText || '' },
     effects: setChapterDiff.of({
       ops, opHunk, hunkCount, oldText: oldText || '', decisions: {},
+      kind: cbs.kind || 'unknown',
       onAccept: cbs.onAccept, onReject: cbs.onReject, onMixed: cbs.onMixed,
     }),
   });

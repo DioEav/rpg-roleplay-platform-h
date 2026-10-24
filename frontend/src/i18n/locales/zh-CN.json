@@ -3280,8 +3280,8 @@
       "world_rules": "世界规则",
       "constraints_count": "{{count}} 条约束",
       "no_rules": "（本剧本暂未配置世界规则）",
-      "keywords": "本轮重要词条",
-      "keywords_empty": "暂无本轮重要词条",
+      "known_events": "本轮已知事件",
+      "known_events_empty": "暂无本轮已知事件",
       "save_failed": "保存失败",
       "overlay_title": "世界书条目",
       "overlay_subtitle": "本存档新增（不改剧本原文）",
@@ -3399,6 +3399,7 @@
     "context": {
       "title": "本轮上下文",
       "tokens": "{{count}} tokens",
+      "layers_count": "{{count}} 层",
       "no_chapter_refs": "（本轮没有检索到章节引用）",
       "pinned_count": "固定记忆 · {{count}} 段",
       "history_turns": "历史摘要 · {{count}} 回合",
@@ -3524,7 +3525,8 @@
       "mention_you": "你",
       "image_gen_tip": "AI 生图",
       "model_needs_config": "配置模型",
-      "remove_attachment": "移除附件"
+      "remove_attachment": "移除附件",
+      "restore_kept_draft": "输入框已有未发送内容，已保留草稿，未覆盖为分支原文"
     },
     "command": {
       "title": "命令",
@@ -3610,7 +3612,8 @@
       "review_label": "自动审查",
       "review_desc": "白名单 + 关系/世界变量自动；其他需审批",
       "full_access_label": "完全访问",
-      "full_access_desc": "除硬黑名单外全部自动；类似 codex full-auto"
+      "full_access_desc": "除硬黑名单外全部自动；类似 codex full-auto",
+      "save_failed": "写入权限切换失败，已重新同步服务端状态"
     },
     "app": {
       "rail": {
@@ -3663,6 +3666,7 @@
         "new_branch": "新分支",
         "fork_switched": "已切换到新分支",
         "fork_restore_input": "原消息已放回输入框,可编辑后重发",
+        "fork_restore_player_input": "本轮玩家输入已放回输入框,可编辑后重发",
         "fork_on_branch": "当前消息流已是新分支",
         "fork_create_failed": "分支创建失败",
         "delete_detail": "已删 {{count}} 条消息 · 回到第 {{turn}} 回合",
@@ -3817,8 +3821,8 @@
     },
     "console": {
       "version": {
-        "switch_tip": "切换版本",
-        "header": "当前版本 — 最近 {{count}} 个 commit",
+        "switch_tip": "查看版本历史（切换暂未开放）",
+        "header": "版本历史 — 最近 {{count}} 个 commit（切换暂未开放）",
         "checkout_not_impl": "版本 checkout 后端尚未实现 (501)",
         "checkout_unavailable": "版本回滚暂未开放",
         "switched": "已切换到版本 {{sha}}",
@@ -4370,10 +4374,13 @@
     "toast": {
       "ai_edited_has_unsaved": "AI 改了这条,但你有未保存修改,未自动刷新",
       "ai_refreshed": "AI 已修改,已刷新",
+      "ai_state_discarded": "已取消上一标签未处理的 AI 改动",
       "blank_script_created": "已新建空白剧本",
       "chapter_batch_delete_failed": "章节批量删除失败",
       "chapter_create_failed": "新建章节失败",
       "chapter_created": "已新建章节",
+      "chapters_remapped": "章节序号已重排,已同步更新打开的章节标签",
+      "chapters_restructured": "章节结构已变化,已关闭全部章节标签,请重新打开需要的章节",
       "copied": "已复制",
       "copy_failed": "复制失败",
       "copy_failed_kbd": "复制失败,请用 {{kbd}}",
@@ -4390,7 +4397,14 @@
       "open_file_first": "请先打开一个文件",
       "open_file_first_continue": "请先打开一个文件再续写",
       "paste_failed_kbd": "粘贴失败,请用 {{kbd}}",
+      "pending_ai_resolve": "当前章节有未处理的 AI 改动,请先批准/拒绝或按 Esc 取消",
       "rename_failed": "重命名失败",
+      "resolve_ai_before_save": "请先处理当前章节的 AI 续写/改动审阅再保存",
+      "save_in_progress": "正在保存,请稍后再试",
+      "saving_before_switch": "切换前正在保存 {{count}} 个未保存标签…",
+      "structure_busy": "正在处理章节/条目结构变更,请稍候",
+      "switch_blocked_changed": "已取消切换:保存期间内容又发生了变化,请重试",
+      "switch_blocked_conflict": "已取消切换:有标签与服务器版本冲突,请先处理冲突",
       "renamed": "已重命名",
       "reorder_failed": "重排失败",
       "reordered": "已重排序",
@@ -4460,7 +4474,7 @@
       "save_count": "含 {{n}} 次保存",
       "restore": "恢复到此前",
       "restored": "已恢复到该版本之前",
-      "restored_hint": "关闭并重新打开该章节标签即可看到恢复后的正文",
+      "restored_hint": "编辑器中的正文已同步为恢复后的版本",
       "delete": "删除",
       "delete_confirm": "删除这条历史记录?",
       "delete_confirm_msg": "只删这条记录及其改前快照,不会改动正文。删除后无法恢复。",

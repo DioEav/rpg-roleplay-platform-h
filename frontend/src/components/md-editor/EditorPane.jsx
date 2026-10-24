@@ -4,7 +4,7 @@ import { useTranslation } from 'react-i18next';
 import CodeMirrorEditor from '../CodeMirrorEditor.jsx';
 
 // ── 标签编辑器(P0:textarea;P3 替换为 CodeMirror)──────────────────────
-function EditorPane({ tab, onChange, scriptId, onViewReady, onContinueAccept, chapterIndex, onSelectionChange, ghostEnabled, ghostFetch }) {
+function EditorPane({ tab, onChange, scriptId, onViewReady, onContinueAccept, chapterIndex, onSelectionChange, ghostEnabled, ghostFetch, onAiStateDiscarded }) {
   const { t } = useTranslation();
   if (!tab) {
     return <div className="mde-empty">{t('md_editor.editor.empty_hint')}<br /><span className="muted">{t('md_editor.editor.empty_kinds')}</span></div>;
@@ -23,6 +23,7 @@ function EditorPane({ tab, onChange, scriptId, onViewReady, onContinueAccept, ch
       onSelectionChange={onSelectionChange}
       ghostEnabled={ghostEnabled && tab.kind === 'chapter'}
       ghostFetch={ghostFetch}
+      onAiStateDiscarded={onAiStateDiscarded}
     />
   );
 }

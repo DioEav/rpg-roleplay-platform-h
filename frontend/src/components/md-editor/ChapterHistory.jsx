@@ -23,8 +23,8 @@ function ChapterHistory({ scriptId, chapterIndex, onClose, onRestored }) {
       if (r && r.ok) {
         toast(t('md_editor.history.restored', { defaultValue: '已恢复到该版本之前' }), {
           kind: 'ok',
-          // 正文不会立即回灌到编辑器(同标签不回灌的既有约定)→ 明确引导怎么看变化。
-          detail: t('md_editor.history.restored_hint', { defaultValue: '关闭并重新打开该章节标签即可看到恢复后的正文' }),
+          // 活动章节标签会由 refreshTab 直接回灌到 CodeMirror;这里只说明结果即可。
+          detail: t('md_editor.history.restored_hint', { defaultValue: '编辑器中的正文已同步为恢复后的版本' }),
           duration: 3600,
         });
         onRestored && onRestored();

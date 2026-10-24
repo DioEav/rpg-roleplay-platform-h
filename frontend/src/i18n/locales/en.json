@@ -3176,8 +3176,8 @@
       "world_rules": "World Rules",
       "constraints_count": "{{count}} constraint(s)",
       "no_rules": "(No world rules configured for this script)",
-      "keywords": "Key Terms This Round",
-      "keywords_empty": "No key terms this round",
+      "known_events": "Known Events This Round",
+      "known_events_empty": "No known events this round",
       "save_failed": "Save failed",
       "overlay_title": "Worldbook Entries",
       "overlay_subtitle": "Added in this save (script text untouched)",
@@ -3295,6 +3295,7 @@
     "context": {
       "title": "Context This Round",
       "tokens": "{{count}} tokens",
+      "layers_count": "{{count}} layers",
       "no_chapter_refs": "(No chapter refs retrieved this round)",
       "pinned_count": "Pinned memory · {{count}} chunk(s)",
       "history_turns": "History summary · {{count}} turn(s)",
@@ -3420,7 +3421,8 @@
       "mention_you": "You",
       "image_gen_tip": "AI Image Generation",
       "model_needs_config": "Set up model",
-      "remove_attachment": "Remove attachment"
+      "remove_attachment": "Remove attachment",
+      "restore_kept_draft": "The input box already has an unsent draft; kept your draft instead of overwriting it with the branched message"
     },
     "command": {
       "title": "Commands",
@@ -3506,7 +3508,8 @@
       "review_label": "Auto Review",
       "review_desc": "Whitelist + relationship/world variables auto; others require approval",
       "full_access_label": "Full Access",
-      "full_access_desc": "All auto except hard blacklist; similar to codex full-auto"
+      "full_access_desc": "All auto except hard blacklist; similar to codex full-auto",
+      "save_failed": "Failed to change write permission; server state has been resynced"
     },
     "app": {
       "rail": {
@@ -3559,6 +3562,7 @@
         "new_branch": "New branch",
         "fork_switched": "Switched to new branch",
         "fork_restore_input": "original message restored to input — edit and resend",
+        "fork_restore_player_input": "this turn's player input restored to input — edit and resend",
         "fork_on_branch": "message stream is now on new branch",
         "fork_create_failed": "Failed to create branch",
         "delete_detail": "Deleted {{count}} message(s) · restored to turn {{turn}}",
@@ -3713,8 +3717,8 @@
     },
     "console": {
       "version": {
-        "switch_tip": "Switch version",
-        "header": "Current version — last {{count}} commits",
+        "switch_tip": "View version history (switching not available yet)",
+        "header": "Version history — last {{count}} commits (switching not available yet)",
         "checkout_not_impl": "Version checkout not yet implemented (501)",
         "checkout_unavailable": "Version rollback is not yet available",
         "switched": "Switched to version {{sha}}",
@@ -4370,10 +4374,13 @@
     "toast": {
       "ai_edited_has_unsaved": "AI edited this item, but you have unsaved changes — skipping auto-refresh",
       "ai_refreshed": "AI changes applied",
+      "ai_state_discarded": "Unfinished AI changes from the previous tab were discarded",
       "blank_script_created": "New blank script created",
       "chapter_batch_delete_failed": "Failed to batch-delete chapters",
       "chapter_create_failed": "Failed to create chapter",
       "chapter_created": "Chapter created",
+      "chapters_remapped": "Chapter numbering changed; open chapter tabs were renumbered",
+      "chapters_restructured": "Chapter structure changed; all chapter tabs were closed. Reopen as needed",
       "copied": "Duplicated",
       "copy_failed": "Duplication failed",
       "copy_failed_kbd": "Copy failed — try {{kbd}}",
@@ -4390,7 +4397,14 @@
       "open_file_first": "Please open a file first",
       "open_file_first_continue": "Please open a file before using AI continue",
       "paste_failed_kbd": "Paste failed — try {{kbd}}",
+      "pending_ai_resolve": "Resolve the pending AI change first (approve/reject, or press Esc)",
       "rename_failed": "Rename failed",
+      "resolve_ai_before_save": "Resolve the pending AI continuation/review before saving",
+      "save_in_progress": "Saving — please try again shortly",
+      "saving_before_switch": "Saving {{count}} unsaved tab(s) before switching…",
+      "structure_busy": "A structural change is in progress. Please wait",
+      "switch_blocked_changed": "Switch cancelled: content changed while saving. Please try again",
+      "switch_blocked_conflict": "Switch cancelled: a tab conflicts with the server version. Resolve it first",
       "renamed": "Renamed",
       "reorder_failed": "Reorder failed",
       "reordered": "Reordered",
@@ -4460,7 +4474,7 @@
       "save_count": "{{n}} saves",
       "restore": "Restore to before",
       "restored": "Restored to that version",
-      "restored_hint": "Close and reopen the chapter tab to see the restored text",
+      "restored_hint": "The editor has been refreshed to the restored version",
       "delete": "Delete",
       "delete_confirm": "Delete this history entry?",
       "delete_confirm_msg": "Removes only this entry and its snapshot; the chapter text is untouched. This cannot be undone.",
