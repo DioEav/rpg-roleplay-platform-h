@@ -59,7 +59,8 @@ describe('ApiDetailPanel — API 用量页签', () => {
     await waitFor(() => expect(screen.getByText(num(20))).toBeTruthy());     // 请求数 13+7
     expect(screen.getByText(num(1690))).toBeTruthy();                       // 输入 1234+456
     expect(screen.getByText(num(656))).toBeTruthy();                        // 输出 567+89
-    expect(screen.getByText('$0.75')).toBeTruthy();                         // 成本 0.5+0.25
+    // 成本项已按产品决定隐藏(组件 SHOW_API_USAGE_COST=false);这里锁「不显示」而不是旧文案 $0.75。
+    expect(screen.queryByText('$0.75')).toBeNull();
 
     // 别的供应商的用量不许混进来
     expect(screen.queryByText(num(99999))).toBeNull();

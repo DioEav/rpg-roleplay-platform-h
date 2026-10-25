@@ -22,7 +22,7 @@ const SLASH_COMMANDS = [
   { id: "note", trigger: "/note ", labelKey: "game.command.note_label", groupKey: "game.command.group_memory", hint: "/note <text>" },
   // /memory 已下架(v1.77.0 删除 set_memory_mode,全仓无处理分支):发送会被当普通
   // 文本穿透给 GM。真旋钮在「设置 → 记忆」(MemorySettings),此处不再暴露菜单项。
-  { id: "permission", trigger: "/permission ", labelKey: "game.command.permission_label", groupKey: "game.command.group_mode", hint: "/permission default|review|full_access" },
+  { id: "permission", trigger: "/permission ", labelKey: "game.command.permission_label", groupKey: "game.command.group_mode", hint: "/permission read_only|default|review|full_access" },
   { id: "save", trigger: "/save", labelKey: "game.command.save_label", groupKey: "game.command.group_engineering", hint: "/save" },
   { id: "retry", trigger: "/retry", labelKey: "game.command.retry_label", groupKey: "game.command.group_engineering", hint: "/retry" },
 ];

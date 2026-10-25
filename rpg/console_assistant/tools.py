@@ -121,9 +121,17 @@ EDITOR_ONLY: frozenset[str] = frozenset({
     "get_import_status", "list_my_import_jobs", "cancel_import_job",
 })
 
+# 编辑器面刻意移除的工具(仍属于 SHARED,控制台照常可用)。
+# 编辑器右栏没有页面表单/按钮的 ui_atlas(MdEditorAgent 不上报),ui_set_field/ui_click/
+# ui_describe_page 调了也没有宿主执行 —— 与其让 agent 反复调用「看似成功但界面无反应」的工具,
+# 不如不提供。ask_user_choice / ask_user_text 保留(右栏已渲染对应问题卡)。
+EDITOR_EXCLUDED: frozenset[str] = frozenset({
+    "ui_describe_page", "ui_set_field", "ui_click",
+})
+
 # 只给平台控制台助手。目前为空 —— **刻意不做减法**:从编辑器面移除平台工具
 # (管存档 / 改设置 / 页面导航)是行为变更,风险不对称,留给产品拍板。
-# 现状因此是「编辑器 = SHARED + EDITOR_ONLY」,纯增量,零回归。
+# 现状因此是「编辑器 = SHARED + EDITOR_ONLY - EDITOR_EXCLUDED」,除 UI 动作外纯增量。
 CONSOLE_ONLY: frozenset[str] = frozenset()
 
 # 刻意不给任何面。每一组都要写清为什么 —— 这份清单的价值就在于「不给」是个决定,
@@ -158,7 +166,7 @@ NOT_SERVED: frozenset[str] = frozenset({
 def _surface_names(surface: str) -> frozenset[str]:
     """某个面能看到的工具名集合。未知 surface 退化成 console(最保守)。"""
     if surface == "editor":
-        return SHARED | EDITOR_ONLY
+        return (SHARED | EDITOR_ONLY) - EDITOR_EXCLUDED
     return SHARED | CONSOLE_ONLY
 
 

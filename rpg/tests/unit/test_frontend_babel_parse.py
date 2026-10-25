@@ -120,8 +120,12 @@ class FrontendBabelParse(unittest.TestCase):
             )
 
     def _parse_items(self, items: list[dict]) -> list[dict]:
+        # 不用 `node -e` 传多行脚本:部分 Windows Node 发行版/Store shim 只执行 -e 的第一行
+        # (rc=0 但后续行静默不跑,表现为 stdout 为空)。落成临时 .js 再执行,跨平台稳定。
+        script_path = Path(self.cwd) / "_parse_frontend_sources.js"
+        script_path.write_text(PARSER_SCRIPT, encoding="utf-8")
         proc = subprocess.run(
-            ["node", "-e", PARSER_SCRIPT],
+            ["node", str(script_path)],
             cwd=str(self.cwd),
             input=json.dumps(items),
             text=True,

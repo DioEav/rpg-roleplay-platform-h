@@ -386,6 +386,7 @@ export function TavernChatArea({ history, running, saveId, charName, charInitial
                   toolOps={toolOps}
                   renderTool={(ops) => <ToolCallBlock ops={ops} />}
                   forkKind="tavern"
+                  busy={running}
                 />
               </React.Fragment>
             );
@@ -396,6 +397,7 @@ export function TavernChatArea({ history, running, saveId, charName, charInitial
               msgIndex={i} saveId={saveId} commitId={commitId}
               tag={personaName} speakerAvatar={personaAvatar || undefined}
               forkKind="tavern"
+              busy={running}
             />
           );
         })}

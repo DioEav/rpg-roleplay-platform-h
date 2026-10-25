@@ -427,6 +427,27 @@ def _run_llm_loop(
                         "context": payload.get("context", ""),
                     })
                     break
+                if isinstance(result_str, str) and result_str.startswith("USER_TEXT:"):
+                    # ask_user_text 之前只把 USER_TEXT:<json> 当普通工具结果喂回 LLM,
+                    # 用户永远看不到输入框。这里与 USER_CHOICE 同构:发事件 + 中断本轮,
+                    # 由前端渲染问题卡,用户在下方的聊天输入框作答。
+                    payload_str = result_str[len("USER_TEXT:"):]
+                    try:
+                        payload = json.loads(payload_str)
+                    except Exception:
+                        payload = {"question": payload_str}  # type: ignore[assignment]
+                    if not assistant_text_acc.strip():
+                        intro = "好的,先确认一下:"
+                        assistant_text_acc += intro
+                        yield _sse_event("token", {"text": intro})
+                    yield _sse_event("user_text_required", {
+                        "call_id": ev.get("_call_id") or _new_call_id(),
+                        "tool": "ask_user_text",
+                        "question": payload.get("question", ""),
+                        "placeholder": payload.get("placeholder", ""),
+                        "context": payload.get("context", ""),
+                    })
+                    break
                 _raw = ev.get("result")
                 if isinstance(_raw, dict) and _raw.get("__ui_action__"):
                     yield _sse_event("ui_action", {

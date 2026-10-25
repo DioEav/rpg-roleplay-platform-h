@@ -41,16 +41,22 @@ const ghostDeco = EditorView.decorations.compute([ghostField], (state) => {
 export function hasGhost(view) { const v = view.state.field(ghostField, false); return !!(v && v.text); }
 
 // 采纳:把幽灵文本插入光标处,光标移到末尾。返回 true 以消费 Tab(无幽灵时返回 false 让 Tab 走缩进)。
-export function acceptGhost(view) {
+// onAccept 可选:鲜活文本同样是 AI 续写,采纳后交给父级走「同步设定到知识库」桥接
+// (与侧栏「续写到正文」/ ⌘K 的 onAccept 一致;旧实现只有后者会提示同步)。
+export function acceptGhost(view, onAccept) {
   const v = view.state.field(ghostField, false);
   if (!v || !v.text) return false;
+  const text = v.text;
   const pos = Math.min(v.pos, view.state.doc.length);
   view.dispatch({
-    changes: { from: pos, insert: v.text },
-    selection: { anchor: pos + v.text.length },
+    changes: { from: pos, insert: text },
+    selection: { anchor: pos + text.length },
     effects: clearGhostE.of(null),
     userEvent: 'input.complete',
   });
+  if (typeof onAccept === 'function') {
+    try { onAccept(text); } catch (_) {}
+  }
   return true;
 }
 
@@ -94,14 +100,14 @@ function ghostTrigger({ isEnabled, fetchCompletion, delay = 650 }) {
 }
 
 // keymap 用 Prec.highest 抢在缩进(indentWithTab)之前:有幽灵→Tab 采纳,无幽灵→返回 false 放行缩进。
-export function ghostCompleteExtension(opts) {
+export function ghostCompleteExtension(opts = {}) {
   return [
     ghostField,
     ghostDeco,
     Prec.highest(keymap.of([
-      { key: 'Tab', run: acceptGhost },
+      { key: 'Tab', run: (view) => acceptGhost(view, opts.onAccept) },
       { key: 'Escape', run: clearGhost },
     ])),
-    ghostTrigger(opts || {}),
+    ghostTrigger(opts),
   ];
 }

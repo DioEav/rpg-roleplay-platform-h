@@ -7,7 +7,7 @@
 import { createToastChannel } from './toast.jsx';
 
 // ── 组件转发(逐字节搬迁到 components/game/,零行为变化)──────────────────────
-export { LeftRail, RunSteps, ThinkingPill } from './components/game/GameLeftRail.jsx';
+export { LeftRail, ThinkingPill } from './components/game/GameLeftRail.jsx';
 export { NarrativeBlock, PlayerBlock, renderNarrativeWithInlineTools, useSaveImages, SaveImagesStrip } from './components/game/GameChatMessages.jsx';
 export { ChatArea } from './components/game/GameChatArea.jsx';
 export { GameSettingsModal } from './components/game/GameSettingsModal.jsx';

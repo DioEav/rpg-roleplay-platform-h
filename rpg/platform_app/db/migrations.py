@@ -2447,6 +2447,16 @@ MIGRATIONS: list[tuple[int, str, list[str]]] = [
         "alter table user_api_credentials add column if not exists api_format text not null default ''",
     ]),
 
+    (110, "kb_canon_entities_updated_at", [
+        # canon 实体此前只有 created_at,是唯一没有版本列的可编辑实体:
+        # 世界书/锚点已有 updated_at,角色卡已有 row_version,只有 canon 的编辑是
+        # 无条件覆盖 → 编辑器未保存改动会静默盖掉 AI/其他会话的写入。
+        # 补 updated_at 当乐观锁基线;PUT 每次真实编辑推进它,编辑器带 base_updated_at
+        # 保存时比对冲突。既有行回填 now()(仅迁移时一次,后续行由 PUT 维护)。
+        # PG 11+ 对 STABLE 默认值(now())走快速加列,不重写整表。
+        "alter table kb_canon_entities add column if not exists updated_at timestamptz not null default now()",
+    ]),
+
 ]
 
 

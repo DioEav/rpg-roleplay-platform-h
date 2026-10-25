@@ -224,8 +224,10 @@ async def api_console_assistant_autocomplete(
 ) -> JSONResponse:
     """编辑器内联续写(Copilot ghost text):据光标前文给【一句】短续写,作者按 Tab 采纳。
 
-    body: { before, script_id?, chapter_index? }。owner-scoped + 用户自有模型/key(云端隔离)。
+    body: { before, script_id? }。owner-scoped + 用户自有模型/key(云端隔离)。
     非流式、短输出(max_tokens 小)、上下文精简(只 before + 写作规范)以求低延迟低成本。
+    注意:ghost 刻意不装配世界书/设定上下文,旧前端传的 chapter_index 未使用,已移除,
+    避免让人误以为它会参与按章防剧透或设定注入(需要设定上下文请走 /continue 或右栏聊天)。
     """
     try:
         body = await request.json()

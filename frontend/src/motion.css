@@ -115,15 +115,6 @@
 /* ---------------- Chat messages ---------------- */
 .gc-msg { animation: m-stagger var(--m-base) var(--m-out) forwards; }
 
-/* Run-state steps progressively fade in */
-.gc-run-line-row, .gc-run-card, .gc-run-tl-row {
-  animation: m-slide-up 140ms var(--m-out) forwards;
-}
-.gc-run-line-row:nth-child(2) { animation-delay: 40ms; }
-.gc-run-line-row:nth-child(3) { animation-delay: 80ms; }
-.gc-run-line-row:nth-child(4) { animation-delay: 120ms; }
-.gc-run-line-row:nth-child(5) { animation-delay: 160ms; }
-
 /* ---------------- Right-panel tab swap ---------------- */
 .gp-panel-body { animation: m-fade-in 200ms var(--m-out) forwards; }
 .gp-panel-body > .gp-stack > .gp-section { animation: m-stagger 200ms var(--m-out) forwards; }

@@ -85,8 +85,15 @@ function SearchDrawer({ open, history, state, onClose }) {
     const term = (q || "").trim().toLowerCase();
     if (!term) return [];
     const out = [];
-    const push = (group, label, text, meta) => {
-      const lc = String(text || "").toLowerCase();
+    const push = (group, label, value, meta) => {
+      // pinned / known_events 可能是对象或数字;旧代码只 String() 做大小写转换,却对原值
+      // 调 .slice → 查询命中 "[object Object]" 时直接 TypeError。统一先归一成字符串。
+      const text = typeof value === "string"
+        ? value
+        : (value == null ? "" : (typeof value === "object"
+          ? (value.text || value.label || value.title || JSON.stringify(value))
+          : String(value)));
+      const lc = text.toLowerCase();
       const idx = lc.indexOf(term);
       if (idx < 0) return;
       const start = Math.max(0, idx - 24);

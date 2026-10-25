@@ -1,4 +1,4 @@
-/* Game Console 左栏 + 运行状态簇(LeftRail / RunSteps* / ThinkingPill /
+/* Game Console 左栏 + 运行状态簇(LeftRail / ThinkingPill /
    RunStateSection / RunDetailRail / BranchTreeRail)—— 纯机械从 game-app.jsx
    搬出,DOM/视觉/行为零变化。 */
 import React from 'react';
@@ -8,12 +8,30 @@ import { Icon } from '../../game-icons.jsx';
 import { BranchGraph } from '../../branch-graph.jsx';
 
 // ----------------------------- LEFT RAIL ---------------------------------
-function LeftRail({ collapsed, onToggle, state, runState, onNew, onSave, onSwitchSave, currentSaveId, saves, resizeHandle, mobileOpen }) {
+function LeftRail({ collapsed, onToggle, state, runState, onNew, onSave, onSwitchSave, currentSaveId, saves, activeSave, resizeHandle, mobileOpen }) {
   // task 102E: resizeHandle 是 React 节点 (一般是 <ResizeHandle />),
   // 由 App 层注入,放在 <aside> 内绝对定位
   const { t } = useTranslation();
   const m = state.memory || { mode: "normal" };
   const [branchOpen, setBranchOpen] = useStateA(false);
+  // 存档切换:此前 onSwitchSave/saves 只是传进来但没有任何 UI(玩家只能回 /saves 切档)。
+  const [switchBusy, setSwitchBusy] = useStateA(false);
+  const saveList = Array.isArray(saves) ? saves : [];
+  // task 10：先按 currentSaveId 命中真实 saves；命中不到时用 activeSave(来自 /api/state,
+  // 是当前档的权威来源)补一条；最后才退到 saves 第一条。
+  // id 可能由不同端点序列化成 number/string,统一按字符串比较,避免「当前档明明在列表里
+  // 却命中不到 → 退到列表第一条」显示错档。
+  const currentSave = saveList.find((s) => String(s.id) === String(currentSaveId))
+    || (activeSave && String(activeSave.id) === String(currentSaveId) ? activeSave : null)
+    || saveList[0] || null;
+  // 当前档不在 /api/saves 返回的列表里时(分页/并发删除),把它作为合成选项放在最前,
+  // 保证下拉框显示的是真实当前档,而不是列表第一项。
+  const saveOptions = currentSave && !saveList.some((s) => String(s.id) === String(currentSave.id))
+    ? [currentSave, ...saveList]
+    : saveList;
+  const canSwitchSave = saveOptions.length > 1 && typeof onSwitchSave === "function";
+  // 分支树的激活/继续会改活跃 commit,与在途 SSE 回合竞态;生成中一律禁用。
+  const runInFlight = !!runState?.running;
   return (
     <aside className={`gc-rail ${collapsed ? "collapsed" : ""} ${mobileOpen ? "gc-rail-mobile-open" : ""}`} aria-hidden={collapsed && !mobileOpen}>
       {!collapsed && resizeHandle}
@@ -43,26 +61,41 @@ function LeftRail({ collapsed, onToggle, state, runState, onNew, onSave, onSwitc
           <button className="iconbtn" data-tip={t('game.app.rail.new_game_tip')} onClick={onNew} aria-label={t('game.app.rail.new_game_tip')}><Icon name="plus" size={12} /></button>
         </div>
         <div className="gc-rail-save-display">
-          {(() => {
-            // task 10：先按 currentSaveId 命中真实 saves；命中不到再退到 saves 第一条；
-            // saves 列表为空才显示「尚未创建存档」并引导新游戏。
-            const cur = (Array.isArray(saves) ? saves : []).find(s => s.id === currentSaveId)
-              || (Array.isArray(saves) && saves.length ? saves[0] : null);
-            if (!cur) {
-              return (
-                <>
-                  <strong className="muted">{t('game.app.rail.no_save')}</strong>
-                  <span className="muted-2 mono" style={{fontSize: 11}}>{t('game.app.rail.no_save_hint')}</span>
-                </>
-              );
-            }
-            return (
-              <>
-                <strong>{cur.title || t('game.app.rail.save_label', { id: cur.id })}</strong>
-                <span className="muted-2 mono">{cur.updated_at || ""}</span>
-              </>
-            );
-          })()}
+          {!currentSave ? (
+            <>
+              <strong className="muted">{t('game.app.rail.no_save')}</strong>
+              <span className="muted-2 mono" style={{fontSize: 11}}>{t('game.app.rail.no_save_hint')}</span>
+            </>
+          ) : (
+            <>
+              {canSwitchSave ? (
+                <select
+                  className="gc-rail-save-select"
+                  value={String(currentSave.id)}
+                  disabled={switchBusy}
+                  onChange={async (e) => {
+                    const sid = e.target.value;
+                    if (!sid) return;
+                    setSwitchBusy(true);
+                    try { await onSwitchSave(sid); }
+                    catch (_) { /* App 层已 toast,这里只负责恢复可交互 */ }
+                    finally { setSwitchBusy(false); }
+                  }}
+                  data-tip={t('game.app.rail.switch_save_tip')}
+                  aria-label={t('game.app.rail.switch_save_tip')}
+                >
+                  {saveOptions.map((s) => (
+                    <option key={s.id} value={String(s.id)}>
+                      {s.title || t('game.app.rail.save_label', { id: s.id })}
+                    </option>
+                  ))}
+                </select>
+              ) : (
+                <strong>{currentSave.title || t('game.app.rail.save_label', { id: currentSave.id })}</strong>
+              )}
+              <span className="muted-2 mono">{currentSave.updated_at || ""}</span>
+            </>
+          )}
         </div>
         <div className="gc-rail-quick">
           <button className="btn ghost" onClick={onSave} data-tip={t('game.app.rail.manual_save_tip')}><Icon name="save" size={12} /> {t('common.save')}</button>
@@ -73,7 +106,7 @@ function LeftRail({ collapsed, onToggle, state, runState, onNew, onSave, onSwitc
           )}
         </div>
         {/* task 48：传 currentSaveId / state._raw.save_id，BranchTreeRail 走真 /api/branches */}
-        {branchOpen && !(state && state._raw && state._raw.isTavern) && <BranchTreeRail saveId={currentSaveId || state?._raw?.save_id || null} />}
+        {branchOpen && !(state && state._raw && state._raw.isTavern) && <BranchTreeRail saveId={currentSaveId || state?._raw?.save_id || null} disabled={runInFlight} />}
       </div>
 
       {/* 「记忆模式」选择器已整块移除(v1.77.0)。它是**装饰性**的:全仓没有任何一处
@@ -132,74 +165,6 @@ function LeftRail({ collapsed, onToggle, state, runState, onNew, onSave, onSwitc
   );
 }
 
-// ----------------------------- RUN STEPS ---------------------------------
-function RunStepsLine({ steps }) {
-  const { t } = useTranslation();
-  return (
-    <div className="gc-run gc-run-line">
-      {steps.map((s, i) =>
-      <div key={i} className={`gc-run-line-row ${s.status}`}>
-          <span className={`gc-run-dot ${s.status}`} />
-          <span className="gc-run-label">{s.message}</span>
-          <span className="muted-2 mono gc-run-elapsed">{(s.elapsed_ms / 1000).toFixed(1)}s</span>
-          {s.detail && s.status === "done" &&
-        <details className="gc-run-detail">
-              <summary className="muted-2"><Icon name="chevron_down" size={10} /> {t('game.app.run.expand')}</summary>
-              <div className="muted">{s.detail}</div>
-            </details>
-        }
-        </div>
-      )}
-    </div>);
-
-}
-
-function RunStepsCard({ steps }) {
-  return (
-    <div className="gc-run gc-run-cards">
-      {steps.map((s, i) =>
-      <div key={i} className={`gc-run-card ${s.status}`}>
-          <div className="gc-run-card-head">
-            <span className={`gc-run-dot ${s.status}`} />
-            <span className="gc-run-card-title">{s.message}</span>
-            <span className="muted-2 mono">{(s.elapsed_ms / 1000).toFixed(1)}s</span>
-          </div>
-          {s.detail && <div className="gc-run-card-detail muted" style={{ fontSize: 12.5 }}>{s.detail}</div>}
-        </div>
-      )}
-    </div>);
-
-}
-
-function RunStepsTimeline({ steps }) {
-  return (
-    <div className="gc-run gc-run-timeline">
-      {steps.map((s, i) =>
-      <div key={i} className={`gc-run-tl-row ${s.status}`}>
-          <div className="gc-run-tl-rail">
-            <span className={`gc-run-dot ${s.status}`} />
-            {i < steps.length - 1 && <span className="gc-run-tl-line" />}
-          </div>
-          <div className="gc-run-tl-body">
-            <div className="gc-run-tl-title">
-              <span>{s.message}</span>
-              <span className="muted-2 mono">{(s.elapsed_ms / 1000).toFixed(1)}s</span>
-            </div>
-            {s.detail && <div className="muted gc-run-tl-detail">{s.detail}</div>}
-          </div>
-        </div>
-      )}
-    </div>);
-
-}
-
-function RunSteps({ steps, style }) {
-  if (!steps?.length) return null;
-  if (style === "cards") return <RunStepsCard steps={steps} />;
-  if (style === "timeline") return <RunStepsTimeline steps={steps} />;
-  return <RunStepsLine steps={steps} />;
-}
-
 // ----------------------------- THINKING PILL -----------------------------
 // task 92：把后端 agent SSE 事件展示成一行 Codex 风格的"高层思考状态"。
 // 玩家只看到 4 段易懂进度（context→rules→gm→save），完成后短暂显示「已完成 · X.Xs」
@@ -224,7 +189,7 @@ const PUBLIC_STAGE_PCT = {
 };
 
 // task 64: ThinkingPill — SVG 圆环 + 百分比 + 简短文案
-function ThinkingPill({ runState, runStyle }) {
+function ThinkingPill({ runState }) {
   const { t } = useTranslation();
   const running = !!runState?.running;
   const completedAt = runState?.completedAt || 0;
@@ -358,7 +323,7 @@ function RunDetailRail({ runState }) {
 // 后端已经是完整 git 语义 (branch_commits + branch_refs + parent_id 树),
 // 前端这里只做 wrapper:拉 /api/branches/{saveId},喂给 BranchGraph 组件
 // (variant="compact" 紧凑型,适合右侧栏)。
-function BranchTreeRail({ saveId }) {
+function BranchTreeRail({ saveId, disabled = false }) {
   const { t } = useTranslation();
   const [data, setData] = useStateA({ loading: false, payload: null, error: "" });
   const [refreshTick, setRefreshTick] = useStateA(0);
@@ -366,9 +331,13 @@ function BranchTreeRail({ saveId }) {
     const onReload = () => setRefreshTick(t => t + 1);
     window.addEventListener("rpg-state-reload", onReload);
     window.addEventListener("rpg-saves-updated", onReload);
+    // 回合结束(on_done)只广播 game-state-refresh;分支树会多出新 commit,
+    // 打开着的时候也要跟着刷新,否则用户看到的是上一轮的树。
+    window.addEventListener("game-state-refresh", onReload);
     return () => {
       window.removeEventListener("rpg-state-reload", onReload);
       window.removeEventListener("rpg-saves-updated", onReload);
+      window.removeEventListener("game-state-refresh", onReload);
     };
   }, []);
   useEffectA(() => {
@@ -415,12 +384,17 @@ function BranchTreeRail({ saveId }) {
         <BranchGraph
           data={data.payload}
           variant="compact"
+          actionsDisabled={disabled}
           // Codex P0 三连修复:游戏内分支图必须能切分支 / 从某节点继续。
           // 之前没传 callback,BranchGraph 默认隐藏按钮 → 用户报"什么都没发生"。
           // 调用后端 activate / continueFrom 后 dispatch rpg-state-reload,
           // 让 Game Console 重新拉 /api/state (现在 _ensure_loaded 已加
           // save_id 一致性自检,会自动 reload 到新 commit)。
           onActivate={async (commitId) => {
+            if (disabled) {
+              window.__apiToast?.(t('game.app.msg.busy_tip'), { kind: "warn", duration: 2400 });
+              return;
+            }
             try {
               const r = await window.api.branches.activate({ node_id: commitId, commit_id: commitId });
               if (r && r.ok === false) throw new Error(r.error || r.detail || t('game.app.branch.switch_failed'));
@@ -432,6 +406,10 @@ function BranchTreeRail({ saveId }) {
             }
           }}
           onContinue={async (commitId) => {
+            if (disabled) {
+              window.__apiToast?.(t('game.app.msg.busy_tip'), { kind: "warn", duration: 2400 });
+              return;
+            }
             try {
               const r = await window.api.branches.continueFrom({ node_id: commitId });
               if (r && r.ok === false) throw new Error(r.error || r.detail || t('game.app.branch.continue_failed'));
@@ -448,4 +426,4 @@ function BranchTreeRail({ saveId }) {
   );
 }
 
-export { LeftRail, RunSteps, ThinkingPill };
+export { LeftRail, ThinkingPill };

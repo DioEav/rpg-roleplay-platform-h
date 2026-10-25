@@ -24,7 +24,7 @@ const isConfigCard = (q) => q && q.kind === 'config_card';
 //   onHardConfig(item)                       model_not_configured:打开阻塞弹窗
 //   onConfigSettings()                       「去模型设置」:跳设置(默认 window.location.hash)
 function ConfirmStrip({ pendingWrites, pendingQuestions, onApprove, onReject, onAnswer, onDismiss, clicheNotice, onRetryCliche, onDismissCliche,
-  onConfigDefault, onConfigContinue, onHardConfig, onConfigSettings }) {
+  onConfigDefault, onConfigContinue, onHardConfig, onConfigSettings, running = false }) {
   const { t } = useTranslation();
   const [expanded, setExpanded] = useStateC({});
   // 防御：后端 /api/state 返回的 permissions 可能不带这两个数组（partial state），
@@ -77,6 +77,12 @@ function ConfirmStrip({ pendingWrites, pendingQuestions, onApprove, onReject, on
       <div className="gc-confirm-strip-head">
         <span className="dot warn pulse" />
         <span>{t('game.confirm.pending_count', { count: visibleItems.length + (hasCliche ? 1 : 0) })}</span>
+        {/* 回合生成中禁止处理待审/待答:回答会 startRun 中止当前流,批准写入则可能被回合快照覆盖。 */}
+        {running && (
+          <span className="muted-2" style={{ marginLeft: "auto", textTransform: "none", letterSpacing: 0, fontSize: 11 }}>
+            {t('game.app.msg.busy_tip')}
+          </span>
+        )}
       </div>
       {hasCliche && (
         <div className="gc-confirm gc-confirm-q">
@@ -87,7 +93,7 @@ function ConfirmStrip({ pendingWrites, pendingQuestions, onApprove, onReject, on
               <span className="gc-confirm-text serif">{t('game.composer.cliche_notice', { phrases: clichePhrases.join('、') })}</span>
             </div>
             <div className="gc-confirm-actions">
-              <button className="gc-chip-btn gc-chip-primary" onClick={onRetryCliche}>{t('game.composer.cliche_retry')}</button>
+              <button className="gc-chip-btn gc-chip-primary" disabled={running} onClick={onRetryCliche}>{t('game.composer.cliche_retry')}</button>
             </div>
           </div>
           <button className="iconbtn" onClick={onDismissCliche} title={t('game.composer.dismiss_tip')}><Icon name="close" size={11} /></button>
@@ -102,6 +108,7 @@ function ConfirmStrip({ pendingWrites, pendingQuestions, onApprove, onReject, on
           onConfigContinue={onConfigContinue}
           onConfigSettings={onConfigSettings}
           onDismiss={onDismiss}
+          running={running}
         />
       ) : it.kind === "question" ? (
         <div key={it.key} className="gc-confirm gc-confirm-q">
@@ -120,6 +127,7 @@ function ConfirmStrip({ pendingWrites, pendingQuestions, onApprove, onReject, on
                 // 即便 backend 给两个相同 "继续" 也不会撞 key。
                 // gc-chip-choice:选项可能是长叙事句,需纵向全宽 + 可换行(不能用固定高横向 chip,否则叠在一起)。
                 <button key={`${it.key}:${ci}:${c}`} className="gc-chip-btn gc-chip-choice"
+                  disabled={running}
                   onClick={() => onAnswer(handleId(it), c)}>{c}</button>
               ))}
             </div>
@@ -154,10 +162,10 @@ function ConfirmStrip({ pendingWrites, pendingQuestions, onApprove, onReject, on
               </div>
             )}
             <div className="gc-confirm-actions">
-              <button className="gc-chip-btn gc-chip-primary" onClick={() => onApprove(handleId(it))}>
+              <button className="gc-chip-btn gc-chip-primary" disabled={running} onClick={() => onApprove(handleId(it))}>
                 <Icon name="check" size={11} /> {t('game.confirm.allow')}
               </button>
-              <button className="gc-chip-btn" onClick={() => onReject(handleId(it))}>
+              <button className="gc-chip-btn" disabled={running} onClick={() => onReject(handleId(it))}>
                 <Icon name="close" size={11} /> {t('game.confirm.reject')}
               </button>
             </div>
@@ -171,7 +179,7 @@ function ConfirmStrip({ pendingWrites, pendingQuestions, onApprove, onReject, on
 
 // ConfigCard —— config_card 的内联渲染(mode "ask_default" / "missing_key")。
 // 与 GM 问句行用同一套 .gc-confirm 视觉骨架,只换 marker/tag,保持风格一致;无 emoji,用 Cloudscape iconName。
-function ConfigCard({ it, handleId, onConfigDefault, onConfigContinue, onConfigSettings, onDismiss }) {
+function ConfigCard({ it, handleId, onConfigDefault, onConfigContinue, onConfigSettings, onDismiss, running = false }) {
   const { t } = useTranslation();
   const item = it.data || {};
   const cap = capConfig(item.capability);
@@ -200,7 +208,7 @@ function ConfigCard({ it, handleId, onConfigDefault, onConfigContinue, onConfigS
         </div>
         {mode === 'ask_default' && (
           <div className="gc-confirm-actions">
-            <button className="gc-chip-btn gc-chip-primary"
+            <button className="gc-chip-btn gc-chip-primary" disabled={running}
               onClick={() => onConfigDefault && onConfigDefault(handleId, item, model)}>
               {t('game.composer.config_generate_with', { model: model || cap.label })}
             </button>
@@ -227,7 +235,7 @@ function ConfigCard({ it, handleId, onConfigDefault, onConfigContinue, onConfigS
               }}
             />
             <div className="gc-confirm-actions">
-              <button className="gc-chip-btn gc-chip-primary" disabled={!ready}
+              <button className="gc-chip-btn gc-chip-primary" disabled={!ready || running}
                 onClick={() => onConfigContinue && onConfigContinue(handleId, item, t('game.composer.config_continue_label'))}>
                 {t('game.composer.config_continue_label')}
               </button>

@@ -22,6 +22,7 @@ from platform_app.knowledge._constants import CHUNK_CHARS, CHUNK_OVERLAP
 from platform_app.knowledge._sync import _ensure_book
 from platform_app.knowledge._utils import _chunk_text
 from platform_app.knowledge.character_cards import (
+    CharacterCardConflict,
     delete_character_card,
     get_character_card,
     import_character_card,
@@ -72,6 +73,7 @@ __all__ = [
     "list_character_cards",
     "get_character_card",
     "upsert_character_card",
+    "CharacterCardConflict",
     "import_character_card",
     "delete_character_card",
     "set_character_card_enabled",

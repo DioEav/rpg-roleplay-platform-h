@@ -146,7 +146,10 @@ def enrich_script_worldbook(script_id: int, user_id: int, *, pattern: str,
                 with connect() as db:
                     db.execute(
                         "update worldbook_entries set content=%s, "
-                        "metadata = coalesce(metadata,'{}'::jsonb) || %s::jsonb "
+                        "metadata = coalesce(metadata,'{}'::jsonb) || %s::jsonb, "
+                        # 推进版本:编辑器用 updated_at 做乐观锁,后台改写也要让基线变化,
+                        # 否则用户标签里的旧内容保存时会静默覆盖刚 enrich 的正文。
+                        "updated_at=now() "
                         "where id=%s and script_id=%s",
                         (content, json.dumps({"enriched": "llm_r5"}, ensure_ascii=False),
                          int(ent["id"]), int(script_id)),

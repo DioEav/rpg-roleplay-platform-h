@@ -18,6 +18,7 @@ import pytest
 from console_assistant.surfaces import is_editor_surface, surface_of
 from console_assistant.tools import (
     CONSOLE_ONLY,
+    EDITOR_EXCLUDED,
     EDITOR_ONLY,
     NOT_SERVED,
     SHARED,
@@ -71,12 +72,26 @@ def test_editor_gets_the_script_asset_tools():
         assert name in edi, f"编辑器写作搭档仍够不到 {name}"
 
 
-def test_editor_is_a_superset_of_console_for_now():
-    """CONSOLE_ONLY 目前刻意为空(不做减法)。哪天要做减法,这条会红,提醒同步改说明。"""
+def test_editor_is_a_superset_of_console_except_ui_actions():
+    """编辑器面刻意移除 ui_* (没有页面表单 atlas);除此之外仍是控制台的超集。
+
+    旧断言是「con <= edi」,在引入 EDITOR_EXCLUDED 后必须精确到差集,
+    否则这条守卫会把「有意的减法」误判成回归。
+    """
     con = {t["name"] for t in list_assistant_tools("console")}
     edi = {t["name"] for t in list_assistant_tools("editor")}
-    assert con <= edi
+    assert con - edi == set(EDITOR_EXCLUDED)
     assert edi - con == set(EDITOR_ONLY)
+
+
+def test_editor_does_not_get_ui_action_tools():
+    """编辑器右栏没有 ui_atlas / 表单宿主:ui_* 不应出现在工具表里。"""
+    edi = {t["name"] for t in list_assistant_tools("editor")}
+    for name in ("ui_describe_page", "ui_set_field", "ui_click"):
+        assert name not in edi
+    # 选项/自由文本提问保留 —— 右栏已实现对应问题卡。
+    assert "ask_user_choice" in edi
+    assert "ask_user_text" in edi
 
 
 def test_unknown_surface_falls_back_to_console():

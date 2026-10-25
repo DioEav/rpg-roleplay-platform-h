@@ -39,7 +39,7 @@ import '../media.css';
 import { MobileGame } from '../mobile/game/MobileGame.jsx';
 import { safeUUID } from '../lib/crypto-safe.js';
 import { safeStructuredClone } from '../lib/clone-safe.js';
-import { LeftRail, TopBar, ChatArea, HistoryDrawer, SearchDrawer, GameToastStack, RunSteps, GameSettingsModal } from '../game-app.jsx';
+import { LeftRail, TopBar, ChatArea, HistoryDrawer, SearchDrawer, GameToastStack, GameSettingsModal } from '../game-app.jsx';
 import { Composer, ConfirmStrip } from '../game-composer.jsx';
 import { RightPanel, PANEL_TABS } from '../game-panels.jsx';
 // AGE-02: splash gate
@@ -53,7 +53,6 @@ import { AcceptanceAbPanel } from '../components/AcceptanceAbPanel.jsx';
 import { MobileDialogHost } from '../mobile/dialog.jsx';
 // 模块化拆分:自包含展示组件搬到 components/game/(DOM/视觉/行为零变化)。
 import { ScriptVersionSelect } from '../components/game/ScriptVersionSelect.jsx';
-import { GCWelcomeModal } from '../components/game/GCWelcomeModal.jsx';
 import { plGoto } from '../router.js';
 const SPLASH_VERSION = 'v1.0-2026-05-31';
 
@@ -81,7 +80,6 @@ const SPLASH_VERSION = 'v1.0-2026-05-31';
 
 const TWEAK_DEFAULTS = {
   composerMode: 'compact',
-  runStyle: 'line',
   defaultRightTab: 'status',
   rightPanelWidth: 320,
   narrativeFont: 'serif',
@@ -121,6 +119,62 @@ function advancePublicStage(prevId, nextStage) {
   return nextStage.order >= prev.order ? nextStage.id : prev.id;
 }
 
+// 酒馆档判定:/api/state 对普通游戏档也会返回 tavern: {} —— 空对象在 JS 里是 truthy,
+// 旧代码 !!data.tavern 会把每个普通档都标成酒馆档(首次加载隐藏分支按钮)。
+// 这里优先看显式 save_kind;老后端没有该字段时,用 tavern 里是否真有角色/persona 等键判断。
+function isTavernPayload(data) {
+  if (!data) return false;
+  // 先看 tavern 块是否有内容:旧后端/未跑 migration 65 的库没有 save_kind,
+  // 但酒馆档一定带 character/persona 等键;反过来,普通档的 tavern 是空对象。
+  const tav = data.tavern;
+  if (tav && typeof tav === 'object' && !Array.isArray(tav) && Object.keys(tav).length > 0) return true;
+  if (data.save_kind != null && String(data.save_kind).trim() !== '') {
+    return String(data.save_kind).toLowerCase() === 'tavern';
+  }
+  return false;
+}
+
+// SSE status/done 的轻量 payload 可能不带 save_kind/tavern(旧后端)。有相关字段就以新值
+// 为准,否则沿用当前 _raw.isTavern;绝不能因为字段缺失把酒馆档“洗白”成游戏档。
+function tavernFlagFrom(data, prevRaw) {
+  if (data && (data.save_kind != null || data.tavern !== undefined)) return isTavernPayload(data);
+  return !!(prevRaw && prevRaw.isTavern);
+}
+
+// 存档元信息合并:回合结束/状态事件只改 updated_at/title 时也要更新 activeSave ——
+// 旧代码只在 save_id 变化时才 setActiveSave,导致顶栏「已存档 · X 分钟前」永远停在开页时间。
+function saveMetaFrom(data, prev, t) {
+  if (!data || data.save_id == null) return prev;
+  const same = !!(prev && prev.id != null && String(prev.id) === String(data.save_id));
+  const title = data.save_title || (same ? prev.title : '')
+    || t('game.console.save.untitled', { id: data.save_id });
+  const updated = data.save_updated_at || (same ? prev.updated_at : '') || '';
+  // 保留存档类型:reloadSaves 过滤 tavern 档时,若当前档就是 tavern(误载),
+  // 需要靠 activeSave.save_kind 判断“不要用别的档覆盖显示”,不能只看 ref(异步渲染有延迟)。
+  // 旧库没有 save_kind 字段时,用非空 tavern 块兜底识别酒馆档。
+  const saveKind = isTavernPayload(data)
+    ? 'tavern'
+    : ((data.save_kind || (same ? prev.save_kind : 'game')) || 'game');
+  if (same && prev.title === title && prev.updated_at === updated && prev.save_kind === saveKind) return prev;
+  return { id: data.save_id, title, updated_at: updated, save_kind: saveKind };
+}
+
+// A/B 候选定位:优先用后端下发的权威 message_index(按首稿全文算,不受异步竞态影响);
+// 没有时回退「最后一条 assistant」(旧档/未命中)。桌面与移动端共用同一判定。
+function acceptanceTarget(alt, history) {
+  const list = Array.isArray(history) ? history : [];
+  let idx = -1;
+  if (alt && alt.message_index != null && alt.message_index >= 0 && alt.message_index < list.length) {
+    idx = alt.message_index;
+  } else {
+    for (let i = list.length - 1; i >= 0; i--) {
+      if (list[i] && list[i].role === 'assistant') { idx = i; break; }
+    }
+  }
+  const original = idx >= 0 ? String(list[idx].content || '') : '';
+  return { idx, original };
+}
+
 const STREAM_CHUNKS = [
   '你转过身去看沈知微，雾灯把她的侧脸照得发青。她没再追问残页，反而把腰上的铜针袋解下来，递到你手里。',
   '\n\n『先收着。』她说，『北港有人来了——是从南陵跟过来的。』',
@@ -133,7 +187,6 @@ function App() {
   const { t } = useTranslation();  // 旧 useTweaks/setTweak 用法迁出(tweaks-panel.jsx 已删,只是设计原型工具);
   // 这里仅消费默认值,改成普通常量即可。
   const tweaks = TWEAK_DEFAULTS;
-  const openTweaks = () => window.postMessage({ type: '__activate_edit_mode' }, '*');
 
   // P2 移动游戏台:窄屏 + 灰度开关 → 渲染移动原生 UI(复用同一 run-loop,见下方早返)
   const { width: _vpWidth } = useBreakpoint();
@@ -198,6 +251,9 @@ function App() {
     player: { name: '', role: '', background: '', current_location: '' },
     world: { time: '', weather: '', known_events: [], timeline: {} },
     relationships: {},
+    // NPC 议程(后端 status_payload 下发):人物面板读取;必须在 PICK_STATE_KEYS 里,
+    // 否则 /api/state 的值永远进不了 game,议程区块从未显示过。
+    npc_agendas: {},
     memory: {},
     worldline: {},
     ruleset: {},
@@ -214,6 +270,10 @@ function App() {
   const INITIAL_STATE = IS_ANON && window.MOCK_STATE ? safeStructuredClone(window.MOCK_STATE) : safeStructuredClone(EMPTY_STATE);
   const [game, setGame] = useState(INITIAL_STATE);
   const [history, setHistory] = useState(INITIAL_STATE.history || []);
+  // 当前 history 的同步镜像:startRunReal 在追加玩家气泡前记录「本轮开始前有几条 assistant」,
+  // on_done 的空回复兜底据此判断服务端最后一条 assistant 是不是本轮新产生的(防止拿上一轮冒充)。
+  const historyRef = useRef(history);
+  historyRef.current = history;
   // acceptance A/B 改写候选(后端 `acceptance_alt` 事件):{alt_id, turn, rewrite, unmet}。null=无待选候选。
   const [rewriteAlt, setRewriteAlt] = useState(null);
   const [abBusy, setAbBusy] = useState(false);
@@ -257,11 +317,8 @@ function App() {
   const [showHistoryDrawer, setShowHistoryDrawer] = useState(false);
   const [showSearchDrawer, setShowSearchDrawer] = useState(false);
   const [showInGameSettings, setShowInGameSettings] = useState(false);
-  const [assistantOpen, setAssistantOpen] = useState(false);
   // AGE-02: null = loading, true = need splash, false = no splash needed
   const [splashNeeded, setSplashNeeded] = useState(null);
-  // GC 使用须知弹窗（随时可打开）
-  const [welcomeGCOpen, setWelcomeGCOpen] = useState(false);
   useEffect(() => {
     fetch('/api/me/splash/status', { credentials: 'same-origin' })
       .then((r) => r.ok ? r.json() : null)
@@ -269,11 +326,6 @@ function App() {
       .catch(() => { setSplashNeeded(false); });
   }, []);
 
-  // 暴露 window.__openWelcome，供 TopBar 📖 使用须知按钮触发
-  useEffect(() => {
-    window.__openWelcome = () => setWelcomeGCOpen(true);
-    return () => { delete window.__openWelcome; };
-  }, []);
   const _railResize = useResizable({
     storageKey: 'gc.rail.w', defaultSize: 240, min: 180, max: 360, side: 'left',
     cssVar: '--gc-rail-w',
@@ -290,20 +342,6 @@ function App() {
     // 宽度不足 180 时自动折叠；但不再自动展开——折叠/展开完全由用户控制
     if (gcPanelW < 180 && !panelCollapsed) setPanelCollapsed(true);
   }, [gcPanelW]);
-  useEffect(() => {
-    const bus = window.__capBus || (window.__capBus = new EventTarget());
-    const onOpen = () => setAssistantOpen(true);
-    const onClose = () => setAssistantOpen(false);
-    const onToggle = () => setAssistantOpen((v) => !v);
-    bus.addEventListener('cap-open', onOpen);
-    bus.addEventListener('cap-close', onClose);
-    bus.addEventListener('cap-toggle', onToggle);
-    return () => {
-      bus.removeEventListener('cap-open', onOpen);
-      bus.removeEventListener('cap-close', onClose);
-      bus.removeEventListener('cap-toggle', onToggle);
-    };
-  }, []);
 
   const [pickedCommand, setPickedCommand] = useState(null);
   const [lastPlayerText, setLastPlayerText] = useState('');
@@ -333,6 +371,10 @@ function App() {
   );
   const [realSaves, setRealSaves] = useState([]);
   const [activeSave, setActiveSave] = useState(null);
+  // reloadState 是稳定 useCallback([]),用 ref 读取当前 active save id,判断本次 state
+  // 拉取是否跨档(跨档时才用服务端 models.selected 回填本地 model)。
+  const activeSaveIdRef = useRef(null);
+  activeSaveIdRef.current = activeSave && activeSave.id != null ? String(activeSave.id) : null;
   // task #61: activeSave 变化时更新 BroadcastChannel 广播的 save_id
   useEffect(() => {
     const sid = activeSave?.id != null ? String(activeSave.id) : null;
@@ -347,9 +389,28 @@ function App() {
   const [retryFailed, setRetryFailed] = useState(false);
   // G6: state loaded successfully but player not yet set up (new save pending opening)
   const [stateLoadedNoPlayer, setStateLoadedNoPlayer] = useState(false);
+  // 当前档是否酒馆档。reloadSaves 是稳定 useCallback([]),不能直接读 game;用 ref 暴露
+  // 最新值,供「存档列表过滤 tavern 档时保留当前档」判断。
+  const isTavernRef = useRef(false);
+  isTavernRef.current = !!(game && game._raw && game._raw.isTavern);
+  // 酒馆档不能由游戏台承载(分支/回退/回合管线都是游戏语义)。检测到 active save 是
+  // tavern 时跳到独立的 Tavern.html;ref 保证一次 mount 只跳一次,避免初始重试循环重复导航。
+  const tavernRedirectRef = useRef(false);
+  // 多标签冲突横幅的同步镜像:Retry/Regenerate 在 await 回滚期间横幅可能刚出现,
+  // 闭包里的 state 会过期;用 ref 在真正发送前再拦一次。
+  const tabConflictRef = useRef(null);
+  tabConflictRef.current = tabConflictBanner;
+  // /api/state 与 /api/saves 都可能被多个事件并发触发(切档、game-state-refresh、on_done)。
+  // 旧响应后到会把新档的 game/activeSave/realSaves 覆盖回去;各自用递增序号只接受最新请求。
+  const stateSeqRef = useRef(0);
+  const savesSeqRef = useRef(0);
+  // /api/state 返回的权威 save_id。reloadState 在 await 之后同步写入;切档流程是
+  // `await reloadState(); await reloadSaves()`,此时 setActiveSave 还没重新渲染,
+  // activeSaveIdRef 可能仍是旧档,reloadSaves 的详情兜底会拿错 id。
+  const stateSaveIdRef = useRef(null);
 
   const PICK_STATE_KEYS = [
-    'player','world','relationships','memory','worldline','permissions','suggestions','turn',
+    'player','world','relationships','npc_agendas','memory','worldline','permissions','suggestions','turn',
     'ruleset','player_character','scene','encounter','dice_log','content_pack',
     'active_entities','app','models',
     // ModelPopover / EffortSection 需要读本存档的模型与思考档位覆盖;
@@ -359,8 +420,26 @@ function App() {
   const RESETTABLE_KEYS = new Set(['suggestions']);
 
   const reloadState = useCallback(async () => {
+    const seq = ++stateSeqRef.current;
     try {
+      // 请求发出时先记一次在途状态:请求可能跨过回合开始/结束,只在「发送和返回时都没有
+      // SSE 在途」才允许用服务端 history 覆盖本地(避免用 pre-commit 的旧 history 覆盖已落库结果)。
+      const _runInFlightAtStart = !!(runRef.current && runRef.current.sse);
       const data = await window.api.game.state();
+      // 期间有更新的 reloadState(切档/刷新)已经发起 → 本次旧响应直接丢弃,
+      // 否则会把新档的 game/activeSave/history 覆盖回旧档。
+      if (seq !== stateSeqRef.current) return false;
+      if (data && data.save_id != null) stateSaveIdRef.current = String(data.save_id);
+      // 当前 active save 若是酒馆档,游戏台无法正确承载:交给 Tavern.html(同一个 active
+      // runtime,不会丢对话)。旧代码只隐藏 fork,却仍用游戏回合管线跑酒馆档。
+      if (isTavernPayload(data)) {
+        if (!tavernRedirectRef.current) {
+          tavernRedirectRef.current = true;
+          try { location.replace(new URL('Tavern.html', location.href).href); }
+          catch (_) { try { location.href = 'Tavern.html'; } catch (_) {} }
+        }
+        return false;
+      }
       if (data && data.player) {
         setStateLoadedNoPlayer(false);
         setGame((g) => {
@@ -375,13 +454,33 @@ function App() {
             save_id: data.save_id ?? null,
             save_title: data.save_title ?? null,
             turn: data.turn ?? null,
-            // /api/state 只在酒馆档才带 tavern 块 → 据此识别"控制台误载酒馆档",
-            // 隐藏半生效的分支按钮/分支树(fork 对酒馆是同档指针倒回,见 tavern fork)。
-            isTavern: !!(data && data.tavern),
+            // 普通游戏档也会返回 tavern: {};用 isTavernPayload(save_kind/非空 tavern)判断,
+            // 不能再用 !!data.tavern(空对象 truthy → 所有档都被当成酒馆档)。
+            isTavern: tavernFlagFrom(data, g._raw),
           };
           return next;
         });
-        if (Array.isArray(data.history)) setHistory(data.history);
+        // 模型也是存档级状态:切档后 Composer 的 model state 若还留着上一档的选择,
+        // 底部标签会显示旧模型(虽然后端实际用新档 session_model)。用 /api/state 的
+        // models.selected(后端已按 session_model>用户偏好>全局默认解析)回填。
+        // 只在「跨档」或本地 model 为空时写:同一档的普通 state 刷新不要把用户刚选中的
+        // 模型用一次可能尚未落库的旧快照覆盖回去。
+        if (data.models && data.models.selected) {
+          const sel = data.models.selected;
+          const switchingSave = activeSaveIdRef.current !== (data.save_id != null ? String(data.save_id) : null);
+          const nextModel = {
+            id: sel.model_id || sel.real_name || '',
+            api_id: sel.api_id || '',
+            label: sel.real_name || sel.model_id || '',
+          };
+          setModel((cur) => (cur == null || switchingSave ? nextModel : cur));
+        }
+        // 回合进行中(SSE 在途)服务端 history 还没有本轮流式 assistant。此时若因面板编辑
+        // 触发 game-state-refresh → reloadState 把 history 整体覆盖,正在输出的气泡会被截断,
+        // 后续 token 只能从半截重开。其余状态(关系/世界/记忆等)照常更新,回合结束后
+        // on_done 会用服务端最终 history 回填。发送/返回任一时刻在途都跳过。
+        const _runInFlightNow = !!(runRef.current && runRef.current.sse);
+        if (Array.isArray(data.history) && !_runInFlightAtStart && !_runInFlightNow) setHistory(data.history);
         if (data.permissions) {
           setPermission(normalizePermissionForUi(data.permissions.mode));
           setPendingWrites(data.permissions.pending_writes || []);
@@ -395,10 +494,14 @@ function App() {
           const seenKey = 'gc.opened_save.' + data.save_id;
           const alreadyOpened = sessionStorage.getItem(seenKey);
           if (isFresh && !alreadyOpened) {
-            sessionStorage.setItem(seenKey, '1');
             // G7: 从 800ms 硬延迟改为 requestAnimationFrame,UI 已 mount 直接发请求
             requestAnimationFrame(() => {
               try {
+                // rAF 可能晚于下一次 reloadState(切档/刷新)才执行。序号已过期就放弃:
+                // 否则会拿旧档的 save_id 往新档 history 里塞开场占位,甚至并发两条开场流。
+                // opened 标记也延后到这里写:被放弃时新请求仍能正常判定「该开场」。
+                if (seq !== stateSeqRef.current) return;
+                sessionStorage.setItem(seenKey, '1');
                 const sse = window.api && window.api.raw && window.api.raw.sseStream;
                 if (!sse) return;
                 let openingText = '';
@@ -412,12 +515,57 @@ function App() {
                   return arr;
                 });
                 const triggerOpening = () => {
+                  // 自动重试的 setTimeout 可能在切档之后才执行:当前权威 save_id 已变就放弃,
+                  // 否则会对着新档重放旧档的开场请求(甚至和新档自己的开场流并发)。
+                  // 同时清掉 running,避免「停止」按钮一直停在生成中。
+                  const openingSaveId = data.save_id != null ? String(data.save_id) : null;
+                  if (openingSaveId && stateSaveIdRef.current && stateSaveIdRef.current !== openingSaveId) {
+                    runRef.current.sse = null;
+                    setRunState((r) => ({ ...r, running: false, publicStage: null, label: '', detail: '' }));
+                    return;
+                  }
                   // G8: 开场期间设置 running=true,使 stop 按钮可见可用
                   setRunState((r) => ({ ...r, running: true, publicStage: 'context', label: t('game.console.opening.raising_curtain'), detail: '' }));
                   // sseStream 的 onClose 在 reader EOF 时永远会触发,即使刚收到 done。
                   // 用本地 flag 区分「正常完成后 close」vs「无 done 直接 close」 —
                   // 否则正常完成的 opening 末尾会被错误加上『[连接断开,内容可能不完整]』。
                   let gotDone = false;
+                  // 同一次 opening 尝试内,on_error / onClose 只允许收尾一次;若已安排自动重试,
+                  // 另一个回调不得提前 finalize(否则会把重试路径吞掉)。
+                  let openingFinalized = false;
+                  let openingRetryScheduled = false;
+                  const finishOpeningFailure = (allowRetry) => {
+                    if (openingFinalized || openingRetryScheduled) return;
+                    // G9: 断线重试 — 未收到任何 token 时自动重试一次
+                    if (allowRetry && !openingText && !openingRetried) {
+                      openingRetried = true;
+                      openingRetryScheduled = true;
+                      setTimeout(() => { try { triggerOpening(); } catch (e) { console.warn('[opening] retry error', e); } }, 1000);
+                      return;
+                    }
+                    openingFinalized = true;
+                    runRef.current.sse = null;
+                    setRunState((r) => ({ ...r, running: false, publicStage: null, label: '', detail: '' }));
+                    const note = t('game.console.run.disconnected_incomplete');
+                    // 就地更新既有占位气泡:旧 on_error 在已有部分文本时会再 push 一条
+                    // 「同文本 + 断线提示」→ 开场正文出现两份。onClose 原本的“只在没有文本时
+                    // 什么都不做”也改为给占位补一条失败说明,避免停在“正在拉开帷幕…”。
+                    setHistory((h) => {
+                      const arr = Array.isArray(h) ? h.slice() : [];
+                      const last = arr[arr.length - 1];
+                      const base = openingText
+                        || (last && last._opening ? last.content : '')
+                        || t('game.console.opening.curtain');
+                      const merged = `${base}\n\n*${note}*`;
+                      if (last && last._opening) {
+                        arr[arr.length - 1] = { ...last, content: merged, streaming: false, _opening: true };
+                      } else {
+                        arr.push({ role: 'assistant', content: merged, _opening: true });
+                      }
+                      return arr;
+                    });
+                    window.__apiToast?.(t('game.console.run.generation_failed'), { kind: 'warn', detail: note, duration: 5000 });
+                  };
                   // G8: 保存 handle 到 runRef.current.sse,使 stop 按钮可中断 opening
                   const handle = sse('/api/v1/opening', {}, {
                     on_stage: (d) => {
@@ -462,6 +610,9 @@ function App() {
                       });
                       setRunState((r) => ({ ...r, running: false, publicStage: null, label: '', detail: '' }));
                       setTimeout(async () => {
+                        // 新一轮已开始(玩家在开场完成后 300ms 内就发了消息)或组件已卸载时,
+                        // 绝不能用这个快照覆盖 history —— 会把刚插入的玩家气泡/流式回复截掉。
+                        if (runRef.current.sse || runRef.current.stopped) return;
                         try {
                           const d2 = await window.api.game.state();
                           if (d2 && d2.player) {
@@ -487,45 +638,14 @@ function App() {
                     },
                     on_error: () => {
                       runRef.current.sse = null;
-                      // G9: 断线重试 — 未收到任何 token 时自动重试一次
-                      if (!openingText && !openingRetried) {
-                        // will retry, keep running=true
-                        openingRetried = true;
-                        setTimeout(() => { try { triggerOpening(); } catch (e) { console.warn('[opening] retry error', e); } }, 1000);
-                      } else {
-                        setRunState((r) => ({ ...r, running: false, publicStage: null, label: '', detail: '' }));
-                        setHistory((h) => {
-                          const arr = Array.isArray(h) ? [...h] : [];
-                          if (arr.length && arr[arr.length - 1]._opening && arr[arr.length - 1]._thinking) arr.pop();
-                          if (openingText) {
-                            arr.push({ role: 'assistant', content: openingText + '\n\n*' + t('game.console.run.disconnected_incomplete') + '*', _opening: true });
-                          }
-                          return arr;
-                        });
-                      }
+                      finishOpeningFailure(true);
                     },
                     onClose: () => {
                       runRef.current.sse = null;
                       // 正常完成路径:on_done 已经触发并 setRunState/setHistory streaming=false,
                       // 这里直接 noop,绝不能再加『连接断开』。
                       if (gotDone) return;
-                      // G9: onClose 也做同样断线处理 — 仅在没收到 done 时执行
-                      if (!openingText && !openingRetried) {
-                        openingRetried = true;
-                        setTimeout(() => { try { triggerOpening(); } catch (e) { console.warn('[opening] retry (onClose) error', e); } }, 1000);
-                      } else {
-                        setRunState((r) => ({ ...r, running: false, publicStage: null, label: '', detail: '' }));
-                        if (openingText) {
-                          setHistory((h) => {
-                            const arr = Array.isArray(h) ? [...h] : [];
-                            const last = arr[arr.length - 1];
-                            if (last && last._opening && last.streaming !== false) {
-                              arr[arr.length - 1] = { ...last, content: (last.content || '') + '\n\n*' + t('game.console.run.disconnected_incomplete') + '*', _opening: true };
-                            }
-                            return arr;
-                          });
-                        }
-                      }
+                      finishOpeningFailure(true);
                     },
                   });
                   // G8: 挂到 runRef,与 chat SSE 保持一致
@@ -541,7 +661,8 @@ function App() {
         setStateLoadedNoPlayer(true);
       }
       if (data && data.save_id != null) {
-        setActiveSave({ id: data.save_id, title: data.save_title || t('game.console.save.untitled', { id: data.save_id }), updated_at: data.save_updated_at || '' });
+        // 合并而不是整体替换:同档时也要更新 save_updated_at(否则顶栏「已存档」时间停住)。
+        setActiveSave((prev) => saveMetaFrom(data, prev, t));
       }
       // 返回是否真正拿到了可玩状态(供 mount 重试判断是否还要再拉一次)。
       return !!(data && data.player);
@@ -552,18 +673,114 @@ function App() {
   }, []);
 
   const reloadSaves = useCallback(async () => {
+    const seq = ++savesSeqRef.current;
+    const isLatest = () => seq === savesSeqRef.current;
     try {
-      const r = await window.api.saves.list();
-      const list = Array.isArray(r) ? r : (r?.items || r?.saves || []);
-      const norm = list.map(window.__normalizeSave || ((x) => x));
+      // 用 offset 分页拉全量(每页 200,上限 20 页)。旧代码只取 /api/saves 默认的
+      // 50 条;当前档较旧时 norm 里找不到它,后面的 setActiveSave 会用列表第一项
+      // 冒充当前档,顶栏/左栏显示错档。offset 模式与排序一致,cursor 模式按 id
+      // 分页而排序按 last_played_at,混用会漏条。
+      const PAGE = 200;
+      const all = new Map();
+      let offset = 0;
+      let total = null;
+      for (let i = 0; i < 20; i++) {
+        const r = await window.api.saves.list({ limit: PAGE, offset, sort: 'played' });
+        if (!isLatest()) return;
+        const pageItems = Array.isArray(r) ? r : (r?.items || r?.saves || []);
+        for (const s of pageItems) {
+          if (s && s.id != null) all.set(String(s.id), s);
+        }
+        if (typeof r?.total === 'number') total = r.total;
+        offset += pageItems.length;
+        if (!pageItems.length) break;
+        if (total != null && offset >= total) break;
+        // 老后端不认 offset/total:返回不足一页就停,避免同一页循环 20 次。
+        if (total == null && pageItems.length < PAGE) break;
+      }
+      // 兜底:active save 仍不在列表(页数上限/并发删除/老后端分页)时单独取详情补进来。
+      // activeSave 来自 /api/state,是当前档的权威来源,不能被列表第一项替代。
+      // 优先用 reloadState 刚落定的 stateSaveIdRef:切档时 activeSaveIdRef 要等下一次
+      // 渲染才更新,直接读它可能拿到切换前的旧档。
+      const curId = stateSaveIdRef.current || activeSaveIdRef.current;
+      if (curId && !all.has(curId)) {
+        try {
+          const d = await window.api.saves.detail(curId);
+          if (!isLatest()) return;
+          const save = d?.save || d;
+          if (save && save.id != null) all.set(String(save.id), save);
+        } catch (_) { /* 档已删除/无权:保持下面的 activeSave 原值 */ }
+      }
+      if (!isLatest()) return;
+      // 游戏台只列游戏档:酒馆档在酒馆页玩,混进下拉会让控制台误载。
+      const norm = [...all.values()]
+        .map(window.__normalizeSave || ((x) => x))
+        .filter((s) => s && s.save_kind !== 'tavern');
       setRealSaves(norm);
       setActiveSave((prev) => {
-        if (prev && norm.some((s) => s.id === prev.id)) return prev;
+        if (prev && norm.some((s) => String(s.id) === String(prev.id))) return prev;
+        // 当前是酒馆档(不在游戏台列表里):保留 activeSave,由 reloadState 的重定向处理。
+        if (prev && prev.id != null && (prev.save_kind === 'tavern' || isTavernRef.current)) return prev;
+        // 当前档不在全量列表(并发删除/详情也取不到):保留 activeSave 原值,
+        // 不要用 norm[0] 冒充当前档;reloadState 若已切到别的档会另行更新。
+        if (prev && prev.id != null) return prev;
         const cur = norm.find((s) => s.current) || norm[0];
-        return cur ? { id: cur.id, title: cur.title, updated_at: cur.updated_at || '' } : null;
+        return cur ? { id: cur.id, title: cur.title, updated_at: cur.updated_at || '', save_kind: cur.save_kind || 'game' } : null;
       });
-    } catch (_) { setRealSaves([]); }
+    } catch (_) {
+      if (isLatest()) setRealSaves([]);
+    }
   }, []);
+
+  // 手动存档的统一入口:`/api/save` 返回最新 state payload(含 save_updated_at)。
+  // 之前各个按钮只 await + toast,不更新 activeSave → 顶栏「已存档」时间仍是旧值,
+  // 玩家以为没存上。这里合并服务端时间;拿不到就退化为 reloadSaves。
+  const manualSave = useCallback(async () => {
+    try {
+      const r = await window.api.game.saveGame();
+      // /api/save 返回 {ok, state: <payload>};mock/旧版本可能直接回 payload。
+      const payload = (r && r.state) ? r.state : r;
+      if (payload && payload.save_id != null) setActiveSave((prev) => saveMetaFrom(payload, prev, t));
+      // 左栏存档列表的 updated_at 是 normalizeSave 时格式化的字符串,也要重拉才会更新。
+      await reloadSaves();
+      window.__apiToast?.(t('common.save') + ' ✓', { kind: 'ok' });
+      return true;
+    } catch (e) {
+      window.__apiToast?.(t('game.console.save.save_failed'), { kind: 'danger', detail: e?.message });
+      return false;
+    }
+  }, [t, reloadSaves]);
+
+  // A/B 候选裁决(桌面/移动共用):
+  //   rewrite → 乐观替换本地气泡,后端失败必须回滚并保留面板;
+  //   original → 只记录选择,不改本地文本。
+  // 生成中禁止:同步路径的候选可能先于 done 到达,点选会被随后 done.history 覆盖。
+  const chooseAcceptance = useCallback(async (idx, choice) => {
+    if (runState.running) {
+      window.__apiToast?.(t('game.app.msg.busy_tip'), { kind: 'warn', duration: 2400 });
+      return;
+    }
+    if (abBusy || !rewriteAlt) return;
+    const alt = rewriteAlt;
+    const prevMsg = (choice === 'rewrite' && idx >= 0 && history[idx]) ? { ...history[idx] } : null;
+    setAbBusy(true);
+    try {
+      if (prevMsg) {
+        setHistory((h) => h.map((m, i) => (i === idx ? { ...m, content: alt.rewrite } : m)));
+      }
+      await window.api.game.acceptanceChoice({ alt_id: alt.alt_id, choice, message_index: idx });
+      // 成功才收起候选;失败保留面板让玩家重试/关闭。
+      setRewriteAlt(null);
+    } catch (e) {
+      // 失败必须把乐观替换回滚,否则 UI 显示改写稿、DB 仍是原稿,刷新后才“变回去”。
+      if (prevMsg) {
+        setHistory((h) => h.map((m, i) => (i === idx ? prevMsg : m)));
+      }
+      window.__apiToast?.(t('game.console.acceptance_ab.save_failed', '选择保存失败'), { kind: 'warn', detail: e?.message });
+    } finally {
+      setAbBusy(false);
+    }
+  }, [rewriteAlt, abBusy, history, runState.running, t]);
 
   useEffect(() => {
     let cancelled = false;
@@ -664,7 +881,7 @@ function App() {
 
   const startRunReal = useCallback(async (playerText) => {
     // task #61: 存档冲突时拒绝发送（用户点"继续"后 banner 清空才恢复）
-    if (tabConflictBanner) {
+    if (tabConflictRef.current) {
       window.__apiToast?.(t('game.console.conflict.toast_title'), { kind: 'warn', detail: t('game.console.conflict.toast_detail'), duration: 4000 });
       return;
     }
@@ -683,6 +900,13 @@ function App() {
     const isCurrentRun = () => runRef.current.runId === runId;
     const ts = (window.__fmt && window.__fmt.nowHHMM) ? window.__fmt.nowHHMM() : new Date().toLocaleTimeString().slice(0, 5);
     const sentAttachments = attachments;
+    // 本轮“当前应重发的输入”。正常就是玩家刚发送的文本;/set rewind 后变成后端回放的
+    // 原始输入(replay_user),失败恢复/重试都要用它,不能再用 /set 命令本身。
+    runRef.current.activeInput = playerText;
+    // 记录本轮开始前已有多少条 assistant:on_done 的“空回复兜底”回查服务端时,
+    // 只有 assistant 数目真的增加,才能确认这条回复是本轮新生成的(而不是上一轮旧回复)。
+    runRef.current.assistantCountBefore = (historyRef.current || [])
+      .filter((m) => m && m.role === 'assistant').length;
     setHistory((h) => [...h, { role: 'user', content: playerText, ts, attachments: sentAttachments }]);
     setRewriteAlt(null);  // 玩家继续 = 隐式保留当前版本(chosen 留 null,区分「主动选原版」vs「忽略」,亦是数据)
     setLastPlayerText(playerText);
@@ -732,22 +956,41 @@ function App() {
       if (ev.kind === 'send') return t('game.console.sse.sent_no_response') + suffix;
       return t('game.console.sse.last_event', { kind: ev.kind || t('common.unknown') }) + suffix;
     };
-    const restoreFailedDraft = () => {
+    const restoreFailedDraft = (opts = {}) => {
+      // gotDone 之后到达的 error/close 不能再当成失败轮处理:否则会把已经落库的
+      // 完整 assistant 气泡当成“半截回复”删掉。
+      // 例外:on_done 的空回复兜底本身是在 gotDone 之后执行的,传 force 允许清理
+      // 本轮玩家气泡/恢复草稿(那时 openedAssistant=false,不会误删有效回复)。
       if (!isCurrentRun()) return;
-      if (openedAssistant) return;
+      if (gotDone && !opts.force) return;
       // 失败轮未落库标记:「重试」据此跳过 rollback。不标的话,气泡被下面移除后,
       // onRetry 从历史找到的最后一条玩家输入是【上一个好回合】,rollback 会把它滚进
       // trash = 每次失败重试多吃一个好回合(群反馈:安全过滤失败自动回退到前一回合)。
       runRef.current.lastRunFailedUnpersisted = true;
+      // 已收到部分 token 时,最后一条是本轮未完成的 assistant 气泡。它不能留在历史里:
+      // 旧代码在这里直接 return,重试时新回复会接在半截后面,出现「玩家消息 → 半截 GM →
+      // 同一条玩家消息 → 新 GM」。注意即使开了 gc.keepFailedTurn 也要先移除这半截,
+      // 保留的只是玩家气泡(那是可重发的输入),不是未完成的回复。
+      if (openedAssistant) {
+        setHistory((h) => {
+          const arr = Array.isArray(h) ? h.slice() : [];
+          const last = arr[arr.length - 1];
+          if (last && last.role === 'assistant') arr.pop();
+          return arr;
+        });
+      }
       // 「保留未响应轮」(设置开关 gc.keepFailedTurn,默认关):失败/未响应/中断时不回退本轮玩家
-      // 气泡,保留在对话里,由错误条的「重试」按钮重发。开=直接 no-op(气泡即本轮记录,
-      // 输入框已在发送时清空;失败轮不落库,推进/重试时会被后端真值自然替换)。
+      // 气泡,保留在对话里,由错误条的「重试」按钮重发。开=保留玩家气泡(半截回复已在上面清掉),
+      // 输入框不再重复填;重试时 onRetry 会复用/替换这条气泡,不会产生两条相同输入。
       if (lsGet('gc.keepFailedTurn') === 'on') return;
-      setText((cur) => (String(cur || '').trim() ? cur : playerText));
+      const draftText = runRef.current.activeInput || playerText;
+      setText((cur) => (String(cur || '').trim() ? cur : draftText));
       setAttachments((cur) => (Array.isArray(cur) && cur.length ? cur : sentAttachments));
       setHistory((h) => {
+        // 上面的 setHistory 先按顺序执行,此时最后一条应是本轮玩家气泡(半截 assistant
+        // 已移除);只删内容完全匹配的那条,避免误删上一轮。
         const last = h[h.length - 1];
-        if (last && last.role === 'user' && last.content === playerText) return h.slice(0, -1);
+        if (last && last.role === 'user' && last.content === draftText) return h.slice(0, -1);
         return h;
       });
     };
@@ -795,7 +1038,8 @@ function App() {
           restoreFailedDraft();
         },
         onAbort: (data) => {
-          if (!isCurrentRun()) return;
+          // gotDone 后的迟到 abort/error 不能把已完成的回合改成失败。
+          if (!isCurrentRun() || gotDone) return;
           const reason = (data && data.reason) || '';
           logEvent('abort', { reason, stopped: runRef.current.stopped });
           clearInterval(tickerId);
@@ -819,7 +1063,14 @@ function App() {
           if (data && data.player) setGame((g) => {
             const n = { ...g };
             for (const k of PICK_STATE_KEYS) if (data[k] !== undefined) n[k] = data[k];
-            n._raw = { save_id: data.save_id ?? n._raw?.save_id, save_title: data.save_title ?? n._raw?.save_title, turn: data.turn ?? n._raw?.turn };
+            n._raw = {
+              save_id: data.save_id ?? n._raw?.save_id,
+              save_title: data.save_title ?? n._raw?.save_title,
+              turn: data.turn ?? n._raw?.turn,
+              // SSE payload 也可能缺 isTavern;有相关字段时按最新值算,缺失时保留旧值,
+              // 避免酒馆档跑完一回合就“变成”游戏档(分支按钮重新出现)。
+              isTavern: tavernFlagFrom(data, n._raw),
+            };
             return n;
           });
           if (data && data.permissions) {
@@ -827,8 +1078,9 @@ function App() {
             setPendingWrites(data.permissions.pending_writes || []);
             setPendingQuestions(data.permissions.pending_questions || []);
           }
-          if (data && data.save_id != null && (!activeSave || activeSave.id !== data.save_id)) {
-            setActiveSave({ id: data.save_id, title: data.save_title || t('game.console.save.untitled', { id: data.save_id }), updated_at: data.save_updated_at || '' });
+          if (data && data.save_id != null) {
+            // 同档也要刷新 updated_at/title(回合结束后顶栏「已存档」时间).
+            setActiveSave((prev) => saveMetaFrom(data, prev, t));
           }
         },
         on_reasoning: (data) => {
@@ -911,6 +1163,12 @@ function App() {
           resetInactivityTimer();
           logEvent('rewind', data);
           const replayUser = (data && data.replay_user) || '';
+          if (replayUser) {
+            // 后端用“上一轮的原始输入”重演;后续失败/重试要恢复和重发的都是这句，
+            // 而不是触发 rewind 的 /set 命令。同步更新 activeInput + lastPlayerText。
+            runRef.current.activeInput = replayUser;
+            setLastPlayerText(replayUser);
+          }
           setHistory((h) => {
             const arr = h.slice();
             if (arr.length && arr[arr.length - 1].role === 'user') arr.pop();        // 乐观的 /set 气泡
@@ -1006,17 +1264,26 @@ function App() {
               if (!_interrupted) {
                 try {
                   const d2 = await window.api.game.state();
+                  // await 期间玩家可能已经发了下一轮(runId 变化);此时不能用旧请求的
+                  // 结果覆盖新一轮的乐观消息/运行状态。
+                  if (!isCurrentRun()) return;
                   const hist = (d2 && Array.isArray(d2.history)) ? d2.history : null;
                   const lastSrv = (hist && hist.length) ? hist[hist.length - 1] : null;
-                  if (lastSrv && lastSrv.role === 'assistant' && String(lastSrv.content || '').trim()) {
+                  // 旧逻辑只看最后一条是不是 assistant —— 本轮失败未落库时,上一轮的 assistant
+                  // 会被误当成“本轮已生成的回复”,直接覆盖 history 并吞掉错误提示。
+                  // 只有 assistant 条数比本轮开始时真的多,才认为本轮回复已落库。
+                  const beforeCount = Number(runRef.current.assistantCountBefore) || 0;
+                  const afterCount = hist ? hist.filter((m) => m && m.role === 'assistant').length : 0;
+                  if (afterCount > beforeCount && lastSrv && lastSrv.role === 'assistant' && String(lastSrv.content || '').trim()) {
                     setHistory(hist);
                     setRunState((r) => ({ ...r, running: false, publicStage: null, label: '', detail: '', completedAt: Date.now() }));
                     runRef.current.sse = null;
+                    try { window.dispatchEvent(new CustomEvent('game-state-refresh')); } catch (_) {}
                     return;  // 已从存档兜底出本轮回复 → 不再误报空回复
                   }
                 } catch (_) { /* 回查失败 → 落到下面的空回复提示 */ }
               }
-              restoreFailedDraft();
+              restoreFailedDraft({ force: true });
               const msg = _interrupted ? t('game.console.run.interrupted_msg') : t('game.console.run.empty_reply_msg');
               setRunState((r) => ({
                 ...r,
@@ -1098,7 +1365,12 @@ function App() {
           if (payload && payload.player) setGame((g) => {
             const n = { ...g };
             for (const k of PICK_STATE_KEYS) if (payload[k] !== undefined) n[k] = payload[k];
-            n._raw = { save_id: payload.save_id ?? n._raw?.save_id, save_title: payload.save_title ?? n._raw?.save_title, turn: payload.turn ?? n._raw?.turn };
+            n._raw = {
+              save_id: payload.save_id ?? n._raw?.save_id,
+              save_title: payload.save_title ?? n._raw?.save_title,
+              turn: payload.turn ?? n._raw?.turn,
+              isTavern: tavernFlagFrom(payload, n._raw),
+            };
             return n;
           });
           if (payload && Array.isArray(payload.history)) setHistory(payload.history);
@@ -1107,14 +1379,19 @@ function App() {
             setPendingWrites(payload.permissions.pending_writes || []);
             setPendingQuestions(payload.permissions.pending_questions || []);
           }
-          if (payload && payload.save_id != null && (!activeSave || activeSave.id !== payload.save_id)) {
-            setActiveSave({ id: payload.save_id, title: payload.save_title || t('game.console.save.untitled', { id: payload.save_id }), updated_at: payload.save_updated_at || '' });
+          if (payload && payload.save_id != null) {
+            setActiveSave((prev) => saveMetaFrom(payload, prev, t));
           }
           runRef.current.sse = null;
           setPickedCommand(null);
+          // 回合结束后刷新一次外围数据:顶栏「已存档」时间/章号、时间线面板、NPC 议程、
+          // 世界书 overlay、左栏存档时间等由独立请求/事件驱动的区域不会随 SSE state 自动更新。
+          // reloadState 有 in-flight SSE 守卫:玩家若已开始下一轮,不会用旧 history 覆盖。
+          try { window.dispatchEvent(new CustomEvent('game-state-refresh')); } catch (_) {}
         },
         on_error: (data) => {
-          if (!isCurrentRun()) return;
+          // gotDone 后的迟到 error 不能把已完成的回合标成失败(SSE 关闭阶段的网络抖动)。
+          if (!isCurrentRun() || gotDone) return;
           streamFailed = true;
           logEvent('error', data);
           clearInterval(tickerId);
@@ -1230,18 +1507,22 @@ function App() {
     if (cmdId) {
       setText(''); setPickedCommand(null); setShowSlash(false);
       if (cmdId === 'retry') onRetry();
+      // /status 不只是展开面板:右栏可能正停在记忆/世界线,必须同时切到 status tab。
       else if (cmdId === 'status') { setPanelCollapsed(false); setActiveTab('status'); }
       else if (cmdId === 'debug') setSseLogOpen(true);
       else if (cmdId === 'save') {
-        (async () => {
-          try { await window.api.game.saveGame(); window.__apiToast?.(t('common.save') + ' ✓', { kind: 'ok' }); }
-          catch (e) { window.__apiToast?.(t('game.console.save.save_failed'), { kind: 'danger', detail: e?.message }); }
-        })();
+        manualSave();
       }
       return;
     }
     setHasError(false);
-    startRun(text.trim() || (pickedCommand ? pickedCommand.trigger.trim() : t('game.console.send.attachment_only')));
+    // pickedCommand 可能来自不同宿主(桌面菜单对象有 trigger;移动端对象曾是 trig)。
+    // 这里只在本对象真的带字符串 trigger 时才取命令文本,否则退到附件/空文本兜底,
+    // 避免 undefined.trim() 崩掉发送。
+    const cmdText = (pickedCommand && typeof pickedCommand.trigger === 'string')
+      ? pickedCommand.trigger.trim()
+      : t('game.console.send.attachment_only');
+    startRun(text.trim() || cmdText);
   };
   const onSendRaw = useCallback((raw) => {
     if (runState.running) return;
@@ -1256,17 +1537,35 @@ function App() {
       window.__apiToast?.(t('game.console.retry.still_running'), { kind: 'warn', duration: 2400 });
       return;
     }
+    // 多标签冲突横幅出现时不要先回滚:rollback 已经删了本轮,startRunReal 再被横幅拦下
+    // → 本轮彻底丢失。这里提前拦;回滚 await 期间横幅可能才出现,发送前还会用 ref 再拦一次。
+    if (tabConflictRef.current) {
+      window.__apiToast?.(t('game.console.conflict.toast_title'), { kind: 'warn', detail: t('game.console.conflict.toast_detail'), duration: 4000 });
+      return;
+    }
     // 「重试」语义 = 删除本轮输出(回滚到本轮玩家输入之前)+ 再次发送本轮输入。
-    // 找本轮玩家输入及其历史下标:优先 lastPlayerText,空时从历史回捞最后一条非空玩家输入。
+    // 文本来源分两种情况:
+    //   · 失败轮未落库(restoreFailedDraft 已处理气泡):要重发的是刚失败的那句
+    //     lastPlayerText;keepFailedTurn=off 时历史最后一条 user 已经是【上一个好回合】,
+    //     不能拿它当重试文本(否则会重发上一轮并误删好回合)。pIdx 置 -1 表示不回滚。
+    //   · 正常/手动停止:历史最后一条玩家消息才是本轮输入;编辑消息 / /set rewind 后
+    //     lastPlayerText 可能过期,所以优先历史。
     const h = Array.isArray(history) ? history : [];
-    let t2 = (lastPlayerText && lastPlayerText.trim()) || '';
     let pIdx = -1;
     for (let i = h.length - 1; i >= 0; i--) {
       if (h[i] && h[i].role === 'user' && (h[i].content || '').trim()) {
         pIdx = i;
-        if (!t2) t2 = h[i].content.trim();
         break;
       }
+    }
+    const lastUserText = pIdx >= 0 ? String(h[pIdx]?.content || '').trim() : '';
+    const _failedUnpersisted = runRef.current.lastRunFailedUnpersisted === true;
+    let t2 = '';
+    if (_failedUnpersisted) {
+      t2 = (lastPlayerText || '').trim() || lastUserText;
+      if (lastUserText && t2 !== lastUserText) pIdx = -1;
+    } else {
+      t2 = lastUserText || (lastPlayerText || '').trim();
     }
     if (!t2) { window.__apiToast?.(t('game.console.retry.no_input'), { kind: 'warn', duration: 2000 }); return; }
     setHasError(false);
@@ -1277,9 +1576,7 @@ function App() {
     let rolled = false;
     // 【off-by-one 防线】失败轮未落库时(安全过滤/生成失败,restoreFailedDraft 已把本轮气泡
     // 移除),历史里最后一条玩家输入是【上一个好回合】——rollback 会成功地把好回合滚进 trash,
-    // 每次失败重试多吃一轮(群反馈:自动回退到前一回合,要去分支里找最新回合)。两重判据:
-    // ①失败标记 ②定位到的历史输入与将要重发的文本不一致 → 都跳过 rollback 直接重发。
-    const _failedUnpersisted = runRef.current.lastRunFailedUnpersisted === true;
+    // 每次失败重试多吃一轮(群反馈:自动回退到前一回合,要去分支里找最新回合)。
     const _pContent = pIdx >= 0 ? String(h[pIdx]?.content || '').trim() : '';
     if (!_failedUnpersisted && _pContent === t2 && saveId != null && pIdx >= 0) {
       try {
@@ -1287,7 +1584,7 @@ function App() {
         if (r && r.ok === false) throw new Error(r.error || r.detail || 'rollback denied');
         await reloadState();
         rolled = true;
-      } catch (e) {
+      } catch {
         // 本轮可能尚未提交(纯生成失败,后端无本轮 commit)→ 退化为前端截断,不打断重试。
         rolled = false;
       }
@@ -1295,20 +1592,35 @@ function App() {
     if (!rolled) {
       setHistory((hh) => {
         const out = [...hh];
-        while (out.length && out[out.length - 1].role === 'assistant' && !(out[out.length - 1].content || '').trim()) out.pop();
+        // 失败/手动停止时最后一条 assistant 可能仍是流式半截(streaming=true):它不是
+        // 有效回复,重试前必须移除,否则会和新回复叠成两条。空 assistant 也一并清掉。
+        while (out.length && out[out.length - 1].role === 'assistant'
+          && (out[out.length - 1].streaming || !(out[out.length - 1].content || '').trim())) out.pop();
         if (out.length && out[out.length - 1].role === 'user' && (out[out.length - 1].content || '').trim() === t2) out.pop();
         return out;
       });
     }
+    // 回滚/截断完成后、真正发送前再检查一次:横幅可能在 await 期间才出现。此时把本轮
+    // 输入回填到输入框,至少不让玩家白丢一句话。
+    if (tabConflictRef.current) {
+      setText(t2);
+      window.__apiToast?.(t('game.console.conflict.toast_title'), { kind: 'warn', detail: t('game.console.conflict.toast_detail'), duration: 4000 });
+      return;
+    }
     window.__apiToast?.(t('game.console.retry.retrying'), { kind: 'info', duration: 1600 });
     startRun(t2);
-  }, [lastPlayerText, history, runState.running, startRun, activeSave, reloadState]);
+  }, [lastPlayerText, history, runState.running, startRun, activeSave, reloadState, t]);
   // 反馈:每条消息的「重新生成这一轮」(MsgActions 派发 rpg-regenerate 事件,携 message_index)。
   // 语义 = 删除本轮 + 用同一条玩家输入重走 → 换个结果替换旧的(非分叉保留)。故用 rollback(删除,
   // 旧回合进 trash ref 可恢复)而非 continueFrom(那是「建立分支」,保留旧线、玩家反馈「没有删除」)。
   // reloadState 把历史截到本轮前 → 用同一条玩家输入 startRun 重走完整 GM 流程。
   const onRegenerate = useCallback(async (messageIndex) => {
     if (runState.running) { window.__apiToast?.(t('game.console.retry.still_generating'), { kind: 'warn', duration: 2000 }); return; }
+    // 同 onRetry:横幅出现时不能先 rollback(删了回合却被拦下,本轮永久丢失)。
+    if (tabConflictRef.current) {
+      window.__apiToast?.(t('game.console.conflict.toast_title'), { kind: 'warn', detail: t('game.console.conflict.toast_detail'), duration: 4000 });
+      return;
+    }
     const h = Array.isArray(history) ? history : [];
     let pIdx = Number(messageIndex);
     if (!Number.isFinite(pIdx)) pIdx = h.length - 1;
@@ -1325,6 +1637,12 @@ function App() {
       const r = await window.api.branches.rollbackToMessage(saveId, pIdx);  // 删除本轮(玩家输入及之后),回退活跃指针
       if (r && r.ok === false) throw new Error(r.error || r.detail || t('game.console.regen.branch_rejected'));
       await reloadState();                 // 历史截到本轮之前(本轮玩家输入及之后被移除)
+      // await 期间横幅可能才出现。回滚已发生,至少把本轮输入放回输入框,避免玩家白丢。
+      if (tabConflictRef.current) {
+        setText(playerText);
+        window.__apiToast?.(t('game.console.conflict.toast_title'), { kind: 'warn', detail: t('game.console.conflict.toast_detail'), duration: 4000 });
+        return;
+      }
       window.__apiToast?.(t('game.console.regen.regenerating'), { kind: 'ok', duration: 1800 });
       startRun(playerText);                // 用同样的玩家输入重走 GM(完整后端流程)
     } catch (e) {
@@ -1346,31 +1664,39 @@ function App() {
   };
   // 真实文件上传(对齐酒馆):file/image/card 走文件选择器读成 data_url 真实附件 →
   // 后端 _save_attachments 取前 6000 字节文本注入 GM,GM 即可读到附件内容(反馈:游戏附件
-  // 此前是假占位,GM 读不到)。其余(chapter/world/mcp/skill/plan)是游戏内引用,保留占位。
+  // 此前是假占位,GM 读不到)。chapter/world/mcp/skill/plan 尚未接线:它们只会添加没有
+  // data_url 的占位对象,后端 _save_attachments 会直接抛「附件内容为空」导致整条消息发送失败,
+  // 因此这里拒绝并把“未接入”告诉用户,而不是制造一个必失败的附件。
   const fileInputRef = useRef(null);
   const pendingAttachRef = useRef({ kind: 'file' });
+  const ATTACH_KINDS = new Set(['file', 'image', 'card']);
   const onAttachPick = (item) => {
     setShowPlus(false);
-    if (item.id === 'file' || item.id === 'image' || item.id === 'card') {
-      pendingAttachRef.current = { kind: item.id };
-      const inp = fileInputRef.current;
-      if (inp) {
-        inp.value = '';
-        inp.accept = item.id === 'card' ? '.png,.json,.webp' : (item.id === 'image' ? 'image/*' : '');
-        inp.click();
-      }
+    if (!item || !ATTACH_KINDS.has(item.id)) {
+      window.__apiToast?.(t('game.console.attach.not_supported', { defaultValue: '该附件类型暂未接入' }), { kind: 'info', duration: 2400 });
       return;
     }
-    const fixtures = { chapter: { name: '第 314 章 · 北港', kind: 'chapter' }, world: { name: '世界书 · 残页', kind: 'world' }, mcp: { name: 'MCP · 文件检索', kind: 'mcp' }, skill: { name: 'Skill · 角色一致性', kind: 'skill' }, plan: { name: '计划模式', kind: 'skill' } };
-    setAttachments((a) => [...a, fixtures[item.id] || { name: item.label, kind: 'file' }]);
+    pendingAttachRef.current = { kind: item.id };
+    const inp = fileInputRef.current;
+    if (inp) {
+      inp.value = '';
+      inp.accept = item.id === 'card' ? '.png,.json,.webp' : (item.id === 'image' ? 'image/*' : '');
+      inp.click();
+    }
   };
   const onFilePicked = (e) => {
     const f = e.target && e.target.files && e.target.files[0];
     if (!f) return;
     const kind = (pendingAttachRef.current && pendingAttachRef.current.kind) || 'file';
     if (f.size > 12 * 1024 * 1024) { window.__apiToast?.(t('game.console.attach.file_too_large'), { kind: 'warn', duration: 2400 }); return; }
+    // 后端 MAX_ATTACHMENTS_PER_REQUEST=8;前端先拦,避免用户选了一堆文件后整条消息被 400。
+    if ((attachments || []).length >= 8) {
+      window.__apiToast?.(t('game.console.attach.max_count', { defaultValue: '单次最多 8 个附件' }), { kind: 'warn', duration: 2400 });
+      return;
+    }
     const reader = new FileReader();
     reader.onload = () => setAttachments((a) => [...a, { name: f.name, type: f.type || 'application/octet-stream', data_url: String(reader.result || ''), kind }]);
+    reader.onerror = () => window.__apiToast?.(t('game.console.attach.read_failed', { defaultValue: '附件读取失败' }), { kind: 'danger', duration: 2400 });
     reader.readAsDataURL(f);
   };
 
@@ -1378,17 +1704,27 @@ function App() {
     if (target.id != null && item.id != null) return item.id !== target.id;
     return idx !== target.index;
   };
+  // 待审/待答在生成中统一拦住:回答会 startRun 中止当前 SSE;批准写入可能被本轮快照覆盖。
+  const notifyRunBusy = () => window.__apiToast?.(t('game.app.msg.busy_tip'), { kind: 'warn', duration: 2400 });
   const onApprove = async (target) => {
+    if (runState.running) { notifyRunBusy(); return; }
     setPendingWrites((arr) => arr.filter(_matchPending(target)));
     try { await window.api.game.pendingWrite({ id: target.id, index: target.index, action: 'approve' }); } catch (e) { window.__apiToast?.(t('game.console.write.approve_failed'), { kind: 'danger', detail: e?.message }); }
     try { const d = await window.api.game.state(); if (d && d.permissions) { setPendingWrites(d.permissions.pending_writes || []); setPendingQuestions(d.permissions.pending_questions || []); } } catch (_) {}
   };
   const onReject = async (target) => {
+    if (runState.running) { notifyRunBusy(); return; }
     setPendingWrites((arr) => arr.filter(_matchPending(target)));
     try { await window.api.game.pendingWrite({ id: target.id, index: target.index, action: 'reject' }); } catch (e) { window.__apiToast?.(t('game.console.write.reject_failed'), { kind: 'danger', detail: e?.message }); }
     try { const d = await window.api.game.state(); if (d && d.permissions) { setPendingWrites(d.permissions.pending_writes || []); setPendingQuestions(d.permissions.pending_questions || []); } } catch (_) {}
   };
   const onAnswerQuestion = async (target, choice) => {
+    if (runState.running) { notifyRunBusy(); return; }
+    // 先清问题再 startRun:若横幅此刻在,旧逻辑会把问题清掉但回合不发 → 选择丢失。
+    if (tabConflictRef.current) {
+      window.__apiToast?.(t('game.console.conflict.toast_title'), { kind: 'warn', detail: t('game.console.conflict.toast_detail'), duration: 4000 });
+      return;
+    }
     setPendingQuestions((arr) => arr.filter(_matchPending(target)));
     try { await window.api.game.clearQuestions({ id: target.id, index: target.index, choice }); } catch (e) { window.__apiToast?.(t('game.console.write.answer_failed'), { kind: 'danger', detail: e?.message }); }
     try { const d = await window.api.game.state(); if (d && d.permissions) { setPendingWrites(d.permissions.pending_writes || []); setPendingQuestions(d.permissions.pending_questions || []); } } catch (_) {}
@@ -1396,6 +1732,7 @@ function App() {
     if (nextAction) startRun(nextAction);
   };
   const onDismissConfirm = (target) => {
+    // × = 纯前端「稍后处理」:不写后端,下次状态刷新会重新出现(与酒馆一致)。
     setPendingWrites((arr) => arr.filter(_matchPending(target)));
     setPendingQuestions((arr) => arr.filter(_matchPending(target)));
   };
@@ -1409,6 +1746,11 @@ function App() {
   };
   // mode "ask_default":持久化该能力偏好 → 清掉卡片 → startRun("用 X 生成") 让 LLM 带着偏好重调工具。
   const onConfigDefault = async (handleId, item, model) => {
+    if (runState.running) { notifyRunBusy(); return; }
+    if (tabConflictRef.current) {
+      window.__apiToast?.(t('game.console.conflict.toast_title'), { kind: 'warn', detail: t('game.console.conflict.toast_detail'), duration: 4000 });
+      return;
+    }
     const cap = capConfig(item.capability);
     const aid = item.api_id || '';
     if (aid && model) {
@@ -1424,6 +1766,11 @@ function App() {
   };
   // mode "missing_key":用户在卡片里配好后点「继续」→ 清掉卡片 → startRun("继续") 重试。
   const onConfigContinue = async (handleId, item, label) => {
+    if (runState.running) { notifyRunBusy(); return; }
+    if (tabConflictRef.current) {
+      window.__apiToast?.(t('game.console.conflict.toast_title'), { kind: 'warn', detail: t('game.console.conflict.toast_detail'), duration: 4000 });
+      return;
+    }
     await _clearConfigQuestion(handleId);
     startRun(label || t('game.console.retry.continue'));
   };
@@ -1433,6 +1780,11 @@ function App() {
   const onHardConfig = (item) => setHardConfigItem(item);
   const _hardHandleId = (item) => ({ id: (item && item.id != null) ? item.id : null, index: null });
   const onHardResolve = async (chosenModel) => {
+    if (runState.running) { notifyRunBusy(); return; }
+    if (tabConflictRef.current) {
+      window.__apiToast?.(t('game.console.conflict.toast_title'), { kind: 'warn', detail: t('game.console.conflict.toast_detail'), duration: 4000 });
+      return;
+    }
     const item = hardConfigItem; if (!item) return;
     setHardConfigItem(null);
     await _clearConfigQuestion(_hardHandleId(item));
@@ -1444,6 +1796,60 @@ function App() {
     await _clearConfigQuestion(_hardHandleId(item));
     window.__apiToast?.(t('game.console.config.cancelled'), { kind: 'info', duration: 2000 });
   };
+
+  // 切存档时必须清掉的「会话级」UI 状态。旧版只 stop/activate/reloadState,导致:
+  //   · 上一档的 lastPlayerText 被 Retry 发进新档;
+  //   · A/B 改写候选、套路提示、错误条、token 用量、SSE 日志、多标签冲突横幅跨档残留;
+  //   · 输入框草稿/附件跟着玩家切到另一档,误发。
+  // 这些都不属于存档数据,清掉不会丢进度。activeSave.id 变化时兜底调用一次,桌面/移动共用。
+  const resetSessionUiState = useCallback(() => {
+    setRewriteAlt(null);
+    setAbBusy(false);
+    setClicheNotice(null);
+    setHasError(false);
+    setLastUsage(null);
+    setLastPlayerText('');
+    setSseLog([]);
+    setSseLogOpen(false);
+    setTabConflictBanner(null);
+    setText('');
+    setAttachments([]);
+    setPickedCommand(null);
+    // 模型选择是存档级状态;切档先清空,随后 reloadState 会用新档的 models.selected 回填,
+    // 避免底部模型标签停在上一个存档。
+    setModel(null);
+    setShowSlash(false);
+    setShowPlus(false);
+    setShowModel(false);
+    setShowPerm(false);
+    setHardConfigItem(null);
+    setShowHistoryDrawer(false);
+    setShowSearchDrawer(false);
+    setShowInGameSettings(false);
+    // 新档的加载状态由接下来的 reloadState 决定;先把上一档的失败/等待开场标记清掉,
+    // 避免 reloadState 失败时还显示上一档的“加载失败,重试”或“等待开场”。
+    setRetryFailed(false);
+    setStateLoadedNoPlayer(false);
+    // 清掉上一档遗留的“本轮输入/失败轮”运行态;它们不是存档数据,留着会让新档的
+    // Retry 用旧文本。runRef 是同步对象,不影响渲染。
+    runRef.current.activeInput = '';
+    runRef.current.lastRunFailedUnpersisted = false;
+    runRef.current.assistantCountBefore = 0;
+    setRunState({ running: false, publicStage: null, label: '', detail: '', totalElapsed: 0, completedAt: 0, completedElapsed: 0, rawSteps: [] });
+  }, []);
+  const activeSaveId = (activeSave && activeSave.id != null) ? String(activeSave.id) : null;
+  const prevActiveSaveIdRef = useRef(undefined);
+  useEffect(() => {
+    const prev = prevActiveSaveIdRef.current;
+    if (prev === undefined) { prevActiveSaveIdRef.current = activeSaveId; return; }
+    // 首屏从「无存档」到拿到 activeSave 不算切档:此时不能清 tabConflictBanner,
+    // 否则第二标签页刚建立的“同档冲突”提示会被首轮 /api/state 回来的 reset 抹掉。
+    if (prev == null && activeSaveId != null) { prevActiveSaveIdRef.current = activeSaveId; return; }
+    if (prev !== activeSaveId) {
+      prevActiveSaveIdRef.current = activeSaveId;
+      resetSessionUiState();
+    }
+  }, [activeSaveId, resetSessionUiState]);
 
   const rootStyle = useMemo(() => {
     const densityMap = { compact: 0.92, normal: 1, comfy: 1.1 };
@@ -1467,6 +1873,8 @@ function App() {
   //    的全部 state + handler;设计稿砍掉的功能(历史/搜索/游戏内设置/反馈/SSE 调试)用
   //    既有 overlay 找回(它们是模态浮层,非主 UI 本体)。
   if (mobileGame && mountStage >= 1) {
+    // A/B 候选的定位在桌面/移动共用同一 helper;移动端只负责渲染面板。
+    const acceptance = rewriteAlt ? acceptanceTarget(rewriteAlt, history) : null;
     return (
       <>
         <MobileGame
@@ -1481,14 +1889,23 @@ function App() {
           permission={permission} setPermission={changePermission}
           pendingWrites={pendingWrites} pendingQuestions={pendingQuestions}
           onApprove={onApprove} onReject={onReject} onAnswerQuestion={onAnswerQuestion} onDismissConfirm={onDismissConfirm}
+          /* config_card 处理(模型/能力未配置):移动端也必须能“配置后继续/用默认模型生成”,
+             旧版只把卡片当普通问句渲染,hard 拦截连弹窗都没有 → 卡死。 */
+          onConfigDefault={onConfigDefault} onConfigContinue={onConfigContinue}
+          onConfigSettings={onConfigSettings} onHardConfig={onHardConfig}
+          /* acceptance A/B(移动端也要能选;旧版只在桌面 foot 渲染,移动端候选直接消失) */
+          rewriteAlt={rewriteAlt} acceptanceIdx={acceptance ? acceptance.idx : -1}
+          acceptanceOriginal={acceptance ? acceptance.original : ''}
+          abBusy={abBusy} onChooseAcceptance={chooseAcceptance}
+          onDismissAcceptance={() => setRewriteAlt(null)}
           onSlashPick={onSlashPick} onAttachPick={onAttachPick} pickedCommand={pickedCommand} onClearCommand={() => setPickedCommand(null)}
           onRetry={onRetry} onRegenerate={onRegenerate} onShowSse={onShowSse}
           clicheNotice={clicheNotice} onRetryCliche={() => { setClicheNotice(null); onRetry(); }} onDismissCliche={() => setClicheNotice(null)}
           hasError={hasError}
           activeSave={activeSave} realSaves={realSaves.length ? realSaves : ((window.RPG_AUTH && window.RPG_AUTH.authed) ? [] : (window.MOCK_PLATFORM?.saves || []))}
-          onSwitchSave={async (sid) => { try { if (runRef.current.sse || runState.running) stopRun(); await window.api.saves.activate(sid); reloadState(); } catch (e) { window.__apiToast?.(t('game.console.save.switch_failed'), { kind: 'danger', detail: e?.message }); } }}
+          onSwitchSave={async (sid) => { if (activeSave && String(activeSave.id) === String(sid)) return; try { if (runRef.current.sse || runState.running) stopRun(); await window.api.saves.activate(sid); resetSessionUiState(); await reloadState(); await reloadSaves(); } catch (e) { window.__apiToast?.(t('game.console.save.switch_failed'), { kind: 'danger', detail: e?.message }); } }}
           onNew={async () => { if (!await window.__confirm({ message: t('game.console.save.new_confirm') })) return; location.href = '/saves'; }}
-          onSave={async () => { try { await window.api.game.saveGame(); window.__apiToast?.(t('common.save') + ' ✓', { kind: 'ok' }); } catch (e) { window.__apiToast?.(t('game.console.save.save_failed'), { kind: 'danger', detail: e?.message }); } }}
+        onSave={manualSave}
           reloadState={reloadState}
           activeTab={activeTab} setActiveTab={setActiveTab}
           lastUsage={lastUsage}
@@ -1503,7 +1920,8 @@ function App() {
         <GameSettingsModal open={showInGameSettings} onClose={() => setShowInGameSettings(false)} saveTitle={activeSave?.title || game?._raw?.save_title || ''} saveId={activeSave?.id ?? null} />
         <HistoryDrawer open={showHistoryDrawer} history={history} onClose={() => setShowHistoryDrawer(false)} />
         <SearchDrawer open={showSearchDrawer} history={history} state={game} onClose={() => setShowSearchDrawer(false)} />
-        <GCWelcomeModal open={welcomeGCOpen} onClose={() => setWelcomeGCOpen(false)} />
+        {/* hard config_card(model_not_configured):移动端也必须有阻塞弹窗,否则只能“忽略”。 */}
+        <ModelConfigInterceptModal open={!!hardConfigItem} item={hardConfigItem} onResolve={onHardResolve} onCancel={onHardCancel} disabled={runState.running} />
         {splashNeeded && <AdultSplash splashVersion={SPLASH_VERSION} onAcked={() => setSplashNeeded(false)} />}
         {/* 移动早返同样需要 toast 渲染落点:MobileGame 全部 window.__apiToast 指向 game 通道,
             但桌面 return 的 <GameToastStack/> 早返永不到达 → 切档/保存/分支/回滚反馈静默。
@@ -1566,7 +1984,6 @@ function App() {
       {splashNeeded && (
         <AdultSplash splashVersion={SPLASH_VERSION} onAcked={() => setSplashNeeded(false)} />
       )}
-      <GCWelcomeModal open={welcomeGCOpen} onClose={() => setWelcomeGCOpen(false)} />
       {mountStage >= 2 && <GameToastStack />}
       {mountStage >= 1 ? <LeftRail
         resizeHandle={<div className="gc-rail-resize-handle" title={t('game.console.resize_rail_tip')} {...gcRailDragProps} />}
@@ -1574,9 +1991,10 @@ function App() {
         onToggle={() => { setRailCollapsed((c) => !c); setMobileNav(false); }}
         state={game} runState={runState}
         onNew={async () => { if (!await window.__confirm({ message: t('game.console.save.new_confirm') })) return; window.open('/saves', '_blank'); }}
-        onSave={async () => { try { await window.api.game.saveGame(); window.__apiToast?.(t('common.save') + ' ✓', { kind: 'ok' }); } catch (e) { window.__apiToast?.(t('game.console.save.save_failed'), { kind: 'danger', detail: e?.message }); } }}
-        onSwitchSave={async (sid) => { setMobileNav(false); try { if (runRef.current.sse || runState.running) stopRun(); await window.api.saves.activate(sid); reloadState(); } catch (e) { window.__apiToast?.(t('game.console.save.switch_failed'), { kind: 'danger', detail: e?.message }); } }}
+        onSave={manualSave}
+        onSwitchSave={async (sid) => { setMobileNav(false); if (activeSave && String(activeSave.id) === String(sid)) return; try { if (runRef.current.sse || runState.running) stopRun(); await window.api.saves.activate(sid); resetSessionUiState(); await reloadState(); await reloadSaves(); } catch (e) { window.__apiToast?.(t('game.console.save.switch_failed'), { kind: 'danger', detail: e?.message }); } }}
         currentSaveId={activeSave?.id ?? null}
+        activeSave={activeSave}
         saves={realSaves.length ? realSaves : ((window.RPG_AUTH && window.RPG_AUTH.authed) ? [] : (window.MOCK_PLATFORM?.saves || []))}
         mobileOpen={mobileNav}
       /> : <aside className="gc-rail" aria-hidden="true" />}
@@ -1585,7 +2003,6 @@ function App() {
         {mountStage >= 1 && <TopBar
           state={game}
           saveUpdatedAt={activeSave?.updated_at || ''}
-          onOpenTweaks={openTweaks}
           onOpenSearch={() => setShowSearchDrawer(true)}
           onOpenHistory={() => setShowHistoryDrawer(true)}
           onOpenSettings={() => setShowInGameSettings(true)}
@@ -1609,7 +2026,7 @@ function App() {
           <SearchDrawer open={showSearchDrawer} history={history} state={game} onClose={() => setShowSearchDrawer(false)} />
         </>}
         {/* config_card hard 拦截弹窗(mode model_not_configured):ConfirmStrip onHardConfig 触发 */}
-        <ModelConfigInterceptModal open={!!hardConfigItem} item={hardConfigItem} onResolve={onHardResolve} onCancel={onHardCancel} />
+        <ModelConfigInterceptModal open={!!hardConfigItem} item={hardConfigItem} onResolve={onHardResolve} onCancel={onHardCancel} disabled={runState.running} />
         {/* GM 模型选择走 Composer 内置 ModelPopover(下拉,基于统一规范组件 AgentModelPicker)。
             旧的全屏 ModelPicker modal(dead code)已删除。 */}
         {/* narrativeFont 不再下传(2026-10-15):ChatArea 不再内联 --narrative-font,
@@ -1620,7 +2037,7 @@ function App() {
             (stateLoadedNoPlayer && history.length === 0)
               ? [{ role: 'assistant', content: t('game.console.opening.waiting'), _opening: true, _thinking: 'starting' }]
               : history
-          } runState={runState} runStyle={tweaks.runStyle}
+          } runState={runState}
           narrativeSize={tweaks.narrativeSize}
           hasError={hasError}
           saveId={(activeSave && activeSave.id) || (game && game._raw && game._raw.save_id) || null}
@@ -1646,39 +2063,17 @@ function App() {
         )}
         <div className="gc-foot-wrap">
           {rewriteAlt && (() => {
-            // 优先用后端下发的权威 message_index(按首稿全文算,不受异步竞态影响);无则回退
-            // 「最后一条 assistant」启发式(旧档/未命中)。这修「改写改到前一个回合」。
-            let idx = -1;
-            if (rewriteAlt.message_index != null && rewriteAlt.message_index >= 0 && rewriteAlt.message_index < history.length) {
-              idx = rewriteAlt.message_index;
-            } else {
-              for (let i = history.length - 1; i >= 0; i--) { if (history[i] && history[i].role === 'assistant') { idx = i; break; } }
-            }
-            const original = idx >= 0 ? String(history[idx].content || '') : '';
-            const doChoose = async (choice) => {
-              setAbBusy(true);
-              try {
-                if (choice === 'rewrite' && idx >= 0) {
-                  // 乐观替换本地气泡为改写稿(后端也会把该消息落库换成服务端存的改写稿)
-                  setHistory((h) => h.map((m, i) => (i === idx ? { ...m, content: rewriteAlt.rewrite } : m)));
-                }
-                await window.api.game.acceptanceChoice({ alt_id: rewriteAlt.alt_id, choice, message_index: idx });
-              } catch (e) {
-                window.__apiToast?.(t('game.console.acceptance_ab.save_failed', '选择保存失败'), { kind: 'warn', detail: e?.message });
-              } finally {
-                setAbBusy(false);
-                setRewriteAlt(null);
-              }
-            };
+            // 候选定位/裁决逻辑与移动端共用(acceptanceTarget / chooseAcceptance)。
+            const { idx, original } = acceptanceTarget(rewriteAlt, history);
             return (
               <AcceptanceAbPanel
-                alt={rewriteAlt} original={original} busy={abBusy}
-                onChoose={doChoose} onDismiss={() => setRewriteAlt(null)}
+                alt={rewriteAlt} original={original} busy={abBusy || runState.running}
+                onChoose={(choice) => chooseAcceptance(idx, choice)} onDismiss={() => setRewriteAlt(null)}
               />
             );
           })()}
           <ConfirmStrip pendingWrites={pendingWrites} pendingQuestions={pendingQuestions} onApprove={onApprove} onReject={onReject} onAnswer={onAnswerQuestion} onDismiss={onDismissConfirm}
-            clicheNotice={clicheNotice}
+            clicheNotice={clicheNotice} running={runState.running}
             onRetryCliche={() => { setClicheNotice(null); onRetry(); }}
             onDismissCliche={() => setClicheNotice(null)}
             onConfigDefault={onConfigDefault} onConfigContinue={onConfigContinue} onHardConfig={onHardConfig} onConfigSettings={onConfigSettings} />
@@ -1748,7 +2143,7 @@ function App() {
       {mountStage >= 2 && !panelCollapsed && (
         <div className="gc-panel-backdrop" onClick={() => setPanelCollapsed(true)} aria-hidden="true" />
       )}
-      {mountStage >= 2 && <RightPanel state={game} activeTab={activeTab} setActiveTab={setActiveTab} sidebarWidth={gcPanelW} density={tweaks.density} collapsed={panelCollapsed} onToggle={() => setPanelCollapsed((c) => !c)} resizeHandle={<div className="gp-panel-resize-handle" title={t('game.console.resize_panel_tip')} {...gcPanelDragProps} />} />}
+      {mountStage >= 2 && <RightPanel state={game} activeTab={activeTab} setActiveTab={setActiveTab} sidebarWidth={gcPanelW} density={tweaks.density} running={runState.running} collapsed={panelCollapsed} onToggle={() => setPanelCollapsed((c) => !c)} resizeHandle={<div className="gp-panel-resize-handle" title={t('game.console.resize_panel_tip')} {...gcPanelDragProps} />} />}
       <button className="gc-float-panel-btn" onClick={() => { setPanelCollapsed(false); _panelResize.setSize(320); }} title={t('game.console.open_panel_tip')}>⌖</button>
     </div>
   );

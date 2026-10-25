@@ -16,7 +16,14 @@ function InlineEditField({ value, placeholder, emptyLabel, onSubmit, busy, multi
   const commit = async () => {
     if (submittingRef.current) return;
     const v = (draft || "").trim();
-    if (!v || v === (value || "")) { setEditing(false); return; }
+    if (!v) {
+      // 后端 world/profile/relationship 的 set 接口都拒绝空值。旧实现静默取消编辑,
+      // 玩家以为“清空了”,刷新后旧值又回来;这里明确提示,避免误解。
+      if (value) window.__apiToast?.(t('game.inline_edit.empty_not_allowed', { defaultValue: '该字段不能为空' }), { kind: "warn", duration: 2000 });
+      setEditing(false);
+      return;
+    }
+    if (v === (value || "")) { setEditing(false); return; }
     submittingRef.current = true;
     try { await onSubmit(v); setEditing(false); }
     catch (e) { window.__apiToast?.(t('game.inline_edit.save_failed'), { kind: "danger", detail: e?.message }); }

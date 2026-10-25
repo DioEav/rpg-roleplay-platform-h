@@ -29,6 +29,7 @@ import AgentModelPicker from '../components/AgentModelPicker.jsx';
 import ModelConfigInterceptModal, { capConfig } from '../components/ModelConfigInterceptModal.jsx';
 import TavernCharacterSelect from '../components/tavern-page/TavernCharacterSelect.jsx';
 import { isCredentialsError } from '../lib/creds.js';
+import { normalizePermissionForUi } from '../lib/permission-mode.js';
 import {
   useTavernChatRun, applyTavernState, abortRun,
 } from '../hooks/useTavernChatRun.js';
@@ -87,6 +88,17 @@ export default function TavernPage() {
   // 输入框「完全复用」游戏页 Composer 所需的状态(与 game-console.jsx 一致):
   const [gameState, setGameState] = useState(null);       // 完整 /api/state → 喂给 Composer(模型名/context 圆环/@mention)
   const [permission, setPermission] = useState('full_access');
+  // 与 game-console 同款:只有玩家主动改权限才回写后端。此前酒馆页只 setPermission 本地状态,
+  // 权限浮层看起来能选,后端却始终是旧模式(GM 写回不按玩家选择执行)。
+  const changePermission = useCallback((mode) => {
+    const next = normalizePermissionForUi(mode);
+    setPermission(next);
+    if (!window.api?.game?.permissions) return;
+    window.api.game.permissions({ mode: next }).catch((e) => {
+      window.__apiToast?.(t('game.permission.save_failed'), { kind: 'danger', detail: e?.message });
+      try { window.dispatchEvent(new CustomEvent('rpg-state-reload')); } catch (_) {}
+    });
+  }, [t]);
   const [showSlash, setShowSlash] = useState(false);
   const [showPlus, setShowPlus] = useState(false);
   const [showModel, setShowModel] = useState(false);
@@ -152,7 +164,9 @@ export default function TavernPage() {
   const applyState = useCallback((data) => {
     applyTavernState(data, {
       setCharacter, setPersona, setHistory, setActiveChat,
-      setGameState, setPermission,
+      setGameState,
+      // 后端回填的 auto_review 要归一成浮层选项 id review,否则 chip 会退回「默认权限」。
+      setPermission: (m) => setPermission(normalizePermissionForUi(m)),
       setImmersive,
       mapHistory: mapHistoryWithToolOps,
     });
@@ -505,6 +519,10 @@ export default function TavernPage() {
     return { ...gs, data: { ...(gs.data || {}), permissions: { ...((gs.data && gs.data.permissions) || {}), pending_questions: pq } } };
   });
   const onChoiceAnswer = useCallback(async (handleId, choice) => {
+    if (running) {
+      window.__apiToast?.(t('game.app.msg.busy_tip'), { kind: 'warn', duration: 2400 });
+      return;
+    }
     const id = handleId && handleId.id; const index = handleId && handleId.index;
     try { await window.api.game.clearQuestions({ id, index, choice }); } catch (_) {}
     _dropPending(id, index);
@@ -512,9 +530,10 @@ export default function TavernPage() {
     if (c && !running) startRun(c);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [running, startRun]);
-  const onChoiceDismiss = useCallback(async (handleId) => {
+  const onChoiceDismiss = useCallback((handleId) => {
+    // 与游戏台统一:× = 纯前端「稍后处理」,不调 clearQuestions;下次状态刷新会重新出现。
+    // 真要永久移除请走「回答」或配置卡自己的清除路径。
     const id = handleId && handleId.id; const index = handleId && handleId.index;
-    try { await window.api.game.clearQuestions({ id, index, choice: null }); } catch (_) {}
     _dropPending(id, index);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -528,6 +547,10 @@ export default function TavernPage() {
   }, []);
   // mode "ask_default":持久化能力偏好 → 清卡片 → startRun("用 X 生成")
   const onConfigDefault = useCallback(async (handleId, item, model) => {
+    if (running) {
+      window.__apiToast?.(t('game.app.msg.busy_tip'), { kind: 'warn', duration: 2400 });
+      return;
+    }
     const cap = capConfig(item.capability);
     const aid = item.api_id || '';
     if (aid && model) {
@@ -544,6 +567,10 @@ export default function TavernPage() {
   }, [running, startRun]);
   // mode "missing_key":配好后「继续」
   const onConfigContinue = useCallback(async (handleId, item, label) => {
+    if (running) {
+      window.__apiToast?.(t('game.app.msg.busy_tip'), { kind: 'warn', duration: 2400 });
+      return;
+    }
     await _clearConfig(handleId);
     if (!running) startRun(label || t('tavern_page.config_continue_prompt'));
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -552,6 +579,10 @@ export default function TavernPage() {
   // mode "model_not_configured"(hard):开阻塞弹窗
   const onHardConfig = useCallback((item) => setHardConfigItem(item), []);
   const onHardResolve = useCallback(async (chosenModel) => {
+    if (running) {
+      window.__apiToast?.(t('game.app.msg.busy_tip'), { kind: 'warn', duration: 2400 });
+      return;
+    }
     const item = hardConfigItem; if (!item) return;
     setHardConfigItem(null);
     await _clearConfig({ id: item.id != null ? item.id : null, index: null });
@@ -1029,6 +1060,7 @@ export default function TavernPage() {
                   onConfigContinue={onConfigContinue}
                   onHardConfig={onHardConfig}
                   onConfigSettings={onConfigSettings}
+                  running={running}
                 />
               )}
               {/* Item 3:发消息时缺 LLM key → Composer 上方内联引导卡片(复用 AgentModelPicker bare,LLM 不过滤),
@@ -1064,7 +1096,7 @@ export default function TavernPage() {
                   靠 gameState 显示真实模型名 + context 圆环 + @mention。不再 hide 任何控件。 */}
               <Composer
                 text={text} setText={setText} onSend={onSend} onStop={stopRun} running={running}
-                onSendRaw={onSendRaw} permission={permission} setPermission={setPermission}
+                onSendRaw={onSendRaw} permission={permission} setPermission={changePermission}
                 model={model} setModel={setModel} composerMode="writing"
                 suggestions={gameState?.suggestions} gameState={gameState}
                 attachments={attachments} removeAttachment={removeAttachment}
@@ -1089,7 +1121,7 @@ export default function TavernPage() {
       <input ref={fileInputRef} type="file" style={{ display: 'none' }} onChange={onFilePicked} />
       <TavernImportModal open={importOpen} onClose={() => setImportOpen(false)} onConfirm={onImportConfirm} />
       {/* config_card hard 拦截弹窗(mode model_not_configured) */}
-      <ModelConfigInterceptModal open={!!hardConfigItem} item={hardConfigItem} onResolve={onHardResolve} onCancel={onHardCancel} />
+      <ModelConfigInterceptModal open={!!hardConfigItem} item={hardConfigItem} onResolve={onHardResolve} onCancel={onHardCancel} disabled={running} />
 
       <TwoCardDrawer
         inline

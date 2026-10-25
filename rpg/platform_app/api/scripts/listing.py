@@ -257,7 +257,8 @@ async def api_script_timeline(script_id: int, user=Depends(require_user)):
         rows = db.execute(
             """
             select id, story_phase, story_time_label, chapter_min, chapter_max,
-                   chapter_count, sample_summary, confidence, keywords, sample_title
+                   chapter_count, sample_summary, confidence, keywords, sample_title,
+                   updated_at
             from script_timeline_anchors
             where script_id = %s
             order by chapter_min asc, id asc
@@ -281,6 +282,8 @@ async def api_script_timeline(script_id: int, user=Depends(require_user)):
             # 会静默覆盖 DB 真实值(审计 P0 数据丢失)。keywords 是 text[] → 原样返回数组。
             "keywords": r["keywords"] or [],
             "sample_title": r["sample_title"] or "",
+            # 乐观锁基线:锚点 PUT 的 base_updated_at 与之比对。
+            "updated_at": r["updated_at"],
         })
     phases = []
     for p, items in buckets.items():

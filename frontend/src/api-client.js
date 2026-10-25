@@ -533,6 +533,9 @@
       // canon 实体(MD 编辑器):list/get 读 + upsert(有 logical_key → PUT,否则 POST)/delete
       canonList: (sid) => GET(`${API_PREFIX}/scripts/${sid}/canon-entities`),
       canonGet: (sid, key) => GET(`${API_PREFIX}/scripts/${sid}/canon-entities/${encodeURIComponent(key)}`),
+      // 显式 POST 新建:后端 POST 要求 logical_key,而 canonUpsert 见到 logical_key 会走 PUT
+      // (PUT 只更新已存在实体)。编辑器「新建 / 复制 canon」必须用这个端点带新 key 创建。
+      canonCreate: (sid, body) => POST(`${API_PREFIX}/scripts/${sid}/canon-entities`, body),
       canonUpsert: (sid, body) => (body && body.logical_key
         ? PUT(`${API_PREFIX}/scripts/${sid}/canon-entities/${encodeURIComponent(body.logical_key)}`, body)
         : POST(`${API_PREFIX}/scripts/${sid}/canon-entities`, body)),

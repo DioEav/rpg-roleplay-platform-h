@@ -4,9 +4,10 @@
    在这些变量缺失时各自带回退值,不依赖 md-editor.css 已加载)。
 
    复用既有 phase_rebuild_panel 组件族(零改动其逻辑):
-     - useScriptRebuild(scriptId)  来自 pages/script-modules-panel.jsx
-     - RebuildJobBanner / ModuleMatrixOverview / RebuildEstimateModal
-       来自 components/*.jsx(均已 export,未改动其源码)
+     - useScriptRebuild(scriptId) + EXTRA_MODULE_CARDS 来自 pages/script-modules-panel.jsx
+     - ModuleMatrixOverview / ModuleStatusCard / RebuildEstimateModal 来自 components/*.jsx
+     (注:进度横条 RebuildJobBanner 已按设计移除;useScriptRebuild 也不再返回 bannerProps,
+      全局任务浮窗负责展示后台任务进度 —— 这里不应再渲染一个永远为 null 的死组件。)
 
    新增能力(既有面板没有的):
      ① 「AI 复核角色卡」按钮 —— POST /api/scripts/{id}/audit-cards(api-client: scripts.auditCards),
@@ -14,6 +15,8 @@
         (project_task_floater)已经跟踪 import_jobs;这里只需 loading + toast 反馈「已派发」。
      ② 向量索引状态行 —— GET /api/scripts/{id}/embed/status(api-client 未封装,按任务要求直接 fetch),
         展示 chunks/cards/worldbook/canon 四路 done/total + 手动刷新。
+     ③ 额外 4 个知识库模块(facts_refine / worldbook_enrich / world_key / story_phase)与
+        主矩阵的 7 个模块一起展示;顶栏徽标统计的模块集合因此与抽屉内容一致。
 
    用法:
      <EditorKbPanel scriptId={scriptId} open={kbOpen} onClose={() => setKbOpen(false)} />
@@ -25,9 +28,9 @@ import { useTranslation } from 'react-i18next';
 import './EditorKbPanel.css';
 
 import { isCredentialsError } from '../lib/creds.js';
-import { useScriptRebuild } from '../pages/script-modules-panel.jsx';
-import { RebuildJobBanner } from './RebuildJobBanner.jsx';
+import { useScriptRebuild, EXTRA_MODULE_CARDS } from '../pages/script-modules-panel.jsx';
 import { ModuleMatrixOverview } from './ModuleMatrixOverview.jsx';
+import { ModuleStatusCard } from './ModuleStatusCard.jsx';
 import { RebuildEstimateModal } from './RebuildEstimateModal.jsx';
 
 const api = () => (typeof window !== 'undefined' ? window.api : null);
@@ -50,7 +53,9 @@ export function useKbHealthBadge(scriptId) {
       for (const m of arr) {
         if (!m || typeof m !== 'object') continue;
         const st = m.status || 'unknown';
-        if (st !== 'ready') staleCount += 1;
+        // n/a = 该剧本不适用此模块(如未启用嵌入),不是「需要重建」;旧逻辑把它算成 stale,
+        // 新剧本徽标会一直亮一个用户无法处理的数量。
+        if (st !== 'ready' && st !== 'n/a') staleCount += 1;
       }
       setBadge({ stale_count: staleCount, ready: staleCount === 0 });
     } catch (_) {
@@ -59,6 +64,14 @@ export function useKbHealthBadge(scriptId) {
   }, [scriptId]);
 
   React.useEffect(() => { reload(); }, [reload]);
+  // 知识库重建完成 / 任意剧本数据更新后刷新徽标。useScriptRebuild 在任务终态会
+  // dispatch 'rpg-scripts-updated';此前徽标只在 scriptId 变化时加载,重建完仍是旧数字。
+  React.useEffect(() => {
+    if (typeof window === 'undefined') return undefined;
+    const onUpdated = () => { reload(); };
+    window.addEventListener('rpg-scripts-updated', onUpdated);
+    return () => window.removeEventListener('rpg-scripts-updated', onUpdated);
+  }, [reload]);
 
   return badge;
 }
@@ -156,7 +169,7 @@ function AuditCardsButton({ scriptId }) {
       if (r && r.ok !== false) {
         toast(t('md_editor.kb.audit_cards.dispatched', { defaultValue: 'AI 复核已派发,进度见右下角任务浮窗' }), { kind: 'ok', duration: 2600 });
       } else if (isCredentialsError(r)) {
-        toast(t('md_editor.kb.audit_cards.needs_credentials', { defaultValue: '缺少模型凭据,请先在设置里配置' }), { kind: 'warning', duration: 3000 });
+        toast(t('md_editor.kb.audit_cards.needs_credentials', { defaultValue: '缺少模型凭据,请先在设置里配置' }), { kind: 'warn', duration: 3000 });
       } else {
         toast((r && r.error) || t('md_editor.kb.audit_cards.fail', { defaultValue: '派发失败' }), { kind: 'danger' });
       }
@@ -199,8 +212,20 @@ export function EditorKbPanel({ scriptId, open, onClose }) {
           <button type="button" className="mde-kb-x" title={t('common.close', { defaultValue: '关闭' })} onClick={onClose}>×</button>
         </div>
         <div className="mde-kb-body">
-          <RebuildJobBanner {...rb.bannerProps} />
           <ModuleMatrixOverview {...rb.matrixProps} />
+          {/* 额外 4 个模块(摘要精炼/世界书充实/世界观切分/阶段划分)。此前只有 ScriptDetail
+              的 ModuleRebuildPanel 渲染它们,编辑器抽屉只显示 7 个主模块,但顶栏 tooltip 和徽标
+              却包含这些模块 —— 用户看得到「过期」数字却找不到重建入口。 */}
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: 10, marginTop: 10 }}>
+            {EXTRA_MODULE_CARDS.map((m) => (
+              <ModuleStatusCard
+                key={m.id}
+                {...rb.cardProps(m.id)}
+                title={t(m.titleKey, { defaultValue: m.titleDefault })}
+                description={t(m.descKey, { defaultValue: m.descDefault })}
+              />
+            ))}
+          </div>
 
           <div className="mde-kb-section">
             <AuditCardsButton scriptId={scriptId} />

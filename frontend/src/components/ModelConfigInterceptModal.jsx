@@ -174,7 +174,7 @@ export function InlineProviderConfig({ capability = 'llm', defaultApiId = '', on
      item        : config_card 条目(含 capability / model / api_id)
      onResolve   : (chosenModel:string) => void   选好模型/配好 key 后点「继续生成」
      onCancel    : () => void                       取消(父组件负责 clearQuestions + toast) */
-export default function ModelConfigInterceptModal({ open, item, onResolve, onCancel }) {
+export default function ModelConfigInterceptModal({ open, item, onResolve, onCancel, disabled = false }) {
   const { useState, useEffect } = React;
   const { t } = useTranslation();
   const capability = (item && item.capability) || 'llm';
@@ -235,7 +235,7 @@ export default function ModelConfigInterceptModal({ open, item, onResolve, onCan
             <CSButton variant="link" onClick={() => onCancel && onCancel()}>{t('common.cancel')}</CSButton>
             <CSButton
               variant="primary"
-              disabled={!canContinue}
+              disabled={!canContinue || disabled}
               onClick={() => onResolve && onResolve(chosen.model || requestedModel)}
             >
               {t('components.model_config_intercept.continue_btn')}
@@ -245,6 +245,12 @@ export default function ModelConfigInterceptModal({ open, item, onResolve, onCan
       }
     >
       <CSSpaceBetween size="m">
+        {/* 回合生成中确认会 startRun 中止当前流,禁用确认并提示等本轮结束。 */}
+        {disabled && (
+          <CSAlert type="warning">
+            {t('game.app.msg.busy_tip')}
+          </CSAlert>
+        )}
         <CSAlert type="info">
           {t('components.model_config_intercept.alert', { cap: t(`components.model_config_intercept.cap.${capability}`), model: requestedModel || '?' })}
         </CSAlert>

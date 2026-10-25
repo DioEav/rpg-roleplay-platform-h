@@ -1319,17 +1319,33 @@ def _payload(api_user: dict[str, Any] | None = None, *, include_catalog: bool = 
             if sid:
                 with connect() as db:
                     row = db.execute(
-                        "select id, title, updated_at from game_saves where id = %s and user_id = %s",
+                        # save_kind 来自 migration 65;用 to_jsonb 取值,让未跑该迁移的旧库
+                        # 也能正常返回(缺列 → NULL → 前端按 'game' 兜底),而不是整段查询报错、
+                        # 被下面的 except 吞掉后连 save_id/save_title 都消失。
+                        "select gs.id, gs.title, gs.updated_at, gs.script_id, "
+                        "       to_jsonb(gs)->>'save_kind' as save_kind, s.head_commit_id "
+                        "from game_saves gs left join scripts s on s.id = gs.script_id "
+                        "where gs.id = %s and gs.user_id = %s",
                         (sid, int(api_user["id"])),
                     ).fetchone()
                 if row:
                     payload["save_id"] = int(row["id"])
                     payload["save_title"] = str(row["title"] or "")
+                    # 存档类型:游戏台/移动端据此区分 tavern 档,避免把酒馆档当游戏档渲染。
+                    # 空值按普通 game 处理,与历史行为一致。
+                    payload["save_kind"] = str(row.get("save_kind") or "game")
                     if row.get("updated_at"):
                         payload["save_updated_at"] = row["updated_at"].isoformat() if hasattr(row["updated_at"], "isoformat") else str(row["updated_at"])
+                    # Game Console 顶栏版本历史读的是 app.script_id / app.head_commit_id,
+                    # 但 payload 一直没写这两个字段 → 前端条件恒假,ScriptVersionSelect 从未渲染。
+                    # 随存档元数据同一次查询带出,避免额外往返。
+                    payload["app"]["script_id"] = int(row["script_id"]) if row.get("script_id") else None
+                    payload["app"]["head_commit_id"] = int(row["head_commit_id"]) if row.get("head_commit_id") else None
     except Exception:
-        # 任何 DB 异常都不能让 /api/state 整个 500，缺字段前端有兜底
-        pass
+        # 任何 DB 异常都不能让 /api/state 整个 500，缺字段前端有兜底。
+        # 但必须留日志:这里一旦静默失败,前端会丢 save_id/save_title(集成测试
+        # test_state_save_id 就是靠该契约),没有日志很难定位是哪个列/迁移缺失。
+        log.warning("[payload] save context lookup failed", exc_info=True)
     return payload
 
 

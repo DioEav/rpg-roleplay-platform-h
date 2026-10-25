@@ -87,6 +87,8 @@ export function baseExtensions(onChange, readOnly, getScriptId, getOnAccept, get
     ghostCompleteExtension({
       isEnabled: () => { try { return !!(getGhostEnabled && getGhostEnabled()); } catch (_) { return false; } },
       fetchCompletion: (before) => { try { const f = getGhostFetch && getGhostFetch(); return f ? f(before) : ''; } catch (_) { return ''; } },
+      // 采纳 ghost 后触发与「续写到正文」相同的知识同步提示(短文不足 12 字时父级会自行忽略)。
+      onAccept: (text) => { try { getOnAccept?.()?.(text, { rewrite: false }); } catch (_) {} },
     }),
     cmdKKeymap(getScriptId, getOnAccept, getChapterIndex),
     lineNumbers(),

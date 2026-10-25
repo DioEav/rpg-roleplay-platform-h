@@ -1,5 +1,6 @@
-/* Game Console 使用须知弹窗(GCWelcomeModal)——
-   纯机械从 entries/game-console.jsx 搬出,DOM/视觉/行为零变化。 */
+/* Game Console 使用须知弹窗(GCWelcomeModal)。
+   注意:游戏台当前已移除入口(顶栏按产品要求只保留反馈),本组件仅保留文件,
+   不再被 game-console.jsx 挂载;恢复入口时重新接入即可。 */
 import React from 'react';
 import { useTranslation } from 'react-i18next';
 

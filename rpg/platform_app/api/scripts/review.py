@@ -111,6 +111,8 @@ async def api_patch_canon(request: Request, script_id: int, user=Depends(require
                 args.append(Jsonb(body["aliases"]))
             if not sets:
                 return json_response({"ok": False, "error": "无可更新字段"}, status_code=400)
+            # 推进 updated_at:canon 编辑器以它为乐观锁基线,AI/复核写入必须让基线变化。
+            sets.append("updated_at=now()")
             args.extend([script_id, lk])
             n = db.execute(
                 f"update kb_canon_entities set {', '.join(sets)} where script_id=%s and logical_key=%s",
@@ -132,7 +134,8 @@ async def api_patch_canon(request: Request, script_id: int, user=Depends(require
             merged_aliases = list({*(src.get("aliases") or []), src["name"]})
             updated = db.execute(
                 "update kb_canon_entities set aliases = (select to_jsonb(array(select distinct e from unnest("
-                "  array(select jsonb_array_elements_text(coalesce(aliases,'[]'::jsonb))) || %s::text[]) e))) "
+                "  array(select jsonb_array_elements_text(coalesce(aliases,'[]'::jsonb))) || %s::text[]) e))), "
+                "updated_at=now() "
                 "where script_id=%s and logical_key=%s",
                 (merged_aliases, script_id, into),
             ).rowcount

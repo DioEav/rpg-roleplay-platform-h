@@ -21,7 +21,7 @@ import { copyText } from '../../lib/clipboard.js';
 // 执行 api.tavern.fork —— 与 onRegenerate 的"只派发事件避免 prop 透传"同一先例。
 // hideFork:彻底不渲染分支按钮(游戏台误载酒馆档时的堵漏,那时 continueFrom 是
 // 半生效的指针倒回,会把原对话尾巴变成酒馆里不可达的孤儿分支)。
-function MsgActions({ text, ts, msgIndex, totalMsgs, commitId, saveId, role, meta, memoryText, forkKind, hideFork, forkRestoreText }) {
+function MsgActions({ text, ts, msgIndex, commitId, saveId, role, meta, memoryText, forkKind, hideFork, forkRestoreText, busy }) {
   // task 38：以前 msgIndex / saveId / commitId 全是 undefined，doFork 就发
   // {label} 给后端 → 后端 int(None) 直接 500。现在 NarrativeBlock / PlayerBlock
   // 把 idx + saveId 透传进来，doFork 至少发 {save_id, message_index, label}，
@@ -62,6 +62,7 @@ function MsgActions({ text, ts, msgIndex, totalMsgs, commitId, saveId, role, met
     ? (saveId != null && msgIndex != null && msgIndex >= 0)
     : ((commitId != null && commitId !== "") || (saveId != null && msgIndex != null));
   const onFork = () => {
+    if (busy) return;
     if (!canFork) {
       window.toast?.(t('game.app.msg.fork_failed'), {
         kind: "warn",
@@ -85,6 +86,7 @@ function MsgActions({ text, ts, msgIndex, totalMsgs, commitId, saveId, role, met
   // → 截断历史 → 用同样的玩家输入重走完整 GM 流程。这里只派发事件(避免 prop 一路透传)。
   const canRegen = saveId != null && msgIndex != null && msgIndex >= 0;
   const onRegenerate = () => {
+    if (busy) return;
     if (!canRegen) {
       window.toast?.(t('game.app.msg.regen_failed'), { kind: "warn", detail: t('game.app.msg.fork_no_ctx'), duration: 2400 });
       return;
@@ -92,6 +94,12 @@ function MsgActions({ text, ts, msgIndex, totalMsgs, commitId, saveId, role, met
     window.dispatchEvent(new CustomEvent("rpg-regenerate", { detail: { save_id: saveId, message_index: msgIndex } }));
   };
   const doFork = async () => {
+    // 双保险:运行中按钮已 disabled,但弹窗可能在开跑前打开、开跑后确认。
+    if (busy) {
+      setForkOpen(false);
+      window.toast?.(t('game.app.msg.busy_tip'), { kind: "warn", duration: 2400 });
+      return;
+    }
     setForkOpen(false);
     // 优先 node_id (commitId)；否则发 save_id + message_index 让后端 resolve。
     // 只有 message_index 路径会把目标解析到「该轮之前」的父 commit,回填玩家输入才是安全的;
@@ -154,6 +162,11 @@ function MsgActions({ text, ts, msgIndex, totalMsgs, commitId, saveId, role, met
   // task 116c: 删除条件 — 必须有 saveId + msgIndex >= 0
   const canDelete = saveId != null && msgIndex != null && msgIndex >= 0;
   const doDelete = async () => {
+    if (busy) {
+      setDelOpen(false);
+      window.toast?.(t('game.app.msg.busy_tip'), { kind: "warn", duration: 2400 });
+      return;
+    }
     if (!canDelete || delBusy) return;
     setDelBusy(true);
     try {
@@ -185,7 +198,7 @@ function MsgActions({ text, ts, msgIndex, totalMsgs, commitId, saveId, role, met
   const canEdit = (role === "assistant" || role === "user")
     && saveId != null && msgIndex != null && msgIndex >= 0;
   const onEdit = () => {
-    if (!canEdit) return;
+    if (busy || !canEdit) return;
     window.dispatchEvent(new CustomEvent("rpg-edit-message", { detail: { saveId, msgIndex } }));
   };
   return (
@@ -209,36 +222,37 @@ function MsgActions({ text, ts, msgIndex, totalMsgs, commitId, saveId, role, met
         {hideFork ? null : (
         <button
           className="iconbtn gc-msg-act"
-          data-tip={canFork ? (isTavernFork ? t('tavern_app.fork.tip') : t('game.app.msg.fork_tip')) : t('game.app.msg.fork_no_ctx_tip')}
+          data-tip={busy ? t('game.app.msg.busy_tip') : canFork ? (isTavernFork ? t('tavern_app.fork.tip') : t('game.app.msg.fork_tip')) : t('game.app.msg.fork_no_ctx_tip')}
           data-tip-pos="below"
-          disabled={!canFork}
-          aria-label={canFork ? (isTavernFork ? t('tavern_app.fork.tip') : t('game.app.msg.fork_tip')) : t('game.app.msg.fork_no_ctx_tip')} onClick={onFork}>
+          disabled={!canFork || busy}
+          aria-label={busy ? t('game.app.msg.busy_tip') : canFork ? (isTavernFork ? t('tavern_app.fork.tip') : t('game.app.msg.fork_tip')) : t('game.app.msg.fork_no_ctx_tip')} onClick={onFork}>
           <Icon name="fork" size={12} />
         </button>
         )}
         <button
           className="iconbtn gc-msg-act"
-          data-tip={canRegen ? t('game.app.msg.regen_tip') : t('game.app.msg.regen_no_ctx_tip')}
+          data-tip={busy ? t('game.app.msg.busy_tip') : canRegen ? t('game.app.msg.regen_tip') : t('game.app.msg.regen_no_ctx_tip')}
           data-tip-pos="below"
-          disabled={!canRegen}
-          aria-label={canRegen ? t('game.app.msg.regen_tip') : t('game.app.msg.regen_no_ctx_tip')} onClick={onRegenerate}>
+          disabled={!canRegen || busy}
+          aria-label={busy ? t('game.app.msg.busy_tip') : canRegen ? t('game.app.msg.regen_tip') : t('game.app.msg.regen_no_ctx_tip')} onClick={onRegenerate}>
           <Icon name="refresh" size={12} />
         </button>
         {canEdit && (
           <button
             className="iconbtn gc-msg-act"
-            data-tip={t('game.app.msg.edit_tip')}
+            data-tip={busy ? t('game.app.msg.busy_tip') : t('game.app.msg.edit_tip')}
             data-tip-pos="below"
+            disabled={busy}
             onClick={onEdit}>
             <Icon name="edit" size={12} />
           </button>
         )}
         <button
           className="iconbtn gc-msg-act gc-msg-act-danger"
-          data-tip={canDelete ? t('game.app.msg.delete_tip') : t('game.app.msg.delete_no_ctx_tip')}
+          data-tip={busy ? t('game.app.msg.busy_tip') : canDelete ? t('game.app.msg.delete_tip') : t('game.app.msg.delete_no_ctx_tip')}
           data-tip-pos="below"
-          disabled={!canDelete}
-          aria-label={canDelete ? t('game.app.msg.delete_tip') : t('game.app.msg.delete_no_ctx_tip')} onClick={() => setDelOpen(true)}>
+          disabled={!canDelete || busy}
+          aria-label={busy ? t('game.app.msg.busy_tip') : canDelete ? t('game.app.msg.delete_tip') : t('game.app.msg.delete_no_ctx_tip')} onClick={() => { if (!busy) setDelOpen(true); }}>
           <Icon name="trash" size={12} />
         </button>
         <span className="gc-msg-ts mono">{ts}</span>
@@ -444,8 +458,9 @@ function useInlineMessageEdit({ saveId, msgIndex, sourceText }) {
   return { editing, draft, setDraft, saving, save, cancel, ref };
 }
 
-/* 内联编辑器视图(textarea + 取消/确认)。minHeight 由调用方给:GM 正文长、玩家发言短。 */
-function InlineMessageEditor({ edit, minHeight = 180 }) {
+/* 内联编辑器视图(textarea + 取消/确认)。minHeight 由调用方给:GM 正文长、玩家发言短。
+   disabled:回合生成中禁止保存(编辑框可能在开跑前已打开,不能只靠入口按钮 disabled)。 */
+function InlineMessageEditor({ edit, minHeight = 180, disabled = false }) {
   const { t } = useTranslation();
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
@@ -453,8 +468,9 @@ function InlineMessageEditor({ edit, minHeight = 180 }) {
         ref={edit.ref}
         value={edit.draft}
         onChange={e => edit.setDraft(e.target.value)}
-        disabled={edit.saving}
+        disabled={edit.saving || disabled}
         onKeyDown={e => {
+          if (disabled) return;
           if (e.key === "s" && (e.metaKey || e.ctrlKey)) { e.preventDefault(); edit.save(); }
           if (e.key === "Escape") { edit.cancel(); }
         }}
@@ -467,11 +483,14 @@ function InlineMessageEditor({ edit, minHeight = 180 }) {
           letterSpacing: "0.02em",
         }}
       />
+      {disabled && (
+        <div className="muted-2" style={{ fontSize: 11.5 }}>{t('game.app.msg.busy_tip')}</div>
+      )}
       <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
         <button className="btn ghost" disabled={edit.saving} onClick={edit.cancel}>
           {t('common.cancel')}
         </button>
-        <button className="btn primary" disabled={edit.saving || !edit.draft.trim()} onClick={edit.save}>
+        <button className="btn primary" disabled={edit.saving || disabled || !edit.draft.trim()} onClick={edit.save}>
           {edit.saving
             ? <><span className="gc-spinner spin" /> {t('game.app.edit_modal.saving')}</>
             : <><Icon name="check" size={12} /> {t('game.app.edit_modal.confirm')}</>}
@@ -483,7 +502,7 @@ function InlineMessageEditor({ edit, minHeight = 180 }) {
 
 // 酒馆模式复用:speakerName/speakerAvatar/tag 可选覆盖默认的 GM/主代理 标签。
 // 不传时与 Game Console 行为完全一致(默认 tag="GM", subtitle="主代理")。
-function NarrativeBlock({ text, streaming, ts, msgIndex, saveId, commitId, thinking, speakerName, speakerAvatar, tag, hideMeta, meta, images, toolOps, renderTool, memoryText, forkKind, hideFork, forkRestoreText }) {
+function NarrativeBlock({ text, streaming, ts, msgIndex, saveId, commitId, thinking, speakerName, speakerAvatar, tag, hideMeta, meta, images, toolOps, renderTool, memoryText, forkKind, hideFork, forkRestoreText, busy }) {
   const { t } = useTranslation();
   const displayText = stripStateOpsForDisplay(text);
   // 内联编辑状态:点击 MsgActions 的编辑按钮时通过事件激活(与 PlayerBlock 共用同一 hook)
@@ -531,7 +550,7 @@ function NarrativeBlock({ text, streaming, ts, msgIndex, saveId, commitId, think
       )}
       <div className="gc-msg-body serif">
         {edit.editing ? (
-          <InlineMessageEditor edit={edit} minHeight={180} />
+          <InlineMessageEditor edit={edit} minHeight={180} disabled={busy} />
         ) : (
           <>
             {(Array.isArray(toolOps) && toolOps.length > 0 && typeof renderTool === 'function')
@@ -547,13 +566,13 @@ function NarrativeBlock({ text, streaming, ts, msgIndex, saveId, commitId, think
           </>
         )}
       </div>
-      {!streaming && <MsgActions text={displayText} ts={ts || "—"} msgIndex={msgIndex} saveId={saveId} commitId={commitId} role="assistant" meta={meta} memoryText={memoryText} forkKind={forkKind} hideFork={hideFork} forkRestoreText={forkRestoreText} />}
+      {!streaming && <MsgActions text={displayText} ts={ts || "—"} msgIndex={msgIndex} saveId={saveId} commitId={commitId} role="assistant" meta={meta} memoryText={memoryText} forkKind={forkKind} hideFork={hideFork} forkRestoreText={forkRestoreText} busy={busy} />}
     </div>);
 
 }
 
 // 酒馆模式复用:speakerName/tag 可选覆盖默认「玩家」标签(persona 名等)。
-function PlayerBlock({ text, ts, attachments, msgIndex, saveId, commitId, speakerName, speakerAvatar, tag, hideMeta, memoryText, forkKind, hideFork }) {
+function PlayerBlock({ text, ts, attachments, msgIndex, saveId, commitId, speakerName, speakerAvatar, tag, hideMeta, memoryText, forkKind, hideFork, busy }) {
   const { t } = useTranslation();
   // 玩家发言同样可内联编辑(群反馈:白玖 ——「只是想加一句话,要复制删除粘贴太麻烦」)。
   // 与 GM 正文共用 useInlineMessageEdit;后端 /api/message/edit 本就不限角色。
@@ -577,7 +596,7 @@ function PlayerBlock({ text, ts, attachments, msgIndex, saveId, commitId, speake
       <div className="gc-msg-body">
         {edit.editing ? (
           /* 玩家发言通常只有一两行,编辑框给个更贴身的高度(GM 正文用 180) */
-          <InlineMessageEditor edit={edit} minHeight={96} />
+          <InlineMessageEditor edit={edit} minHeight={96} disabled={busy} />
         ) : (
           <>
             <p>{text}</p>
@@ -594,7 +613,7 @@ function PlayerBlock({ text, ts, attachments, msgIndex, saveId, commitId, speake
           </>
         )}
       </div>
-      <MsgActions text={text} ts={ts} msgIndex={msgIndex} saveId={saveId} commitId={commitId} role="user" memoryText={memoryText} forkKind={forkKind} hideFork={hideFork} />
+      <MsgActions text={text} ts={ts} msgIndex={msgIndex} saveId={saveId} commitId={commitId} role="user" memoryText={memoryText} forkKind={forkKind} hideFork={hideFork} busy={busy} />
     </div>);
 
 }

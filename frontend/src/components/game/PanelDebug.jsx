@@ -30,7 +30,10 @@ function PanelDebug({ state }) {
         <div className="gp-kv">
           {(() => {
             const ctx = memory.last_context || {};
-            const tokens = `in ${ctx.estimated_tokens || 0}${ctx.tokens_out ? ` · out ${ctx.tokens_out}` : ""}`;
+            // last_context 只写 estimated_tokens,不写 tokens_out / retrieval_chunks(旧版这里恒 0)。
+            // 输入 token 用真实估算值,「chunks」改用真实的上下文层数。
+            const tokens = `in ${ctx.estimated_tokens || 0}`;
+            const layerCount = Array.isArray(ctx.layers) ? ctx.layers.length : 0;
             // Q 三贤者分层缓存:tier_tokens / cache_plan 来自 build_context_bundle 的 debug
             // (set_last_context 落 memory.last_context;结构因写入路径或带 .debug 子键,两处都试)。
             const dbg = ctx.debug || ctx;
@@ -39,7 +42,7 @@ function PanelDebug({ state }) {
             const ratio = cp.estimated_cacheable_ratio;
             return (
               <>
-                <div className="gp-row"><span className="gp-label">{t('game.debug.retrieval_chunks')}</span><span className="mono">{ctx.retrieval_chunks || 0}</span></div>
+                <div className="gp-row"><span className="gp-label">{t('game.debug.context_layers')}</span><span className="mono">{layerCount}</span></div>
                 <div className="gp-row"><span className="gp-label">tokens</span><span className="mono">{tokens}</span></div>
                 {tt && (
                   <div className="gp-row">

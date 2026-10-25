@@ -29,7 +29,9 @@ async def api_script_worldbook(script_id: int, limit: int | None = None, cursor:
 _CANON_LIST_COLS = (
     "id, logical_key, name, full_name, type, entity_subtype, parent_logical_key, "
     "summary, identity, background, aliases, attrs, "
-    "first_revealed_chapter, public_knowledge, importance, created_at"
+    "first_revealed_chapter, public_knowledge, importance, created_at, "
+    # 乐观锁基线:编辑器加载实体时拿到,保存时随 base_updated_at 回传比对。
+    "updated_at"
 )
 
 

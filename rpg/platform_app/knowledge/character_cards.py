@@ -16,9 +16,22 @@ from platform_app.knowledge._character_cards_repo import (
     _db_set_protagonist,
 )
 from platform_app.knowledge._utils import _cursor_int, _require_script, _require_script_owner
+
 # tags 归一化与 PC 卡路径(user_cards.upsert_user_card)共用同一实现,避免两条卡写入路径
 # 对「标签」的解析规则漂移(str 逗号/顿号分隔 → list)。
 from platform_app.user_cards import _normalize_list
+
+
+class CharacterCardConflict(Exception):
+    """角色卡乐观锁冲突:调用方带 base_row_version,但服务端 row_version 已变。
+
+    与章节 ChapterConflict 同款语义:不落库,携带服务端当前 DTO,
+    端点转 409 让编辑器做三方合并(避免未保存改动静默覆盖 AI/另一标签的写入)。
+    """
+
+    def __init__(self, server_card: dict[str, Any]):
+        super().__init__("character_card updated by someone else")
+        self.server_card = server_card
 
 
 def list_chapter_facts(user_id: int, script_id: int, limit: int | str | None = None, cursor: str | None = None) -> dict[str, Any]:
@@ -57,6 +70,8 @@ def get_character_card(user_id: int, script_id: int, card_id: int) -> dict[str, 
 def upsert_character_card(user_id: int, script_id: int, payload: dict[str, Any]) -> dict[str, Any]:
     """创建/更新剧本 NPC 角色卡。card_id 给定就 update，否则 insert。
 
+    更新路径支持可选乐观锁 base_row_version:传了就在 UPDATE WHERE 里比对 row_version,
+    不一致抛 CharacterCardConflict(不落库),端点转 409 + 服务端 DTO。不传保持覆盖语义。
     v28: 加 full_name / background / first_revealed_chapter / importance / aliases 等字段。
     强制 card_type='npc',source='platform'(人工 API 路径,区分于 extract 链路 source='extracted')。
     """
@@ -115,8 +130,16 @@ def upsert_character_card(user_id: int, script_id: int, payload: dict[str, Any])
             if clash:
                 raise ValueError(f"该剧本已存在同名 NPC 角色卡「{name}」,请改用不同的名字"
                                  "(或先删除/合并重名卡)")
-            db.execute(
-                """
+            # 乐观锁基线:编辑器打开标签时拿到 row_version,保存时随 base_row_version 回传。
+            # 不传 = 老客户端 / 导入合并等全量写路径,保持原来的覆盖语义不变。
+            base_row_version = payload.get("base_row_version")
+            if base_row_version is not None:
+                try:
+                    base_row_version = int(base_row_version)
+                except (TypeError, ValueError) as exc:
+                    raise ValueError("base_row_version 必须是整数") from exc
+            update_params = {**fields, "id": int(card_id), "script_id": script_id}
+            update_sql = """
                 update character_cards set
                   name=%(name)s, full_name=%(full_name)s, aliases=%(aliases)s,
                   identity=%(identity)s, background=%(background)s,
@@ -129,9 +152,22 @@ def upsert_character_card(user_id: int, script_id: int, payload: dict[str, Any])
                   priority=%(priority)s, enabled=%(enabled)s, metadata=%(metadata)s,
                   row_version=row_version+1, updated_at=now()
                 where id=%(id)s and script_id=%(script_id)s and card_type='npc'
-                """,
-                {**fields, "id": int(card_id), "script_id": script_id},
-            )
+            """
+            if base_row_version is not None:
+                # 版本条件与写入同语句,避免「先查后写」窗口里的并发覆盖。
+                update_sql += " and row_version = %(base_row_version)s"
+                update_params["base_row_version"] = base_row_version
+            cur = db.execute(update_sql, update_params)
+            if base_row_version is not None and cur.rowcount == 0:
+                # 0 行 = 版本已变(或卡被并发删除)。重查当前卡:还在 → 409 交前端合并;
+                # 已不存在 → ValueError(端点 400),与进入本函数时的存在性检查一致。
+                current = db.execute(
+                    "select * from character_cards where id = %s and script_id = %s",
+                    (int(card_id), script_id),
+                ).fetchone()
+                if not current:
+                    raise ValueError("character_card 已被删除")
+                raise CharacterCardConflict(card_to_dto(current) or {})
             row = db.execute("select * from character_cards where id = %s", (int(card_id),)).fetchone()
         else:
             row = db.execute(

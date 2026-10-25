@@ -1,7 +1,7 @@
 // ProblemsPanel.jsx — 审稿问题面板(VSCode Problems 风)(机械搬出,逐字节不变)。
 import React from 'react';
 import { useTranslation } from 'react-i18next';
-import { api } from './helpers.js';
+import { api, toast } from './helpers.js';
 const { useState, useEffect, useCallback } = React;
 
 // 审稿问题面板(VSCode Problems 风):编辑器 agent 调 report_writing_issues 持久化的问题清单,
@@ -15,12 +15,23 @@ function ProblemsPanel({ scriptId, reloadKey, onJump, onClose, onCountChange }) 
   }, [scriptId]);  // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { setIssues(null); load(); }, [scriptId, reloadKey, load]);
   const dismiss = async (iid) => {
-    try { await api().scripts.dismissIssue(scriptId, iid); } catch (_) {}
-    setIssues((cur) => { const next = (cur || []).filter((x) => x.id !== iid); onCountChange && onCountChange(next.length); return next; });
+    // 先等后端真正删除成功再更新列表:旧实现乐观移除,失败时界面也消失,下次打开又冒出来。
+    try {
+      const r = await api().scripts.dismissIssue(scriptId, iid);
+      if (!r || r.ok === false) throw new Error((r && r.error) || t('md_editor.problems.dismiss_fail', { defaultValue: '消除失败' }));
+      setIssues((cur) => { const next = (cur || []).filter((x) => x.id !== iid); onCountChange && onCountChange(next.length); return next; });
+    } catch (e) {
+      toast(t('md_editor.problems.dismiss_fail', { defaultValue: '消除失败' }), { kind: 'danger', detail: e?.message });
+    }
   };
   const clearAll = async () => {
-    try { await api().scripts.clearIssues(scriptId); } catch (_) {}
-    setIssues([]); onCountChange && onCountChange(0);
+    try {
+      const r = await api().scripts.clearIssues(scriptId);
+      if (!r || r.ok === false) throw new Error((r && r.error) || t('md_editor.problems.clear_fail', { defaultValue: '清空失败' }));
+      setIssues([]); onCountChange && onCountChange(0);
+    } catch (e) {
+      toast(t('md_editor.problems.clear_fail', { defaultValue: '清空失败' }), { kind: 'danger', detail: e?.message });
+    }
   };
   const sevClass = (sev) => {
     const s = String(sev || '').toLowerCase();

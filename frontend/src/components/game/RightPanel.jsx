@@ -32,7 +32,7 @@ const PANEL_TABS = [
       : []),
 ];
 
-function RightPanel({ state, activeTab, setActiveTab, sidebarWidth, density, collapsed, onToggle, resizeHandle }) {
+function RightPanel({ state, activeTab, setActiveTab, sidebarWidth, density, collapsed, onToggle, resizeHandle, running = false }) {
   const { t } = useTranslation();
   const tabs = PANEL_TABS;
   // 兜底:activeTab 不在可见 tab 集合(旧 #rules 链接 / localStorage 残留)时回落第一个,
@@ -45,7 +45,7 @@ function RightPanel({ state, activeTab, setActiveTab, sidebarWidth, density, col
   else if (currentId === "memory") body = <PanelMemory state={state} density={density} panelWidth={sidebarWidth} />;
   else if (currentId === "worldbook") body = <PanelWorldbook state={state} panelWidth={sidebarWidth} />;
   else if (currentId === "cards") body = <PanelCharacters state={state} panelWidth={sidebarWidth} />;
-  else if (currentId === "timeline") body = <PanelTimeline state={state} panelWidth={sidebarWidth} />;
+  else if (currentId === "timeline") body = <PanelTimeline state={state} panelWidth={sidebarWidth} running={running} />;
   else if (currentId === "context") body = <PanelContext state={state} />;
   else if (currentId === "debug") body = <PanelDebug state={state} />;
 

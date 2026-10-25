@@ -6,8 +6,7 @@ import { Icon } from '../../game-icons.jsx';
 import ThemeToggle from '../ThemeToggle.jsx';
 
 // ----------------------------- TOP BAR -----------------------------------
-// task 55: 新增 assistantCollapsed / onExpandAssistant —— 助手折叠时显示"展开助手"图标按钮。
-function TopBar({ state, saveUpdatedAt, onOpenTweaks, onOpenSearch, onOpenHistory, onOpenSettings, railCollapsed, onExpandRail, panelCollapsed, onExpandPanel, assistantCollapsed, onExpandAssistant, versionSelectEl, onOpenNav }) {
+function TopBar({ state, saveUpdatedAt, onOpenSearch, onOpenHistory, onOpenSettings, railCollapsed, onExpandRail, panelCollapsed, onExpandPanel, versionSelectEl, onOpenNav }) {
   const { t } = useTranslation();
   // task 49：原 "已存档 · 12 分钟前" 写死。改成读真实 save 的 updated_at（来自 /api/saves）。
   const savedAgo = (saveUpdatedAt && window.__fmt && window.__fmt.ago)
@@ -88,14 +87,6 @@ function TopBar({ state, saveUpdatedAt, onOpenTweaks, onOpenSearch, onOpenHistor
         </button>
         {/* task: 游戏内不再放使用须知按钮(只保留反馈),减少顶栏干扰。
             想看须知到 Platform 点「📖 使用须知」即可 */}
-        {/* task 55: 助手折叠时显示展开按钮 */}
-        {assistantCollapsed && onExpandAssistant && (
-          <button className="iconbtn" data-tip={t('game.app.topbar.expand_assistant')} data-tip-pos="below"
-                  aria-label={t('game.app.topbar.expand_assistant')}
-                  onClick={onExpandAssistant}>
-            <Icon name="sparkle" size={14} />
-          </button>
-        )}
         {panelCollapsed && (
           <button className="iconbtn gc-topbar-expand-right" data-tip={t('game.app.topbar.expand_panel')} data-tip-pos="below" onClick={onExpandPanel}>
             <Icon name="chevron_left" size={14} />

@@ -29,8 +29,8 @@ function ChapterHistory({ scriptId, chapterIndex, onClose, onRestored }) {
         });
         onRestored && onRestored();
       }
-      else toast((r && r.error) || t('md_editor.history.restore_fail', { defaultValue: '恢复失败' }), { kind: 'error' });
-    } catch (_) { toast(t('md_editor.history.restore_fail', { defaultValue: '恢复失败' }), { kind: 'error' }); }
+      else toast((r && r.error) || t('md_editor.history.restore_fail', { defaultValue: '恢复失败' }), { kind: 'danger' });
+    } catch (_) { toast(t('md_editor.history.restore_fail', { defaultValue: '恢复失败' }), { kind: 'danger' }); }
     finally { setBusy(false); }
   };
   // 删除单条记录:只删审计记录与快照,正文不受影响;删后刷新列表。
@@ -50,8 +50,8 @@ function ChapterHistory({ scriptId, chapterIndex, onClose, onRestored }) {
     try {
       const r = await api().scripts.commitDelete(scriptId, v.id);
       if (r && r.ok) { toast(t('md_editor.history.deleted', { defaultValue: '已删除该记录' }), { kind: 'ok' }); await load(); }
-      else toast((r && r.error) || t('md_editor.history.delete_fail', { defaultValue: '删除失败' }), { kind: 'error' });
-    } catch (_) { toast(t('md_editor.history.delete_fail', { defaultValue: '删除失败' }), { kind: 'error' }); }
+      else toast((r && r.error) || t('md_editor.history.delete_fail', { defaultValue: '删除失败' }), { kind: 'danger' });
+    } catch (_) { toast(t('md_editor.history.delete_fail', { defaultValue: '删除失败' }), { kind: 'danger' }); }
     finally { setBusy(false); }
   };
   return (

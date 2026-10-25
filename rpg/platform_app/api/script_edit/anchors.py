@@ -8,7 +8,7 @@ from fastapi import Depends, Request
 
 from ...db import connect
 from .._deps import json_response, require_user, value_error_response
-from ._shared import _require_owner, _write_commit, router
+from ._shared import _parse_baseline_ts, _require_owner, _write_commit, router
 
 # ─── anchors CRUD ─────────────────────────────────────────────────────────────
 
@@ -51,18 +51,28 @@ async def api_anchor_update(
     """编辑 script_timeline_anchor，写 commit kind=anchor_edit。
 
     body: {summary?, story_phase?, story_time_label?, chapter_min?, chapter_max?,
-           keywords?, confidence?, sample_title?}
+           keywords?, confidence?, sample_title?, base_updated_at?}
     （keywords 列是 PostgreSQL 原生 text[],写回直接绑 Python list,绝不 json.dumps 当 jsonb）
     （is_fatal / importance 在 save_anchor_states，不在 script_timeline_anchors）
+
+    base_updated_at(可选,乐观锁):编辑器打开/上次保存时拿到的 updated_at。传了就把
+    版本条件放进 UPDATE 的 WHERE,不一致返回 409 + server_anchor;不传保持覆盖语义。
     """
     try:
         body = await request.json()
     except Exception:
         return json_response({"ok": False, "error": "body 必须是合法 JSON"}, status_code=400)
 
+    try:
+        base_ts = _parse_baseline_ts(body.get("base_updated_at"))
+    except ValueError as exc:
+        return json_response({"ok": False, "error": str(exc)}, status_code=400)
+
     _ANCHOR_COLS = (
         "id, story_phase, story_time_label, sample_title, sample_summary, "
-        "chapter_min, chapter_max, chapter_count, keywords, confidence"
+        "chapter_min, chapter_max, chapter_count, keywords, confidence, "
+        # 乐观锁基线随行下发;时间线 GET 也会带上同名列,保证编辑标签拿到基线。
+        "updated_at"
     )
 
     with connect() as db:
@@ -89,10 +99,31 @@ async def api_anchor_update(
 
         sets.append("updated_at=now()")
         args.extend([anchor_id, script_id])
-        db.execute(
-            f"UPDATE script_timeline_anchors SET {', '.join(sets)} WHERE id=%s AND script_id=%s",
+        where = "id=%s AND script_id=%s"
+        if base_ts is not None:
+            # 版本条件与写入同语句,避免「先查后写」窗口里的并发覆盖。
+            where += " AND updated_at=%s"
+            args.append(base_ts)
+        cur = db.execute(
+            f"UPDATE script_timeline_anchors SET {', '.join(sets)} WHERE {where}",
             tuple(args),
         )
+        if base_ts is not None and cur.rowcount == 0:
+            current_row = db.execute(
+                f"SELECT {_ANCHOR_COLS} FROM script_timeline_anchors WHERE id=%s AND script_id=%s",
+                (anchor_id, script_id),
+            ).fetchone()
+            if not current_row:
+                return json_response({"ok": False, "error": "anchor 不存在"}, status_code=404)
+            return json_response(
+                {
+                    "ok": False,
+                    "conflict": True,
+                    "error": "anchor 已被他方更新",
+                    "server_anchor": dict(current_row),
+                },
+                status_code=409,
+            )
 
         after_row = db.execute(
             f"SELECT {_ANCHOR_COLS} FROM script_timeline_anchors WHERE id=%s",

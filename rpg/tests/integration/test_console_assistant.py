@@ -729,6 +729,38 @@ class AskUserChoiceTool(unittest.TestCase):
         # done 仍正常 yield
         self.assertEqual(types[-1], "done")
 
+    def test_stream_chat_yields_user_text_required_and_breaks_loop(self):
+        """ask_user_text → user_text_required 事件;之前只把 USER_TEXT 当普通结果喂回 LLM,
+        用户看不到输入框。现在与 USER_CHOICE 同构:发事件 + break,用户在下方的输入框作答。"""
+        from console_assistant import stream_chat
+        backend = FakeBackend([
+            {"type": "text", "text": "先确认书名。"},
+            {"type": "tool_call", "server_id": "dispatcher",
+             "tool": "ask_user_text", "arguments": {
+                 "question": "新剧本叫什么?",
+                 "placeholder": "例如:雾港调查",
+                 "context": "用于建档",
+             }},
+            {"type": "text", "text": "(本句不该出现)"},
+        ])
+        events = _consume_sse(stream_chat(
+            user_id=43, message="新建剧本", conversation_id=None,
+            page_context=None, backend=backend,
+        ))
+        types = [e["event"] for e in events]
+        self.assertIn("user_text_required", types)
+        ev = next(e["data"] for e in events if e["event"] == "user_text_required")
+        self.assertEqual(ev["question"], "新剧本叫什么?")
+        self.assertEqual(ev["placeholder"], "例如:雾港调查")
+        self.assertEqual(ev["context"], "用于建档")
+        self.assertEqual(ev["tool"], "ask_user_text")
+        self.assertIn("call_id", ev)
+        tokens = [e["data"]["text"] for e in events if e["event"] == "token"]
+        self.assertNotIn("(本句不该出现)", tokens)
+        tool_results = [e["data"] for e in events if e["event"] == "tool_result"]
+        self.assertEqual(tool_results, [], "ask_user_text 触发后不应再 yield 标准 tool_result")
+        self.assertEqual(types[-1], "done")
+
 
 # ────────────────────────────────────────────────────────────
 # Layer F: origin 隔离 - llm_chat 仍不能调 console_assistant 专属工具

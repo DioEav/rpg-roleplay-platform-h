@@ -11,7 +11,7 @@ from psycopg.types.json import Jsonb
 
 from ...db import connect
 from .._deps import json_response, require_user, value_error_response
-from ._shared import _require_owner, _write_commit, router
+from ._shared import _parse_baseline_ts, _require_owner, _write_commit, router
 
 # ─── worldbook CRUD ───────────────────────────────────────────────────────────
 
@@ -23,19 +23,35 @@ async def api_worldbook_update(
 
     body: {title?, content?, priority?, enabled?, tags?, keys?, regex_keys?,
            character_filter?, scene_filter?, token_budget?, sticky_turns?,
-           cooldown_turns?, probability?, insertion_position?}
+           cooldown_turns?, probability?, insertion_position?,
+           first_revealed_chapter?, base_updated_at?}
     （keys/regex_keys/character_filter/scene_filter 为 jsonb 字符串数组列）
+
+    base_updated_at(可选,乐观锁):编辑器打开/上次保存时拿到的 updated_at。传了就把
+    版本条件放进 UPDATE 的 WHERE,与当前行不一致返回 409 + server_entry(当前整行),
+    前端转三方合并。不传 = 沿用覆盖语义(AI 工具 / 老客户端),行为完全不变。
     """
     try:
         body = await request.json()
     except Exception:
         return json_response({"ok": False, "error": "body 必须是合法 JSON"}, status_code=400)
 
+    # 先解析基线:非法时间戳直接 400,避免把坏参数丢给 Postgres 冒成 500。
+    try:
+        base_ts = _parse_baseline_ts(body.get("base_updated_at"))
+    except ValueError as exc:
+        return json_response({"ok": False, "error": str(exc)}, status_code=400)
+
     _WB_COLS = (
         "id, title, content, priority, enabled, metadata, "
         "keys, regex_keys, character_filter, scene_filter, "
         # probability 是 numeric → psycopg 读出 Decimal,JSON 不可序列化 → 必须 ::float8 转浮点
-        "token_budget, sticky_turns, cooldown_turns, probability::float8 as probability, insertion_position"
+        "token_budget, sticky_turns, cooldown_turns, probability::float8 as probability, insertion_position, "
+        # first_revealed_chapter 是 md-editor worldbook schema 的可写字段,快照必须带上:
+        # 少了它,冲突合并会把「本地有值 / 服务端空串」误判成一段真实差异。
+        "first_revealed_chapter, "
+        # updated_at 是乐观锁基线:随行返回给编辑器,保存时再回传比对。
+        "updated_at"
     )
 
     with connect() as db:
@@ -58,10 +74,18 @@ async def api_worldbook_update(
             if col in body:
                 sets.append(f"{col}=%s")
                 args.append(str(body[col]))
-        for col in ("priority", "token_budget", "sticky_turns", "cooldown_turns"):
+        for col in ("priority", "token_budget", "sticky_turns", "cooldown_turns", "first_revealed_chapter"):
             if col in body:
+                try:
+                    value = int(body[col])
+                except (TypeError, ValueError):
+                    # 前端清空 integer 字段时 YAML 会解析成 null/'';回可行动 400,
+                    # 而不是裸 TypeError/ValueError 冒成 500(编辑器只显示「保存失败」)。
+                    return json_response(
+                        {"ok": False, "error": f"{col} 必须是整数"}, status_code=400,
+                    )
                 sets.append(f"{col}=%s")
-                args.append(int(body[col]))
+                args.append(value)
         if "probability" in body:
             sets.append("probability=%s")
             args.append(float(body["probability"]))
@@ -92,10 +116,35 @@ async def api_worldbook_update(
 
         sets.append("updated_at=now()")
         args.extend([entry_id, script_id])
-        db.execute(
-            f"UPDATE worldbook_entries SET {', '.join(sets)} WHERE id=%s AND script_id=%s",
+        where = "id=%s AND script_id=%s"
+        if base_ts is not None:
+            # 乐观锁与 UPDATE 同一条语句:版本条件放进 WHERE,而不是「先查后写」。
+            # 后者在两次查询之间仍可能被另一个请求插队,导致双方都认为版本没变。
+            where += " AND updated_at=%s"
+            args.append(base_ts)
+        cur = db.execute(
+            f"UPDATE worldbook_entries SET {', '.join(sets)} WHERE {where}",
             tuple(args),
         )
+        if base_ts is not None and cur.rowcount == 0:
+            # 0 行 = 版本不匹配(或并发删除)。重查当前行:还在 → 409 交前端合并;
+            # 已不存在 → 404,与进入本函数时的检查保持一致。
+            current_row = db.execute(
+                f"SELECT {_WB_COLS} FROM worldbook_entries WHERE id = %s AND script_id = %s",
+                (entry_id, script_id),
+            ).fetchone()
+            if not current_row:
+                return json_response({"ok": False, "error": "worldbook entry 不存在"}, status_code=404)
+            return json_response(
+                {
+                    "ok": False,
+                    "conflict": True,
+                    "error": "worldbook entry 已被他方更新",
+                    # server_entry 与章节的 server_chapter 同构:前端据此做三方合并。
+                    "server_entry": dict(current_row),
+                },
+                status_code=409,
+            )
 
         after_row = db.execute(
             f"SELECT {_WB_COLS} FROM worldbook_entries WHERE id = %s",

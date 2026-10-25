@@ -93,6 +93,9 @@ def _t_upsert_canon_entity(user_id: int, script_id: int | None, args: dict, stat
                 # 有真实字段更新但没动 attrs → 仍标 source='editor',让重建保留这条用户编辑过的实体(harness 审计 P1)。
                 if not any(s.startswith("attrs") for s in sets):
                     sets.append("attrs = coalesce(attrs,'{}'::jsonb) || '{\"source\":\"editor\"}'::jsonb")
+                # 推进 updated_at:canon 编辑器以它为乐观锁基线,AI 写入必须让基线变化,
+                # 否则编辑器里未保存的旧内容保存时不会冲突、会静默覆盖 AI 的修改。
+                sets.append("updated_at=now()")
                 params.extend([sid, logical_key])
                 db.execute(
                     f"update kb_canon_entities set {', '.join(sets)} "

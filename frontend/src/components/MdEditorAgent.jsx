@@ -21,6 +21,7 @@ const TOOL_LABELS = {
   get_chapter_text: '读章节正文', get_script_chapters: '列出章节', search_manuscript: '全书检索',
   list_worldbook_entries: '列出世界书', list_canon_entities: '列出设定实体', list_anchors: '列出时间线',
   list_script_npcs: '列出角色卡', get_script_character_card: '读角色卡', get_chapter_context: '读本章上下文',
+  ask_user_choice: '询问作者', ask_user_text: '询问作者',
   update_script_chapter: '改写章节', create_script_chapter: '新建章节',
   upsert_worldbook_entry: '写入世界书', upsert_worldbook_entries: '批量写世界书', delete_worldbook_entry: '删除世界书条目',
   update_npc_card: '编辑角色卡', create_npc_card: '新建角色卡',
@@ -49,6 +50,12 @@ function stripEmoji(s) { return typeof s === 'string' ? s.replace(_EMOJI_RE, '')
 // 编辑器写权限只支持 3 档(后端 console_assistant 认 read_only/review/full_access,无 'default')。
 // 限制 PermissionPopover 只显示这三档,避免用户点「默认权限」却被静默映射成「审查」造成的高亮跳变。
 const EDITOR_PERMS = ['read_only', 'review', 'full_access'];
+
+// 把历史/异常值归一:游戏侧的 'default' 语义上最接近编辑器「审查后写」;未知串也回 review,
+// 与后端 _resolve_editor_write_mode 的安全默认一致。初始加载和用户切换共用这一份逻辑。
+function normalizeEditorWriteMode(m) {
+  return m === 'default' ? 'review' : (EDITOR_PERMS.includes(m) ? m : 'review');
+}
 
 // 写工具名 → (kind, id-arg-key):写成功后据此刷新编辑器标签。
 const WRITE_TOOL_MAP = {
@@ -262,6 +269,14 @@ const MdEditorAgent = forwardRef(function MdEditorAgent({ scriptId, activeTab, o
   const abortRef = useRef(null);
   const scriptIdRef = useRef(scriptId);
   const scriptSessionRef = useRef(0);
+  // 聊天轮次 token:send / confirm 各自持有一个最新 token。
+  // 背景:内联 diff 的「批准/拒绝」可能在聊天流还没收到 done(busy 仍 true)时被点击。
+  // 旧实现 confirmCall 直接 if (busy) return → 用户点了没反应,后端待确认永远悬空。
+  // 现在只有「busy 且待确认不是当前这一轮」才拒绝 —— 即同一轮尾部允许确认;
+  // 若用户已发了新消息(busy 属于新轮),仍然拒绝,避免并发两个对话回合。
+  const turnSeqRef = useRef(0);
+  const activeTurnRef = useRef(0);
+  const pendingConfirmTurnRef = useRef(0);
   // 切剧本时在渲染期就递增会话号:在途 SSE/对话/上传结果回来时据此丢弃,避免污染新剧本。
   if (scriptIdRef.current !== scriptId) {
     scriptIdRef.current = scriptId;
@@ -365,7 +380,9 @@ const MdEditorAgent = forwardRef(function MdEditorAgent({ scriptId, activeTab, o
         const p = await window.api?.me?.profile?.();
         const prefs = p?.preferences || p?.profile?.preferences || {};
         const m = prefs['editor.write_mode'];
-        if (m) setWriteMode(m);
+        // 修:初始加载也要归一。旧代码把 'default' 原样塞进 state,UI 显示「默认权限」,
+        // 后端实际按 review 处理 —— 高亮与实际权限不一致。
+        if (m) setWriteMode(normalizeEditorWriteMode(m));
         const ov = prefs['console_assistant_model_override'];
         if (ov && ov.model) setModel(ov.model);   // 底部标签显示当前编辑器 agent 模型
       } catch (_) { /* 默认 review */ }
@@ -373,9 +390,8 @@ const MdEditorAgent = forwardRef(function MdEditorAgent({ scriptId, activeTab, o
   }, []);
 
   const changeWriteMode = useCallback(async (m) => {
-    // PermissionPopover 有 4 档(read_only/default/review/full_access),后端 console_assistant 写权限只认
-    // 3 档 → 把游戏里的 'default'(普通)归一到 'review'(审查后写),语义上最接近、且安全。
-    const mm = m === 'default' ? 'review' : m;
+    // 游戏侧 4 档标题里的 'default' 归一成编辑器 3 档中的 review;未知值也回 review。
+    const mm = normalizeEditorWriteMode(m);
     setWriteMode(mm);
     try { await window.api?.me?.preferences?.({ 'editor.write_mode': mm }); } catch (_) {}
   }, []);
@@ -390,6 +406,8 @@ const MdEditorAgent = forwardRef(function MdEditorAgent({ scriptId, activeTab, o
     // 切走时中止旧剧本的在途聊天,并清掉只属于旧剧本的附件/@引用/输入草稿。
     try { abortRef.current?.abort(); } catch (_) {}
     abortRef.current = null;
+    activeTurnRef.current = 0;
+    pendingConfirmTurnRef.current = 0;
     setBusy(false);
     setUploading(false);
     setDragOver(false);
@@ -493,7 +511,7 @@ const MdEditorAgent = forwardRef(function MdEditorAgent({ scriptId, activeTab, o
   }, [scriptId, activeTab]);
 
   // 统一 SSE 事件处理(chat 与 confirm 共用)。assistantIdx = 当前 assistant 消息下标。
-  const makeHandler = useCallback((assistantIdx) => (event, data) => {
+  const makeHandler = useCallback((assistantIdx, turn) => (event, data) => {
     if (event === 'meta') {
       if (data.conversation_id) {
         convIdRef.current = data.conversation_id;
@@ -543,6 +561,9 @@ const MdEditorAgent = forwardRef(function MdEditorAgent({ scriptId, activeTab, o
       return;
     }
     if (event === 'confirmation_required') {
+      // 记录这一轮的 token:内联 diff 的按钮可能在聊天流 done(busy=false)之前就被点击,
+      // confirmCall 需要知道"这个待确认属于当前轮",才能放行同一轮尾部的确认。
+      pendingConfirmTurnRef.current = turn || activeTurnRef.current;
       const pc = { call_id: data.call_id, tool: data.tool, args: data.args, description: data.description, preview: data.preview };
       // 章节改写 → 优先在【中间编辑器】里内联 diff 审阅(绿增/红删 + 顶栏全部批准/拒绝)。
       // 仅当该章正是当前激活 tab 时拦截;否则(或异常)退回侧栏确认块。
@@ -564,6 +585,26 @@ const MdEditorAgent = forwardRef(function MdEditorAgent({ scriptId, activeTab, o
         }
       }
       setMessages((m) => m.map((msg, i) => i === assistantIdx ? { ...msg, pendingConfirm: pc } : msg));
+      return;
+    }
+    if (event === 'user_choice_required' || event === 'user_text_required') {
+      // 后端 ask_user_choice / ask_user_text 的哨兵事件。之前编辑器右栏忽略它们,
+      // agent 调了「询问作者」但作者看不到任何选项/输入提示。这里在对应 assistant 消息上
+      // 挂一个 userChoice 卡:选项按钮点选后走 send(option),自由文本用下方 Composer 回答。
+      const isText = event === 'user_text_required';
+      setMessages((m) => m.map((msg, i) => i === assistantIdx ? {
+        ...msg,
+        userChoice: {
+          kind: isText ? 'text' : 'choice',
+          call_id: data.call_id,
+          tool: data.tool,
+          question: data.question || '',
+          options: isText ? [] : (Array.isArray(data.options) ? data.options.filter((o) => String(o).trim()) : []),
+          allow_free_text: isText ? true : data.allow_free_text !== false,
+          placeholder: data.placeholder || '',
+          context: data.context || '',
+        },
+      } : msg));
       return;
     }
     if (event === 'error') {
@@ -625,17 +666,23 @@ const MdEditorAgent = forwardRef(function MdEditorAgent({ scriptId, activeTab, o
           else onWriteComplete?.(info.table === 'character_cards' ? 'card' : 'worldbook', info.id);
         } catch (_) {}
       } else {
-        window.__apiToast?.((r && r.error) || t('components.md_editor_agent.undo_fail', { defaultValue: '撤销失败' }), { kind: 'error' });
+        window.__apiToast?.((r && r.error) || t('components.md_editor_agent.undo_fail', { defaultValue: '撤销失败' }), { kind: 'danger' });
       }
     } catch (_) {
-      window.__apiToast?.(t('components.md_editor_agent.undo_fail', { defaultValue: '撤销失败' }), { kind: 'error' });
+      window.__apiToast?.(t('components.md_editor_agent.undo_fail', { defaultValue: '撤销失败' }), { kind: 'danger' });
     }
   }, [scriptId, onWriteComplete, t]);
 
   const send = useCallback(async (text) => {
     const raw = (text ?? input).trim();
     if (!raw || busy) return;
+    // 新一轮聊天:activeTurn 换成自己的 token。若旧轮随后收到 done,它的 finally
+    // 会因 token 不匹配而不清掉本轮 busy。
+    const turn = ++turnSeqRef.current;
+    activeTurnRef.current = turn;
     const session = scriptSessionRef.current;
+    // 作者一旦发消息(点选项或自由输入),旧的问题卡就失效,避免重复作答。
+    setMessages((m) => m.map((msg) => msg.userChoice ? { ...msg, userChoice: null } : msg));
     // 选区上下文:有选中且未关闭 → 把选中正文前置进【发送内容】(librarian 即知「这段/选中」指什么);
     // 界面气泡仍只显示用户原话,不让长正文淹没对话。
     let sentMsg = raw;
@@ -671,51 +718,67 @@ const MdEditorAgent = forwardRef(function MdEditorAgent({ scriptId, activeTab, o
       assistantIdx = next.length - 1;
       return next;
     });
+    const ctrl = new AbortController();
+    abortRef.current = ctrl;
     try {
-      const ctrl = new AbortController();
-      abortRef.current = ctrl;
       const res = await fetch('/api/console_assistant/chat', {
         method: 'POST', credentials: 'include', signal: ctrl.signal,
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ message: sentMsg, conversation_id: convIdRef.current || undefined, page_context: pageContext() }),
       });
-      const handler = makeHandler(assistantIdx);
+      const handler = makeHandler(assistantIdx, turn);
       await consumeSSE(res, (ev, data) => {
         if (scriptSessionRef.current === session) handler(ev, data);   // 已切剧本:丢弃旧流
       });
     } catch (e) {
-      if (scriptSessionRef.current === session) {
+      // 用户按停止 / 切剧本触发的 abort 不是错误,不往气泡里写 AbortError。
+      if (!ctrl.signal.aborted && scriptSessionRef.current === session) {
         setMessages((m) => m.map((msg2, i) => i === assistantIdx ? { ...msg2, error: e?.message || String(e) } : msg2));
       }
     } finally {
-      if (scriptSessionRef.current === session) { setBusy(false); abortRef.current = null; }
+      if (scriptSessionRef.current === session && activeTurnRef.current === turn) {
+        setBusy(false);
+        if (abortRef.current === ctrl) abortRef.current = null;
+      }
     }
   }, [input, busy, pageContext, makeHandler, selLen, selCtxOff, getSelectionContext, attached, pinnedRefs]);
 
   // 按 call_id 直接发 /confirm(approve|reject)——既给 sidebar 确认块用,也给编辑器内联 diff 的
   // 「全部批准/拒绝」回调用(见 makeHandler 的 confirmation_required 拦截)。
   const confirmCall = useCallback(async (callId, decision) => {
-    if (!callId || busy) return;
+    if (!callId) return;
+    // 同一轮尾部(聊天流还没 done,但待确认就是本轮产生的)允许确认;
+    // 若 busy 属于更新的聊天轮(pendingConfirmTurn !== activeTurn),才拒绝,避免两个回合并发。
+    if (busy && pendingConfirmTurnRef.current !== activeTurnRef.current) return;
     const session = scriptSessionRef.current;
+    const turn = ++turnSeqRef.current;
+    activeTurnRef.current = turn;
+    pendingConfirmTurnRef.current = 0;   // 同一待确认只处理一次
     setBusy(true);
     let assistantIdx = -1;
     setMessages((m) => { const next = [...m, { role: 'assistant', text: '', tools: [] }]; assistantIdx = next.length - 1; return next; });
+    // 确认请求也挂到 abortRef:Composer 的停止按钮在确认流上同样可用。
+    const ctrl = new AbortController();
+    abortRef.current = ctrl;
     try {
       const res = await fetch('/api/console_assistant/confirm', {
-        method: 'POST', credentials: 'include',
+        method: 'POST', credentials: 'include', signal: ctrl.signal,
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ conversation_id: convIdRef.current, call_id: callId, decision, page_context: pageContext() }),
       });
-      const handler = makeHandler(assistantIdx);
+      const handler = makeHandler(assistantIdx, turn);
       await consumeSSE(res, (ev, data) => {
         if (scriptSessionRef.current === session) handler(ev, data);   // 已切剧本:丢弃旧流
       });
     } catch (e) {
-      if (scriptSessionRef.current === session) {
+      if (!ctrl.signal.aborted && scriptSessionRef.current === session) {
         setMessages((m) => m.map((msg2, i) => i === assistantIdx ? { ...msg2, error: e?.message || String(e) } : msg2));
       }
     } finally {
-      if (scriptSessionRef.current === session) setBusy(false);
+      if (scriptSessionRef.current === session && activeTurnRef.current === turn) {
+        setBusy(false);
+        if (abortRef.current === ctrl) abortRef.current = null;
+      }
     }
   }, [busy, pageContext, makeHandler]);
 
@@ -740,7 +803,8 @@ const MdEditorAgent = forwardRef(function MdEditorAgent({ scriptId, activeTab, o
   useImperativeHandle(ref, () => ({
     syncFromProse(text, label, rewrite) {
       const t = (text || '').trim();
-      if (!t || busy) return;
+      if (!t) return false;
+      if (busy) return false;   // 返回 false 让父级保留「同步设定」提示条,而不是静默丢掉
       const msg =
         `我刚在「${label || '正文'}」${rewrite ? '改写' : '续写'}了下面这段正文。` +
         '如果其中**真实地**引入或改变了某个角色的设定/状态/关系、某项世界设定、' +
@@ -749,6 +813,7 @@ const MdEditorAgent = forwardRef(function MdEditorAgent({ scriptId, activeTab, o
         '不要编造正文里没有的内容。\n\n' +
         `${rewrite ? '改写后的正文' : '续写的正文'}:\n"""\n${t}\n"""`;
       send(msg);
+      return true;
     },
     // 复审本章(对标 Copilot /review):让 agent 读该章 + 对照设定逐项审,最后调 report_writing_issues
     // 把问题写进右栏「问题」面板(持久化、可跳转;沿用 Batch 6 整条管线,owner 路径已校验)。
@@ -882,6 +947,28 @@ const MdEditorAgent = forwardRef(function MdEditorAgent({ scriptId, activeTab, o
                     <button className="ok" disabled={busy} onClick={() => resolveConfirm(i, 'approve')}>{t('components.md_editor_agent.confirm_approve')}</button>
                     <button className="no" disabled={busy} onClick={() => resolveConfirm(i, 'reject')}>{t('common.cancel')}</button>
                   </div>
+                </div>
+              )}
+              {m.userChoice && (
+                <div className="mde-agent-confirm mde-agent-choice">
+                  <div className="mde-agent-confirm-q">
+                    {m.userChoice.question}
+                    {m.userChoice.context ? <span className="mde-agent-choice-ctx"> — {m.userChoice.context}</span> : null}
+                  </div>
+                  {m.userChoice.options.length > 0 && (
+                    <div className="mde-agent-confirm-btns mde-agent-choice-opts">
+                      {m.userChoice.options.map((opt, oi) => (
+                        <button key={oi} className="ok" disabled={busy} onClick={() => { if (busy) return; send(String(opt)); }}>{String(opt)}</button>
+                      ))}
+                    </div>
+                  )}
+                  {m.userChoice.allow_free_text && (
+                    <div className="mde-agent-choice-hint">
+                      {m.userChoice.kind === 'text' && m.userChoice.placeholder
+                        ? t('components.md_editor_agent.user_text.hint_placeholder', { defaultValue: '在下方输入回答,例如:{{p}}', p: m.userChoice.placeholder })
+                        : t('components.md_editor_agent.user_text.hint_free', { defaultValue: '也可以直接在下方输入你的回答。' })}
+                    </div>
+                  )}
                 </div>
               )}
               {m.editorDiff && (

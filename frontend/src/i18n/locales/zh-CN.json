@@ -3400,7 +3400,6 @@
       "title": "本轮上下文",
       "tokens": "{{count}} tokens",
       "layers_count": "{{count}} 层",
-      "no_chapter_refs": "（本轮没有检索到章节引用）",
       "pinned_count": "固定记忆 · {{count}} 段",
       "history_turns": "历史摘要 · {{count}} 回合",
       "retrieval_preview": "提示词预览 / 最近召回",
@@ -3427,7 +3426,7 @@
       "latest_round": "最近一轮",
       "no_steps": "（暂无步骤；发一轮消息后会出现 context_agent 各阶段）",
       "current_request": "本轮请求",
-      "retrieval_chunks": "召回 chunks",
+      "context_layers": "上下文层数",
       "permission_log": "权限日志",
       "no_audit": "（暂无写入审计记录）",
       "cache_tiers": "缓存分层 (会话/场景/动态)",
@@ -3505,7 +3504,7 @@
       "cliche_tag": "套路比喻",
       "cliche_notice": "这轮用了套路比喻（{{phrases}}），要重新生成吗？",
       "cliche_retry": "重新生成",
-      "dismiss_tip": "忽略此提示",
+      "dismiss_tip": "稍后处理（下次刷新会重新出现）",
       "config_generate_with": "用 {{model}} 生成",
       "config_go_model_settings": "去模型设置",
       "config_continue_label": "继续",
@@ -3592,8 +3591,8 @@
       "write_risk_low": "写入 · 低",
       "allow": "允许",
       "reject": "拒绝",
-      "no_answer_tip": "不回答",
-      "later_tip": "稍后",
+      "no_answer_tip": "稍后再答（下次刷新会重新出现）",
+      "later_tip": "稍后处理（下次刷新会重新出现）",
       "detail_tip": "详情",
       "config_tag": "配置"
     },
@@ -3602,7 +3601,8 @@
     },
     "inline_edit": {
       "save_failed": "保存失败",
-      "click_to_edit": "点击编辑"
+      "click_to_edit": "点击编辑",
+      "empty_not_allowed": "该字段不能为空"
     },
     "permission": {
       "read_only_label": "只读 · 纯叙事",
@@ -3624,6 +3624,7 @@
         "no_save_hint": "点 ＋ 新建游戏开始",
         "save_label": "存档 #{{id}}",
         "manual_save_tip": "手动保存",
+        "switch_save_tip": "切换存档（会先停止当前回合）",
         "branch_tip": "切换分支树视图",
         "branch_btn": "分支",
         "structured_updates": "本轮结构化更新",
@@ -3632,7 +3633,6 @@
         "back_home": "返回主页"
       },
       "run": {
-        "expand": "展开",
         "detail_title": "运行详情",
         "collapse": "收起",
         "show_all": "全部 ({{count}})",
@@ -3667,6 +3667,7 @@
         "fork_switched": "已切换到新分支",
         "fork_restore_input": "原消息已放回输入框,可编辑后重发",
         "fork_restore_player_input": "本轮玩家输入已放回输入框,可编辑后重发",
+        "busy_tip": "本轮生成中，完成后再操作",
         "fork_on_branch": "当前消息流已是新分支",
         "fork_create_failed": "分支创建失败",
         "delete_detail": "已删 {{count}} 条消息 · 回到第 {{turn}} 回合",
@@ -3746,6 +3747,7 @@
         "eyebrow": "游戏内设置 · 本档",
         "title": "本档设置",
         "instant_hint": "密度/字体改动即时生效",
+        "save_failed": "设置保存失败，已恢复原值",
         "global_settings": "全局设置 ↗",
         "done": "完成",
         "density_label": "信息密度",
@@ -3783,7 +3785,7 @@
         "eyebrow": "本档历史 · {{count}} 条",
         "title": "历史回顾",
         "empty": "这一档还没有对话历史。开始与 GM 对话后，所有轮次会在这里聚合可回看。",
-        "footer_hint": "提示：Esc 关闭 · 当前为本会话内存历史；完整分支历史见 Platform / 分支页"
+        "footer_hint": "提示：Esc 关闭 · 当前为当前存档的持久化历史；完整分支历史见 Platform / 分支页"
       },
       "search": {
         "aria_label": "搜索本档",
@@ -3815,18 +3817,13 @@
         "settings_tip": "游戏内设置",
         "export_txt_tip": "导出 TXT(可读·当小说分享)",
         "feedback_tip": "提交反馈",
-        "expand_assistant": "展开控制台助手",
         "expand_panel": "展开右侧面板"
       }
     },
     "console": {
       "version": {
         "switch_tip": "查看版本历史（切换暂未开放）",
-        "header": "版本历史 — 最近 {{count}} 个 commit（切换暂未开放）",
-        "checkout_not_impl": "版本 checkout 后端尚未实现 (501)",
-        "checkout_unavailable": "版本回滚暂未开放",
-        "switched": "已切换到版本 {{sha}}",
-        "switch_failed": "版本切换失败"
+        "header": "版本历史 — 最近 {{count}} 个 commit（切换暂未开放）"
       },
       "welcome": {
         "eyebrow": "使用须知 · Platform Guide",
@@ -3925,7 +3922,10 @@
         "failed": "重新生成失败"
       },
       "attach": {
-        "file_too_large": "文件过大(上限 12MB)"
+        "file_too_large": "文件过大(上限 12MB)",
+        "not_supported": "该附件类型暂未接入,请改用文件/角色卡",
+        "max_count": "单次最多 8 个附件",
+        "read_failed": "附件读取失败"
       },
       "write": {
         "approve_failed": "批准失败",
@@ -4359,6 +4359,7 @@
       "right": "拖拽调整右栏宽度"
     },
     "sync": {
+      "busy": "AI 正忙,请稍候再同步设定",
       "ignore_btn": "忽略",
       "nudge_continue": "刚续写的内容若引入或改变了设定,要让助手同步进角色卡 / 世界书 / 时间线吗?",
       "nudge_rewrite": "刚改写的内容若引入或改变了设定,要让助手同步进角色卡 / 世界书 / 时间线吗?",
@@ -4415,11 +4416,11 @@
       "scripts_load_failed": "剧本列表加载失败"
     },
     "toolbar": {
-      "copy": "复制 ⌘C",
-      "cut": "剪切 ⌘X",
-      "paste": "粘贴 ⌘V",
-      "redo": "重做 ⌘⇧Z",
-      "undo": "撤销 ⌘Z"
+      "copy": "复制",
+      "cut": "剪切",
+      "paste": "粘贴",
+      "redo": "重做",
+      "undo": "撤销"
     },
     "tree": {
       "collapse_all": "折叠全部",
@@ -4488,7 +4489,8 @@
       "btn": "写作规范",
       "tip": "写作规范:每次生成都会遵守",
       "title": "写作规范(注入 AI 上下文,务必遵守)",
-      "desc": "这部剧本的写作规矩:风格/人称/视角、连贯禁忌、命名约定…续写与改写时最高优先遵守。",
+      "desc": "这部剧本的写作规矩:风格/人称/视角、连贯禁忌、命名约定…续写、改写和右栏 AI 对话都会最高优先遵守。",
+      "limits": "保存上限 8000 字；续写/改写注入前 4000 字，内联续写 1000 字",
       "placeholder": "例:全程第三人称限制视角(只跟主角)；禁止上帝视角剧透；地名统一用「云墟城」不用「云墟」；台词不带现代网络词。",
       "saved": "写作规范已保存,下次对话起生效",
       "fail": "保存失败"
@@ -4500,7 +4502,9 @@
       "clear": "全部清空",
       "empty": "暂无审稿问题。跑一次「复审本章」,矛盾与伏笔回收问题会列在这里。",
       "chapter": "第{{n}}章 ↗",
-      "dismiss": "消除"
+      "clear_fail": "清空问题失败",
+      "dismiss": "消除",
+      "dismiss_fail": "消除问题失败"
     },
     "diff": {
       "mixed_saved": "已按你的逐段取舍保存"
@@ -7056,6 +7060,7 @@
         "attach_chapter": "章节",
         "attach_card": "角色卡 @提及",
         "attach_worldbook": "世界书条目",
+        "tavern_branch_hint": "酒馆存档请在酒馆页操作分支 / 回退",
         "model_title": "对话模型",
         "model_sub": "切换 GM 的生成引擎。",
         "permission_title": "LLM 写入权限",
@@ -7553,6 +7558,10 @@
       "empty_title": "一句话改稿",
       "hint": "例如:把这个角色写得更阴郁 / 给这一章润色 / 新建一条世界书。改动先给你预览,写入前需要你确认。",
       "error_generic": "请求失败,请重试",
+      "user_text": {
+        "hint_placeholder": "在下方输入回答,例如:{{p}}",
+        "hint_free": "也可以直接在下方输入你的回答。"
+      },
       "tool_status": {
         "running": "执行中…",
         "error": "失败",

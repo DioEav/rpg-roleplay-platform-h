@@ -11,25 +11,46 @@ import { Icon } from '../../game-icons.jsx';
 // 的功法/设定长文。新增与编辑复用同一张表单(editingId===null 即新增),避免两套输入框漂移。
 const BLANK_WB = { title: '', content: '', keys: '', priority: 50 };
 
-export function WorldbookOverlaySection() {
+export function WorldbookOverlaySection({ saveId = null }) {
   const { t } = useTranslation();
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(true);
   const [adding, setAdding] = useState(false);
   const [editingId, setEditingId] = useState(null);
   const [form, setForm] = useState(BLANK_WB);
+  const loadSeqRef = React.useRef(0);
 
   const load = React.useCallback(async () => {
-    try { const r = await window.api.worldbook.overlayList(); setItems((r && r.additions) || []); }
-    catch (_) { setItems([]); }
-    setLoading(false);
+    // 快速切档/连续刷新时,旧请求可能后到;用序号只接受最新一次响应,
+    // 避免旧档 overlay 覆盖新档列表。
+    const seq = ++loadSeqRef.current;
+    try {
+      const r = await window.api.worldbook.overlayList();
+      if (seq !== loadSeqRef.current) return;
+      setItems((r && r.additions) || []);
+    } catch (_) {
+      if (seq === loadSeqRef.current) setItems([]);
+    }
+    if (seq === loadSeqRef.current) setLoading(false);
   }, []);
   React.useEffect(() => {
+    // 切档瞬间先清空旧列表并置 loading:否则新档请求返回前,旧档条目仍可点,
+    // 编辑表单会把旧 overlay id 提交到新档。
+    setItems([]);
+    setLoading(true);
     load();
     const h = () => load();
     window.addEventListener('game-state-refresh', h);
     return () => window.removeEventListener('game-state-refresh', h);
-  }, [load]);
+    // saveId 变化也要重拉:overlayList 按服务端 active save 取,切档后不重拉会继续显示
+    // 上一档的条目,编辑/删除时还可能把旧 id 提交到新档。
+  }, [load, saveId]);
+  // 切档时丢弃正在编辑的表单,避免把上一档的 overlay id 写到新档。
+  React.useEffect(() => {
+    setAdding(false);
+    setEditingId(null);
+    setForm(BLANK_WB);
+  }, [saveId]);
 
   const inputStyle = { width: '100%', padding: '5px 8px', fontSize: 12, background: 'var(--panel-2, rgba(255,255,255,0.04))', border: '1px solid var(--line-soft, rgba(255,255,255,0.12))', borderRadius: 6, color: 'inherit', font: 'inherit', boxSizing: 'border-box' };
 
@@ -48,7 +69,7 @@ export function WorldbookOverlaySection() {
 
   const submit = async () => {
     const title = form.title.trim(); const content = form.content.trim();
-    if (!title || !content) { window.__apiToast?.(t('game.worldbook.overlay_need_fields', { defaultValue: '标题和正文不能为空' }), { kind: 'warning' }); return; }
+    if (!title || !content) { window.__apiToast?.(t('game.worldbook.overlay_need_fields', { defaultValue: '标题和正文不能为空' }), { kind: 'warn' }); return; }
     const editing = editingId != null;
     try {
       const keys = form.keys.split(',').map((s) => s.trim()).filter(Boolean);
@@ -151,7 +172,7 @@ export function RegexScriptsSection() {
   const inputStyle = { width: '100%', padding: '5px 8px', fontSize: 12, background: 'var(--panel-2, rgba(255,255,255,0.04))', border: '1px solid var(--line-soft, rgba(255,255,255,0.12))', borderRadius: 6, color: 'inherit', font: 'inherit', boxSizing: 'border-box' };
 
   const submit = async () => {
-    if (!form.find.trim()) { window.__apiToast?.(t('game.regex.need_find', { defaultValue: '匹配正则不能为空' }), { kind: 'warning' }); return; }
+    if (!form.find.trim()) { window.__apiToast?.(t('game.regex.need_find', { defaultValue: '匹配正则不能为空' }), { kind: 'warn' }); return; }
     try {
       const r = await window.api.regex.save({ name: form.name, find: form.find, replace: form.replace, flags: form.flags, enabled: form.enabled });
       if (r && r.scripts) setItems(r.scripts);

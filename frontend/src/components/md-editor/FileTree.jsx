@@ -4,7 +4,7 @@ import { useTranslation } from 'react-i18next';
 import { lsGet, lsSet } from '../../lib/storage.js';
 import { ContextMenu } from './ContextMenu.jsx';
 import { NODE_GROUPS, nodeKey, KIND_ICON, CAN_DELETE, CAN_RENAME, CAN_DRAG, CAN_CREATE_KIND, stripChapterPrefix, api, toast } from './helpers.js';
-import { createNode, renameNode, deleteNode, fetchGroupList } from './node-crud.js';
+import { createNode, duplicateNode, renameNode, deleteNode, fetchGroupList } from './node-crud.js';
 const { useState, useEffect, useCallback, useRef } = React;
 
 // ── 文件树:VSCode 风资源管理器(多组展开 / 搜索 / 图标 / 工具栏 / 键盘 / 右键 / 增删改 / 拖拽)──
@@ -100,7 +100,7 @@ function FileTree({ scriptId, openNode, activeKey, reloadKey, onMutate, onChapte
 
   const doDelete = async (kind, it) => {
     setCtx(null);
-    if (!CAN_DELETE[kind]) { toast(t('md_editor.toast.delete_unsupported'), { kind: 'warning' }); return; }
+    if (!CAN_DELETE[kind]) { toast(t('md_editor.toast.delete_unsupported'), { kind: 'warn' }); return; }
     // 删除会关闭/重映射标签;编辑页面在「有未处理 AI 改动」或「切剧本前保存中」时通过该回调拦下。
     if (onBeforeDelete && !onBeforeDelete()) return;
     const extra = kind === 'chapter' ? '\n' + t('md_editor.confirm.chapter_delete_extra') : '';
@@ -132,7 +132,7 @@ function FileTree({ scriptId, openNode, activeKey, reloadKey, onMutate, onChapte
       if (keys.has(k) && CAN_DELETE[g.kind]) (byKind[g.kind] = byKind[g.kind] || []).push(it);
     }
     const total = Object.values(byKind).reduce((n, a) => n + a.length, 0);
-    if (!total) { toast(t('md_editor.toast.nothing_to_delete'), { kind: 'warning' }); return; }
+    if (!total) { toast(t('md_editor.toast.nothing_to_delete'), { kind: 'warn' }); return; }
     const hasChapter = (byKind.chapter || []).length > 0;
     if (onBeforeDelete && !onBeforeDelete()) return;
     const extra = hasChapter ? '\n' + t('md_editor.confirm.chapter_batch_delete_extra') : '';
@@ -191,11 +191,13 @@ function FileTree({ scriptId, openNode, activeKey, reloadKey, onMutate, onChapte
 
   const duplicate = async (kind, it) => {
     setCtx(null);
-    if (!CAN_RENAME[kind] || kind === 'chapter') { toast(t('md_editor.toast.copy_unsupported'), { kind: 'warning' }); return; }
+    if (!CAN_RENAME[kind] || kind === 'chapter') { toast(t('md_editor.toast.copy_unsupported'), { kind: 'warn' }); return; }
     setBusy(true);
     try {
-      const created = await createNode(kind, scriptId, `${it.label} ${t('md_editor.copy_suffix')}`);
-      await loadGroup(kind); onMutate?.('create', kind, created.id, created.label);
+      // 真正的复制:duplicateNode 读取源实体的完整 markdown → fromMd 全字段 → 以「副本」名新建。
+      const created = await duplicateNode(kind, scriptId, it.id, t('md_editor.copy_suffix'));
+      await loadGroup(kind);
+      onMutate?.('create', kind, created.id, created.label);
       toast(t('md_editor.toast.copied'), { kind: 'ok', duration: 1100 });
     } catch (err) { toast(t('md_editor.toast.copy_failed'), { kind: 'danger', detail: err?.message }); }
     finally { setBusy(false); }

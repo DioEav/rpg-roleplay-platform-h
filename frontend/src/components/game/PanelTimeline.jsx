@@ -6,7 +6,7 @@ import { anchorStatuses } from '../../lib/timeline-status.js';
 
 // task 136h: 世界线收束·锚点 子组件 — 嵌入 PanelTimeline 底部
 // 从 /api/saves/:id/anchors 拉取, 跟 timeline 数据互相独立。
-function WorldlineAnchorsSection({ saveId, refreshKey = 0, onAnchorSatisfied }) {
+function WorldlineAnchorsSection({ saveId, refreshKey = 0, onAnchorSatisfied, disabled = false }) {
   const { t } = useTranslation();
   const { useEffect, useRef } = React;
   const [data, setData] = useState(null);
@@ -15,6 +15,9 @@ function WorldlineAnchorsSection({ saveId, refreshKey = 0, onAnchorSatisfied }) 
   const [expandedPhase, setExpandedPhase] = useState({});
   const [satisfying, setSatisfying] = useState("");  // 正在标记的 anchor_key(禁用按钮)
   const lastFetchKey = useRef(null);
+  // 确认弹窗可能开着时回合才开始生成:用 ref 读最新 disabled,确认后再拦一次。
+  const disabledRef = useRef(disabled);
+  useEffect(() => { disabledRef.current = disabled; }, [disabled]);
 
   useEffect(() => {
     if (!saveId) { setData(null); setError(""); return; }
@@ -41,8 +44,18 @@ function WorldlineAnchorsSection({ saveId, refreshKey = 0, onAnchorSatisfied }) 
 
   // FIX2: 玩家确定性推进 — 把一个非 fatal 的 pending 锚点标记为已到达。
   const markSatisfied = async (anchorKey) => {
+    // 回合进行中改进度锚点会与在途回合并发;统一由 right panel 的 running 闸拦住。
+    if (disabledRef.current) {
+      window.__apiToast?.(t('game.app.msg.busy_tip'), { kind: "warn", duration: 2400 });
+      return;
+    }
     if (!saveId || !anchorKey || satisfying) return;
     if (!await window.__confirm({ message: t('game.timeline.satisfy_confirm'), danger: true })) return;
+    // 确认框打开期间回合可能已开跑 → 再检查一次。
+    if (disabledRef.current) {
+      window.__apiToast?.(t('game.app.msg.busy_tip'), { kind: "warn", duration: 2400 });
+      return;
+    }
     setSatisfying(anchorKey);
     try {
       const base = (typeof window !== "undefined" && window.__API_BASE) || "";
@@ -215,7 +228,7 @@ function WorldlineAnchorsSection({ saveId, refreshKey = 0, onAnchorSatisfied }) 
                     <button
                       className="iconbtn"
                       style={{fontSize: 10.5, padding: "2px 8px", width: "auto"}}
-                      disabled={satisfying === a.anchor_key}
+                      disabled={disabled || satisfying === a.anchor_key}
                       title={t('game.timeline.satisfy_title')}
                       onClick={() => markSatisfied(a.anchor_key)}
                     >
@@ -275,7 +288,7 @@ function WorldlineAnchorsSection({ saveId, refreshKey = 0, onAnchorSatisfied }) 
 
 // task 107G: 双时间线 panel — 剧本期望线 + 实际足迹线
 // 从 /api/saves/:id/timeline 按需拉取,saveId 由 state._raw.save_id 提供。
-function PanelTimeline({ state }) {
+function PanelTimeline({ state, running = false }) {
   const { t } = useTranslation();
   const { useEffect, useRef } = React;
   const saveId = state && state._raw && state._raw.save_id;
@@ -285,7 +298,17 @@ function PanelTimeline({ state }) {
   const [expandedPhase, setExpandedPhase] = useState({});  // {phase_index: bool}
   // 玩家「标记已到达」后刷新整个时间线面板(剧本线高亮 + 锚点子区都跟着重拉)。
   const [refreshKey, setRefreshKey] = useState(0);
+  // 确认弹窗可能开着时回合才开始生成:用 ref 读最新 running,确认后再拦一次(见 doRewind)。
+  const runningRef = useRef(running);
+  useEffect(() => { runningRef.current = running; }, [running]);
   const lastFetchKey = useRef(null);
+  // 回合结束后 App 会广播 game-state-refresh。时间线/当前章来自独立的 /timeline 请求,
+  // 不会随 SSE 的 state 自动更新;监听事件重拉,避免面板停在上一章。
+  useEffect(() => {
+    const bump = () => setRefreshKey((k) => k + 1);
+    window.addEventListener('game-state-refresh', bump);
+    return () => window.removeEventListener('game-state-refresh', bump);
+  }, []);
 
   useEffect(() => {
     if (!saveId) { setData(null); setError(""); return; }
@@ -314,6 +337,11 @@ function PanelTimeline({ state }) {
   // 回到之前的世界线节点:把进度显式设回该节点章节 + 重新上锁其后锚点。
   const [rewinding, setRewinding] = useState(false);
   const doRewind = async (targetCh, label) => {
+    // 回合进行中改进度会把在途回合的进度信号冲掉;统一由 right panel 的 running 闸拦住。
+    if (runningRef.current) {
+      window.__apiToast?.(t('game.app.msg.busy_tip'), { kind: "warn", duration: 2400 });
+      return;
+    }
     if (rewinding || !saveId || !(targetCh >= 1)) return;
     const body = t('game.timeline.rewind_confirm_body', { chapter: targetCh, label: label || "" });
     const ok = (typeof window !== "undefined" && typeof window.__confirm === "function")
@@ -321,6 +349,11 @@ function PanelTimeline({ state }) {
                                  confirmLabel: t('game.timeline.rewind_confirm_ok') })
       : window.confirm(body);
     if (!ok) return;
+    // 确认框打开期间回合可能已开跑 → 再检查一次。
+    if (runningRef.current) {
+      window.__apiToast?.(t('game.app.msg.busy_tip'), { kind: "warn", duration: 2400 });
+      return;
+    }
     setRewinding(true);
     try {
       const base = (typeof window !== "undefined" && window.__API_BASE) || "";
@@ -460,7 +493,7 @@ function PanelTimeline({ state }) {
                     {isDone && chMin != null && (
                       <button
                         className="gp-anchor-rewind"
-                        disabled={rewinding}
+                        disabled={rewinding || running}
                         onClick={() => doRewind(chMin, mainTitle)}
                         title={t('game.timeline.rewind_btn')}
                         style={{ marginTop: 3, fontSize: 10.5, background: "none",
@@ -553,6 +586,7 @@ function PanelTimeline({ state }) {
       <WorldlineAnchorsSection
         saveId={saveId}
         refreshKey={refreshKey}
+        disabled={running}
         onAnchorSatisfied={() => setRefreshKey(k => k + 1)}
       />
     </div>

@@ -69,7 +69,10 @@ def upsert_canon_entity(db, script_id: int, logical_key: str, *, name: str, type
           entity_subtype = case when length(excluded.entity_subtype) > 0
                                 then excluded.entity_subtype else kb_canon_entities.entity_subtype end,
           parent_logical_key = case when length(excluded.parent_logical_key) > 0
-                                    then excluded.parent_logical_key else kb_canon_entities.parent_logical_key end
+                                    then excluded.parent_logical_key else kb_canon_entities.parent_logical_key end,
+          -- 推进 updated_at:canon 编辑器以它为乐观锁基线。知识库重建/提取走本 upsert,
+          -- 不推进版本的话,编辑器里未保存的旧内容会静默覆盖刚重建的实体。
+          updated_at = now()
         returning *
         """,
         (script_id, logical_key, name, Jsonb(aliases or []), type, summary, Jsonb(attrs or {}),
@@ -102,11 +105,13 @@ def read_canon_entities(db, script_id: int, *, progress_chapter: int | None = No
         s = f"select {sel} from kb_canon_entities where script_id = %s and {_clause}"
         a: list = [script_id, *_params]
         if entity_type:
-            s += " and type = %s"; a.append(entity_type)
+            s += " and type = %s"
+            a.append(entity_type)
         if not key_only:
             s += " order by importance desc, logical_key"
             if limit:
-                s += " limit %s"; a.append(limit)
+                s += " limit %s"
+                a.append(limit)
         return s, tuple(a)
 
     sql, args = _build(clause, params)

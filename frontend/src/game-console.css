@@ -144,6 +144,19 @@
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .gc-rail-save-display .muted-2 { font-size: 10.5px; }
+.gc-rail-save-select {
+  width: 100%;
+  min-width: 0;
+  padding: 4px 6px;
+  border: 1px solid var(--line-soft);
+  border-radius: 4px;
+  background: var(--panel-2);
+  color: var(--text);
+  font-family: var(--font-serif);
+  font-size: 13px;
+  cursor: pointer;
+}
+.gc-rail-save-select:disabled { opacity: 0.6; cursor: progress; }
 .gc-rail-quick { display: flex; gap: 6px; }
 .gc-rail-quick .btn { flex: 1; justify-content: center; }
 .gc-rail-quick .btn[data-tip] { position: relative; }
@@ -505,65 +518,6 @@
   vertical-align: -0.18em;
   animation: m-stream-cursor 1.05s steps(2) infinite;
 }
-/* ============================ RUN STATE ============================ */
-.gc-run-wrap {
-  border: 1px solid var(--line-soft);
-  border-radius: var(--r-3);
-  background: var(--panel);
-  padding: 12px 14px;
-  display: grid; gap: 10px;
-}
-.gc-run-head { display: flex; align-items: center; gap: 8px; }
-.gc-run-head-title { font-size: 12.5px; color: var(--text-quiet); font-family: var(--font-mono); }
-.gc-run-head .muted-2 { margin-left: auto; }
-
-.gc-run-dot {
-  width: 7px; height: 7px; border-radius: 999px; flex-shrink: 0;
-  background: var(--muted-3);
-}
-.gc-run-dot.done { background: var(--ok); }
-.gc-run-dot.running { background: var(--accent); box-shadow: 0 0 0 0 var(--accent); animation: pulse 1.6s infinite; }
-.gc-run-dot.pending { background: var(--muted-3); }
-
-/* line variant */
-.gc-run-line { display: grid; gap: 4px; }
-.gc-run-line-row {
-  display: grid;
-  grid-template-columns: 9px 1fr auto auto;
-  align-items: center;
-  gap: 8px;
-  font-size: 12.5px;
-  padding: 4px 0;
-  color: var(--text-quiet);
-}
-.gc-run-line-row.pending { color: var(--muted-2); }
-.gc-run-line-row.running .gc-run-label { color: var(--text); }
-.gc-run-elapsed { font-size: 11px; }
-.gc-run-detail { font-size: 11.5px; }
-.gc-run-detail summary { cursor: pointer; list-style: none; display: inline-flex; align-items: center; gap: 4px; }
-.gc-run-detail summary::-webkit-details-marker { display: none; }
-.gc-run-detail[open] summary > svg { transform: rotate(180deg); }
-.gc-run-detail > div { padding: 6px 0 4px 18px; font-family: var(--font-mono); font-size: 11.5px; }
-
-/* cards variant */
-.gc-run-cards { display: grid; gap: 6px; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); }
-.gc-run-card {
-  border: 1px solid var(--line-soft); border-radius: var(--r-2);
-  padding: 10px 12px; display: grid; gap: 4px; background: var(--bg);
-}
-.gc-run-card-head { display: flex; align-items: center; gap: 6px; font-size: 12.5px; }
-.gc-run-card-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.gc-run-card-detail { line-height: 1.55; }
-
-/* timeline variant */
-.gc-run-timeline { display: grid; gap: 2px; }
-.gc-run-tl-row { display: grid; grid-template-columns: 16px 1fr; align-items: stretch; gap: 10px; padding: 4px 0; }
-.gc-run-tl-rail { display: grid; grid-template-rows: auto 1fr; place-items: center; padding-top: 6px; }
-.gc-run-tl-line { width: 1px; flex: 1; background: var(--line); margin-top: 4px; min-height: 18px; }
-.gc-run-tl-body { display: grid; gap: 2px; padding: 2px 0; }
-.gc-run-tl-title { display: flex; justify-content: space-between; gap: 8px; font-size: 12.5px; color: var(--text-quiet); }
-.gc-run-tl-detail { font-size: 11.5px; line-height: 1.55; }
-
 /* ============================ THINKING PILL ============================ */
 /* task 92：高层"系统在思考"指示器。一行紧凑状态 + 可展开的 raw phase 详情。
    running：脉冲点 + accent label；done：ok 绿点 + 淡出（fadeOutThink 持续 1.6s，
@@ -1189,6 +1143,15 @@
   background: var(--panel-2);
 }
 .gc-chip-btn:hover { color: var(--text); background: var(--panel-3); border-color: var(--line-strong); }
+/* 生成中禁用待审/待答操作:保留可读性,但明确不可点。 */
+.gc-chip-btn:disabled,
+.gc-chip-btn:disabled:hover {
+  opacity: 0.45;
+  cursor: not-allowed;
+  color: var(--text-quiet);
+  background: var(--panel-2);
+  border-color: var(--line);
+}
 /* GM 询问选项可能是长叙事句:固定高 22px 横向 chip 会让多行文字溢出、互相叠在一起(用户反馈)。
    询问选项改成纵向全宽、可换行、左对齐、随内容长高的选项行。 */
 .gc-confirm-choices { flex-direction: column; align-items: stretch; }
@@ -1203,6 +1166,12 @@
 }
 .gc-chip-primary { background: var(--accent); border-color: var(--accent); color: #fff8f3; }
 .gc-chip-primary:hover { background: var(--accent-hover); border-color: var(--accent-hover); color: #fff8f3; }
+.gc-chip-primary:disabled,
+.gc-chip-primary:disabled:hover {
+  background: var(--panel-2);
+  border-color: var(--line);
+  color: var(--text-quiet);
+}
 
 /* ============================ RIGHT PANEL ========================= */
 .gp-panel {

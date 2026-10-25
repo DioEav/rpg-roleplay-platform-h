@@ -1,4 +1,4 @@
-/* Game Console 游戏内设置弹窗(GameSettingsModal + _read* 读取器 + SettingRow/SwitchTiny)——
+/* Game Console 游戏内设置弹窗(GameSettingsModal + _read* 读取器)——
    纯机械从 game-app.jsx 搬出,DOM/视觉/行为零变化。 */
 import React from 'react';
 import { useTranslation } from 'react-i18next';
@@ -47,6 +47,9 @@ function GameSettingsModal({ open, onClose, saveTitle, saveId }) {
   const [steerStrength, setSteerStrength] = useStateA(null);
   // acceptance 改写建议开关(用户级 user_preferences['acceptance_ab.enabled'],默认开)。行者无疆诉求:可手动关。
   const [abEnabled, setAbEnabled] = useStateA(true);
+  // 两个后端保存项各加一个 in-flight 闸:防止快速连点导致「旧请求失败回滚覆盖新请求结果」。
+  const [abBusy, setAbBusy] = useStateA(false);
+  const [steerBusy, setSteerBusy] = useStateA(false);
 
   // sync density state with external RPG_setDensity calls
   useEffectA(() => {
@@ -80,13 +83,23 @@ function GameSettingsModal({ open, onClose, saveTitle, saveId }) {
   }, [open]);
 
   const handleAbEnabled = (v) => {
+    if (abBusy) return;
+    const prev = abEnabled;
     setAbEnabled(v);
+    setAbBusy(true);
     const base = (window.__API_BASE || '');
     fetch(`${base}/api/me/preference`, {
       method: 'POST', credentials: 'include',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ 'acceptance_ab.enabled': v }),
-    }).catch(() => {});
+    }).then(async (r) => {
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok || j.ok === false) throw new Error(j.error || j.detail || `HTTP ${r.status}`);
+    }).catch((e) => {
+      // 乐观更新失败必须回滚,否则用户以为已关掉,后端仍在生成 A/B 候选。
+      setAbEnabled((cur) => (cur === v ? prev : cur));
+      window.__apiToast?.(t('game.app.settings.save_failed'), { kind: 'danger', detail: e?.message });
+    }).finally(() => setAbBusy(false));
   };
 
   const handleDensity = (d) => {
@@ -122,14 +135,26 @@ function GameSettingsModal({ open, onClose, saveTitle, saveId }) {
   };
 
   const handleSteerStrength = (v) => {
-    setSteerStrength(v);
+    if (steerBusy) return;
     if (saveId == null) return;
+    const prev = steerStrength;
+    setSteerStrength(v);
+    setSteerBusy(true);
     const base = (window.__API_BASE || '');
     fetch(`${base}/api/saves/${saveId}/settings`, {
       method: 'PATCH', credentials: 'include',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ updates: { steering_strength: v } }),
-    }).catch(() => {});
+    }).then(async (r) => {
+      const j = await r.json().catch(() => ({}));
+      // apply_settings 可能 HTTP 200 但把字段放进 rejected(锁死/非法值)。
+      const rejected = j && j.rejected && j.rejected.steering_strength;
+      if (!r.ok || j.ok === false || rejected) throw new Error(rejected || j.error || j.detail || `HTTP ${r.status}`);
+    }).catch((e) => {
+      // 失败回滚 + 提示;否则引导强度看起来已切换,实际仍按旧档跑。
+      setSteerStrength((cur) => (cur === v ? prev : cur));
+      window.__apiToast?.(t('game.app.settings.save_failed'), { kind: 'danger', detail: e?.message });
+    }).finally(() => setSteerBusy(false));
   };
 
   if (!open) return null;
@@ -275,9 +300,9 @@ function GameSettingsModal({ open, onClose, saveTitle, saveId }) {
               <div style={sublabelStyle}>{t('game.app.settings.ab_desc', 'AI 偶尔漏掉本回合该体现的剧情点时,并排给你一个改写版本供选择(最多每 5 回合一次)。关掉则始终只用首稿。')}</div>
             </div>
             <label style={{display: "flex", alignItems: "center", gap: 8, cursor: "pointer", flexShrink: 0}}>
-              <input type="checkbox" checked={abEnabled}
+              <input type="checkbox" checked={abEnabled} disabled={abBusy}
                      onChange={(e) => handleAbEnabled(e.target.checked)}
-                     style={{width: 15, height: 15, cursor: "pointer"}} />
+                     style={{width: 15, height: 15, cursor: abBusy ? "progress" : "pointer"}} />
               <span style={{fontSize: 12.5, color: "var(--text-quiet)"}}>{abEnabled ? t('game.app.settings.on') : t('game.app.settings.off')}</span>
             </label>
           </div>
@@ -292,6 +317,7 @@ function GameSettingsModal({ open, onClose, saveTitle, saveId }) {
               <div className="seg" style={{flexShrink: 0}}>
                 {STEER_OPTS.map(s => (
                   <button key={s.id} className={steerStrength === s.id ? "active" : ""}
+                          disabled={steerBusy}
                           onClick={() => handleSteerStrength(s.id)}>
                     {s.label}
                   </button>
@@ -318,22 +344,6 @@ function GameSettingsModal({ open, onClose, saveTitle, saveId }) {
     </Modal>
   );
   return createPortal(node, document.body);
-}
-
-function SettingRow({ title, desc, control }) {
-  return (
-    <div className="pl-setting-row">
-      <div className="pl-setting-label">
-        <strong>{title}</strong>
-        <p className="muted">{desc}</p>
-      </div>
-      <div className="pl-setting-control">{control}</div>
-    </div>
-  );
-}
-
-function SwitchTiny({ on, set }) {
-  return <button className={`pl-cap-toggle ${on ? "on" : ""}`} onClick={() => set(!on)} aria-pressed={on} />;
 }
 
 export { GameSettingsModal };

@@ -116,13 +116,43 @@ function MemoryPanel({ s }) {
 
 function WorldbookPanel({ s }) {
   const { t } = useTranslation();
+  const w = s.world || {};
+  const p = s.player || {};
+  const tl = w.timeline || {};
+  // /api/state 没有 worldbook/world_book 字段;真实可用的是 world/player/worldline
+  // + save 级 overlay。旧版只读不存在的 key → 主列表永远空,只剩 overlay 段。
+  const constraints = Array.isArray(s.worldline && s.worldline.constraints) ? s.worldline.constraints : [];
+  const knownEvents = Array.isArray(w.known_events) ? w.known_events : [];
+  // 兼容未来/旧 state 形状:若后端某天把世界书条目透传进 state,仍优先展示。
   const wb = s.worldbook || s.world_book || (s.content_pack && s.content_pack.worldbook) || [];
   const entries = Array.isArray(wb) ? wb : (wb.entries || []);
+  const hasWorld = !!(p.current_location || p.location || w.time || w.weather || tl.current_phase
+    || constraints.length || knownEvents.length || entries.length);
   return (
     <>
       {/* /set 同款:世界书 overlay 管理(复用电脑端组件,单一来源)。反馈#93 添加入口 */}
-      <WorldbookOverlaySection />
-      {entries.length ? (
+      <WorldbookOverlaySection saveId={s && s._raw ? s._raw.save_id : null} />
+      <Sec title={t('mobile.game_panels.status.section_world')}>
+        <KV k={t('mobile.game_panels.status.kv_location')} v={p.current_location || p.location} />
+        <KV k={t('mobile.game_panels.status.kv_time')} v={w.time} />
+        <KV k={t('mobile.game_panels.status.kv_weather')} v={w.weather} />
+        <KV k={t('game.worldbook.phase_label')} v={tl.current_phase} />
+      </Sec>
+      {constraints.length > 0 && (
+        <Sec title={t('game.worldbook.world_rules')} count={constraints.length}>
+          {constraints.map((c, i) => (
+            <div key={i} className="mp-li">· {typeof c === 'string' ? c : (c && (c.text || c.label)) || JSON.stringify(c)}</div>
+          ))}
+        </Sec>
+      )}
+      {knownEvents.length > 0 && (
+        <Sec title={t('game.worldbook.known_events')} count={knownEvents.length}>
+          {knownEvents.slice(0, 20).map((e, i) => (
+            <div key={i} className="mp-li">· {typeof e === 'string' ? e : (e && (e.text || e.title)) || JSON.stringify(e)}</div>
+          ))}
+        </Sec>
+      )}
+      {entries.length > 0 && (
         <Sec title={t('mobile.game_panels.tab.worldbook')} count={entries.length}>
           {entries.slice(0, 40).map((e, i) => (
             <div key={i} className="mp-card">
@@ -131,7 +161,8 @@ function WorldbookPanel({ s }) {
             </div>
           ))}
         </Sec>
-      ) : <Empty>{t('mobile.game_panels.worldbook.empty')}</Empty>}
+      )}
+      {!hasWorld && <Empty>{t('mobile.game_panels.worldbook.empty')}</Empty>}
     </>
   );
 }
@@ -169,12 +200,22 @@ function TimelinePanel({ s }) {
   const [data, setData] = useState(null);   // null = 未加载
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
+  const [refreshTick, setRefreshTick] = useState(0);
   const lastFetchKey = useRef(null);
+
+  // 回合结束(桌面 App 会广播 game-state-refresh)后当前章号可能变化;时间线来自独立
+  // /timeline 请求,不随 SSE 的 state 更新,监听事件重新拉取,避免手机面板停在上一章。
+  useEffect(() => {
+    const bump = () => setRefreshTick((k) => k + 1);
+    window.addEventListener('game-state-refresh', bump);
+    return () => window.removeEventListener('game-state-refresh', bump);
+  }, []);
 
   useEffect(() => {
     if (!saveId) { setData(null); setError(''); return; }
-    if (lastFetchKey.current === saveId && data !== null) return;  // 已加载,存档未变
-    lastFetchKey.current = saveId;
+    const fetchKey = `${saveId}:${refreshTick}`;
+    if (lastFetchKey.current === fetchKey && data !== null) return;  // 已加载且无变化
+    lastFetchKey.current = fetchKey;
     let cancelled = false;
     setLoading(true);
     setError('');
@@ -188,7 +229,7 @@ function TimelinePanel({ s }) {
       .catch((e) => { if (!cancelled) { setError(String(e?.message || e)); setLoading(false); } });
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [saveId]);
+  }, [saveId, refreshTick]);
 
   const w = s.world || {};
   const knownEvents = Array.isArray(w.known_events) ? w.known_events : [];
@@ -248,15 +289,53 @@ function TimelinePanel({ s }) {
 
 function ContextPanel({ s }) {
   const { t } = useTranslation();
-  const c = s.context || {};
-  const segs = Array.isArray(c.segments) ? c.segments : [];
-  if (!segs.length) return <Empty>{t('mobile.game_panels.context.empty')}</Empty>;
+  // /api/state 没有 state.context.segments;真实数据在 memory.last_context /
+  // memory.last_context_agent / memory.last_retrieval(桌面 PanelContext 同源)。
+  const mem = s.memory || {};
+  const ctx = mem.last_context || {};
+  const tokens = Number(ctx.estimated_tokens) || 0;
+  const layers = Array.isArray(ctx.layers) ? ctx.layers.length : 0;
+  const refs = Array.isArray(ctx.chapter_refs) ? ctx.chapter_refs : [];
+  const pinned = Array.isArray(mem.pinned) ? mem.pinned.length : 0;
+  const historyTurns = Number(ctx.history_turns)
+    || (Array.isArray(s.history) ? Math.floor(s.history.length / 2) : 0);
+  const plan = (s.last_context_agent && s.last_context_agent.curator_plan)
+    || (mem.last_context_agent && mem.last_context_agent.curator_plan) || {};
+  const retrieval = String(mem.last_retrieval || '').trim();
+  const planKeys = plan && typeof plan === 'object' ? Object.keys(plan).length : 0;
+  const hasData = !!(tokens || layers || refs.length || pinned || historyTurns || retrieval || planKeys);
+  if (!hasData) return <Empty>{t('mobile.game_panels.context.empty')}</Empty>;
   return (
-    <Sec title={t('mobile.game_panels.context.section_segments')} count={segs.length}>
-      {segs.map((seg, i) => (
-        <div key={i} className="mp-kv"><span className="mp-k">{seg.label}</span><span className="mp-v mono">{seg.tok} · {seg.pct}%</span></div>
-      ))}
-    </Sec>
+    <>
+      <Sec title={t('game.context.title')} count={tokens ? `${tokens} tok` : undefined}>
+        <KV k="tokens" v={tokens} />
+        <KV k={t('game.debug.context_layers')} v={layers} />
+        <KV k={t('game.memory.pinned')} v={pinned} />
+        <KV k="turn" v={historyTurns} />
+      </Sec>
+      {refs.length > 0 && (
+        <Sec title={t('game.context.title')} count={refs.length}>
+          {refs.slice(0, 20).map((c, i) => (
+            <div key={i} className="mp-li">· {typeof c === 'string' ? c : (c && (c.title || c.label)) || JSON.stringify(c)}</div>
+          ))}
+        </Sec>
+      )}
+      {(plan.intent || plan.active_goal) && (
+        <Sec title={t('game.context.curator_title')}>
+          <KV k={t('game.context.intent')} v={plan.intent || plan.active_goal} />
+          {plan.confidence != null && Number.isFinite(Number(plan.confidence)) && (
+            <KV k={t('game.context.confidence')} v={`${Math.round(Number(plan.confidence) * 100)}%`} />
+          )}
+        </Sec>
+      )}
+      {retrieval && (
+        <Sec title={t('game.context.retrieval_preview')}>
+          <div className="mp-para mono" style={{ whiteSpace: 'pre-wrap', fontSize: 11.5, maxHeight: 240, overflow: 'auto' }}>
+            {retrieval}
+          </div>
+        </Sec>
+      )}
+    </>
   );
 }
 

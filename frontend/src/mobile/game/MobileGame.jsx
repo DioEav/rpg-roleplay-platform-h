@@ -15,6 +15,8 @@ import { Icon } from '../icons.jsx';
 import { MobileComposer } from '../Composer.jsx';
 import { MobilePanel, MOBILE_PANEL_TABS } from './panels.jsx';
 import AgentModelPicker from '../../components/AgentModelPicker.jsx';
+import { capConfig } from '../../components/ModelConfigInterceptModal.jsx';
+import { AcceptanceAbPanel } from '../../components/AcceptanceAbPanel.jsx';
 import { useStickToBottom } from '../../hooks/useStickToBottom.js';
 import { stripNarrativeOps } from '../../narrative-strip.js';
 import { SLASH_COMMANDS } from '../../game-composer.jsx';
@@ -64,16 +66,21 @@ function LeftDrawer({ open, onClose, gc }) {
         )}
         <div className="ld-section">
           <div className="ld-head"><span>{t('mobile.game.left_drawer.saves_section')}</span><button className="add" onClick={() => { onClose(); onNew && onNew(); }}><Icon name="plus" size={14} /></button></div>
-          {(realSaves || []).map((s) => (
-            <button key={s.id} className={`save-card ${s.id === activeSave?.id ? 'current' : ''}`} onClick={() => { onClose(); gc?.onSwitchSave && gc.onSwitchSave(s.id); }} style={{ width: '100%', textAlign: 'left' }}>
-              <span className="save-thumb"><Icon name={s.id === activeSave?.id ? 'play' : 'save'} size={16} /></span>
+          {(realSaves || []).map((s) => {
+            // id 可能由不同端点序列化成 number/string,统一按字符串比较,
+            // 否则「当前档」高亮和图标会错位(与桌面左栏保持一致)。
+            const isCurrent = s.id != null && activeSave?.id != null && String(s.id) === String(activeSave.id);
+            return (
+            <button key={s.id} className={`save-card ${isCurrent ? 'current' : ''}`} onClick={() => { onClose(); gc?.onSwitchSave && gc.onSwitchSave(s.id); }} style={{ width: '100%', textAlign: 'left' }}>
+              <span className="save-thumb"><Icon name={isCurrent ? 'play' : 'save'} size={16} /></span>
               <span className="save-info">
                 <strong>{s.title || t('mobile.game.left_drawer.save_default_title', { id: s.id })}</strong>
                 <span className="meta">{s.script_title || ''}<span className="mono">· {Number(s.branch_count) || 0} {t('mobile.game.left_drawer.branches')}{s.updated_at ? ` · ${s.updated_at}` : ''}</span></span>
               </span>
-              {s.id === activeSave?.id && <span className="save-check"><Icon name="check" size={17} /></span>}
+              {isCurrent && <span className="save-check"><Icon name="check" size={17} /></span>}
             </button>
-          ))}
+            );
+          })}
           {(!realSaves || !realSaves.length) && <div className="pl-empty" style={{ padding: '12px 4px', fontSize: 12.5 }}>{t('mobile.game.left_drawer.no_saves')}</div>}
           <button className="btn ghost" style={{ marginTop: 8, width: '100%' }} onClick={() => { onClose(); onSave && onSave(); }}><Icon name="save" size={13} /> {t('mobile.game.left_drawer.manual_save')}</button>
         </div>
@@ -148,8 +155,13 @@ function SheetHost({ sheet, onClose, gc, msgActions }) {
   } else if (type === 'attach') {
     title = t('mobile.game.sheet.attach_title'); sub = t('mobile.game.sheet.attach_sub');
     const groups = [
-      { title: t('mobile.game.sheet.attach_group_local'), items: [{ id: 'file', ic: 'file', t: t('mobile.game.sheet.attach_file') }, { id: 'image', ic: 'image', t: t('mobile.game.sheet.attach_image') }] },
-      { title: t('mobile.game.sheet.attach_group_script'), items: [{ id: 'chapter', ic: 'book', t: t('mobile.game.sheet.attach_chapter') }, { id: 'card', ic: 'cards', t: t('mobile.game.sheet.attach_card') }, { id: 'world', ic: 'world', t: t('mobile.game.sheet.attach_worldbook') }] },
+      // 只保留真的能上传的内容:file(文本类会被后端注入正文)与 card(角色卡文件,
+      // 可由 agent 的 import_character_card 工具读取)。旧版还提供 chapter/world/image:
+      //   · chapter/world 只塞了没有 data_url 的占位对象 → /api/chat 的 _save_attachments
+      //     直接抛「附件内容为空」,整个请求失败;
+      //   · image 在纯文本管线里只会记一句“图片已上传”,GM 看不到图,桌面因此已隐藏附件入口。
+      { title: t('mobile.game.sheet.attach_group_local'), items: [{ id: 'file', ic: 'file', t: t('mobile.game.sheet.attach_file') }] },
+      { title: t('mobile.game.sheet.attach_group_script'), items: [{ id: 'card', ic: 'cards', t: t('mobile.game.sheet.attach_card') }] },
     ];
     body = (
       <div style={{ display: 'grid', gap: 14 }}>
@@ -208,25 +220,37 @@ function SheetHost({ sheet, onClose, gc, msgActions }) {
     const idx = sheet.data;
     const m = gc.history[idx] || {};
     const isGM = m.role === 'assistant';
+    // 生成中禁止分支/重生成/回滚(桌面 MsgActions 同样 disabled);酒馆档的分支/回退
+    // 是半生效操作,也一并禁用。动作函数内部还有二次守卫,防止 sheet 在开跑后仍可点。
+    const busy = !!(gc.runState && gc.runState.running);
+    const isTavern = !!(gc.game && gc.game._raw && gc.game._raw.isTavern);
+    const branchDisabled = busy || isTavern;
     title = isGM ? t('mobile.game.sheet.msg_title_gm') : t('mobile.game.sheet.msg_title_player');
     body = (
       <div className="sheet-list">
+        {branchDisabled && (
+          <div className="sheet-sub" style={{ padding: '2px 14px 8px', color: 'var(--muted)' }}>
+            {busy
+              ? t('game.app.msg.busy_tip')
+              : t('mobile.game.sheet.tavern_branch_hint', { defaultValue: '酒馆存档请在酒馆页操作分支 / 回退' })}
+          </div>
+        )}
         <button className="sheet-item" onClick={() => { onClose(); msgActions.copy(idx); }}>
           <span className="sheet-ico"><Icon name="copy" size={18} /></span>
           <span className="sheet-tx"><strong>{t('mobile.game.sheet.msg_copy')}</strong><span>{t('mobile.game.sheet.msg_copy_desc')}</span></span>
         </button>
-        <button className="sheet-item" onClick={() => { onClose(); msgActions.fork(idx); }}>
+        <button className="sheet-item" disabled={branchDisabled} onClick={() => { onClose(); msgActions.fork(idx); }}>
           <span className="sheet-ico"><Icon name="fork" size={18} /></span>
           <span className="sheet-tx"><strong>{t('mobile.game.sheet.msg_fork')}</strong><span>{t('mobile.game.sheet.msg_fork_desc')}</span></span>
         </button>
         {isGM && (
-          <button className="sheet-item" onClick={() => { onClose(); msgActions.regen(idx); }}>
+          <button className="sheet-item" disabled={branchDisabled} onClick={() => { onClose(); msgActions.regen(idx); }}>
             <span className="sheet-ico"><Icon name="refresh" size={18} /></span>
             <span className="sheet-tx"><strong>{t('mobile.game.sheet.msg_regen')}</strong><span>{t('mobile.game.sheet.msg_regen_desc')}</span></span>
           </button>
         )}
         <div className="sheet-divider" />
-        <button className="sheet-item danger" onClick={() => { onClose(); msgActions.rollback(idx); }}>
+        <button className="sheet-item danger" disabled={branchDisabled} onClick={() => { onClose(); msgActions.rollback(idx); }}>
           <span className="sheet-ico"><Icon name="trash" size={18} /></span>
           <span className="sheet-tx"><strong>{t('mobile.game.sheet.msg_rollback')}</strong><span>{t('mobile.game.sheet.msg_rollback_desc')}</span></span>
         </button>
@@ -313,12 +337,86 @@ function ModelSheetBody({ gc, onClose }) {
   );
 }
 
+/* MobileConfigCard — config_card 的移动端渲染(ask_default / missing_key)。
+   桌面 ConfirmStrip 有完整实现,但移动端的 confirm-zone 是另一套 UI;旧版直接把这些卡片
+   当普通问句渲染 → 没有模型选择器/“用默认模型生成”/“继续”按钮,hard 拦截也没有弹窗,
+   用户只能 dismiss。这里复用同一个 AgentModelPicker + 同一组 gc config 回调。 */
+function MobileConfigCard({ item, handle, running, gc }) {
+  const { t } = useTranslation();
+  const cap = capConfig(item.capability);
+  const model = item.model || '';
+  const mode = item.mode || '';
+  const [ready, setReady] = useState(false);
+  useEffect(() => {
+    if (mode !== 'missing_key') return;
+    const onCreds = () => setReady(true);
+    window.addEventListener('rpg-credentials-updated', onCreds);
+    return () => window.removeEventListener('rpg-credentials-updated', onCreds);
+  }, [mode]);
+  const goSettings = () => {
+    if (gc.onConfigSettings) gc.onConfigSettings();
+    if (gc.onDismissConfirm) gc.onDismissConfirm(handle);
+  };
+  return (
+    <div className="cb-q">
+      <div className="cb-q-row">
+        <span className="cb-tag gm">{t('game.confirm.config_tag', { defaultValue: '配置' })}</span>
+        <span className="cb-q-text">{item.question || ''}</span>
+      </div>
+      {mode === 'ask_default' && (
+        <div className="cb-choices">
+          <button className="cb-choice primary" disabled={running}
+            onClick={() => gc.onConfigDefault && gc.onConfigDefault(handle, item, model)}>
+            {t('game.composer.config_generate_with', { model: model || cap.label })}
+          </button>
+          <button className="cb-choice" onClick={goSettings}>{t('game.composer.config_go_model_settings')}</button>
+        </div>
+      )}
+      {mode === 'missing_key' && (
+        <div style={{ display: 'grid', gap: 8, paddingTop: 6 }}>
+          <AgentModelPicker
+            prefPrefix={cap.prefPrefix}
+            capabilityFilter={cap.capabilityFilter}
+            variant="bare"
+            preferProvider={item.api_id || null}
+            defaultModel={model || null}
+            configHash="settings-models"
+            onChange={(_a, _m, source) => { if (source !== 'init') setReady(true); }}
+          />
+          <div className="cb-choices">
+            <button className="cb-choice primary" disabled={!ready || running}
+              onClick={() => gc.onConfigContinue && gc.onConfigContinue(handle, item, t('game.composer.config_continue_label'))}>
+              {t('game.composer.config_continue_label')}
+            </button>
+            <button className="cb-choice" onClick={goSettings}>{t('game.composer.config_go_settings')}</button>
+          </div>
+        </div>
+      )}
+      {(mode === 'model_not_configured' || item.hard === true) && (
+        <div className="cb-choices">
+          <button className="cb-choice primary" disabled={running}
+            onClick={() => gc.onHardConfig && gc.onHardConfig(item)}>
+            {t('game.composer.config_go_settings')}
+          </button>
+        </div>
+      )}
+      <div className="cb-choices" style={{ marginTop: 6 }}>
+        <button className="cb-choice" onClick={() => gc.onDismissConfirm && gc.onDismissConfirm(handle)}>
+          {t('mobile.game.confirm.dismiss')}
+        </button>
+      </div>
+    </div>
+  );
+}
+
 /* ===================== 主组件 ===================== */
 export function MobileGame(gc) {
   const { t } = useTranslation();
   const {
     game, history, runState, text, setText, onSend, onStop, attachments,
     permission, pendingWrites, pendingQuestions, onApprove, onReject, onAnswerQuestion, onDismissConfirm,
+    onHardConfig,
+    rewriteAlt, acceptanceIdx, acceptanceOriginal, abBusy, onChooseAcceptance, onDismissAcceptance,
     clicheNotice, onRetryCliche, onDismissCliche, hasError, activeSave, tabConflictBanner, setTabConflictBanner,
   } = gc;
 
@@ -350,9 +448,45 @@ export function MobileGame(gc) {
   // 手机 GM 询问可折叠(抽屉):默认展开;新询问到达自动展开;用户可手动点头部收起腾出视野。
   // 发消息时 running=true → confirm-zone 自动隐藏(相当于关上一条),新询问回来 qSig 变→自动展开。
   const [qCollapsed, setQCollapsed] = useState(false);
-  const qSig = (pendingQuestions || []).map((q) => q && q.id).join(',');
+  const isConfigCard = (q) => !!(q && q.kind === 'config_card');
+  const isHardConfig = (q) => isConfigCard(q) && q.hard === true && q.mode === 'model_not_configured';
+  // 保留原始 index:后端 clearQuestions/pendingWrite 对老数据（没有 id）按 index 兜底。
+  // 过滤掉 hard config 后 index 会错位，所以这里成对保存 {q, idx}。
+  const questionItems = (pendingQuestions || [])
+    .map((q, idx) => ({ q, idx }))
+    .filter(({ q }) => !!(q && !isHardConfig(q)));
+  const hardCfg = (pendingQuestions || []).find(isHardConfig) || null;
+  const hardKey = hardCfg ? (hardCfg.id != null ? `id:${hardCfg.id}` : `q:${hardCfg.question || ''}`) : null;
+  const lastHardRef = useRef(null);
+  // hard 配置卡出现时自动打开阻塞弹窗（与桌面 ConfirmStrip 同语义）；用 key 去重，
+  // 避免每次 state 刷新重复 onHardConfig。
+  useEffect(() => {
+    if (hardKey && hardKey !== lastHardRef.current && onHardConfig) {
+      lastHardRef.current = hardKey;
+      onHardConfig(hardCfg);
+    }
+    if (!hardKey) lastHardRef.current = null;
+    // hardCfg 内容变化不影响去重 key；只依赖 key/回调。
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hardKey, onHardConfig]);
+  const qSig = questionItems.map(({ q }) => (q && q.id != null ? q.id : (q && q.question) || '')).join(',');
   useEffect(() => { setQCollapsed(false); }, [qSig]);
   useEffect(() => { const ta = taRef.current; if (!ta) return; ta.style.height = 'auto'; ta.style.height = Math.min(ta.scrollHeight, 120) + 'px'; }, [text]);
+
+  // 切存档时关闭移动端本地浮层。父组件 resetSessionUiState 清的是 App 级状态,
+  // 触达不到 MobileGame 内部的 sheet/抽屉/长按态;留着会把上一档的消息 sheet、
+  // 附件/模型 sheet 或编辑中的表单叠到新档上。
+  const activeSaveKey = activeSave && activeSave.id != null ? String(activeSave.id) : null;
+  const prevSaveKeyRef = useRef(undefined);
+  useEffect(() => {
+    if (prevSaveKeyRef.current === undefined) { prevSaveKeyRef.current = activeSaveKey; return; }
+    if (prevSaveKeyRef.current !== activeSaveKey) {
+      prevSaveKeyRef.current = activeSaveKey;
+      setLeftOpen(false); setRightOpen(false); setPeekOpen(false);
+      setSheet(null); setPressed(null); setQCollapsed(false);
+      if (lpTimer.current) { clearTimeout(lpTimer.current); lpTimer.current = null; }
+    }
+  }, [activeSaveKey]);
 
   const closeAll = () => { setLeftOpen(false); setRightOpen(false); };
 
@@ -361,10 +495,30 @@ export function MobileGame(gc) {
   const startPress = (idx) => { lpTimer.current = setTimeout(() => { setPressed(idx); if (navigator.vibrate) navigator.vibrate(12); setSheet({ type: 'msg', data: idx }); }, 420); };
   const cancelPress = () => clearTimeout(lpTimer.current);
 
+  // 酒馆档误载进游戏台时，分支/回退/重生成对酒馆对话是半生效操作（桌面已隐藏 fork）。
+  // 生成中这些操作会与在途 SSE 竞态（桌面 MsgActions 会 disabled），移动端长按菜单也必须拦。
+  const isTavernSave = !!(gc.game && gc.game._raw && gc.game._raw.isTavern);
+  const blockMsgBranchAction = () => {
+    if (gc.runState && gc.runState.running) {
+      window.__apiToast?.(t('game.app.msg.busy_tip'), { kind: 'warn', duration: 2400 });
+      return true;
+    }
+    if (isTavernSave) {
+      window.__apiToast?.(t('mobile.game.sheet.tavern_branch_hint', { defaultValue: '酒馆存档请在酒馆页操作分支 / 回退' }), { kind: 'warn', duration: 3000 });
+      return true;
+    }
+    return false;
+  };
+
   const msgActions = {
     copy: (idx) => { try { navigator.clipboard?.writeText(gc.history[idx]?.content || ''); } catch (_) {} setPressed(null); window.__apiToast?.(t('mobile.game.toast.copied'), { kind: 'ok', duration: 1200 }); },
-    regen: (idx) => { setPressed(null); gc.onRegenerate && gc.onRegenerate(idx); },
+    regen: (idx) => {
+      if (blockMsgBranchAction()) return;
+      setPressed(null);
+      gc.onRegenerate && gc.onRegenerate(idx);
+    },
     fork: async (idx) => {
+      if (blockMsgBranchAction()) return;
       setPressed(null);
       try {
         const sid = activeSave?.id;
@@ -378,10 +532,12 @@ export function MobileGame(gc) {
       } catch (e) { window.__apiToast?.(t('mobile.game.toast.fork_fail'), { kind: 'danger', detail: e?.message }); }
     },
     rollback: (idx) => {
+      if (blockMsgBranchAction()) return;
       setPressed(null);
       setSheet({ type: 'rollback_confirm', data: idx });
     },
     _doRollback: async (idx) => {
+      if (blockMsgBranchAction()) { setSheet(null); setPressed(null); return; }
       try {
         const sid = activeSave?.id;
         if (!sid) { window.__apiToast?.(t('mobile.game.toast.rollback_fail'), { kind: 'danger' }); return; }
@@ -401,9 +557,12 @@ export function MobileGame(gc) {
     if (cmd.id === 'debug') { gc.onShowSse && gc.onShowSse(); return; }
     if (cmd.id === 'save') { gc.onSave && gc.onSave(); return; }
     if (cmd.id === 'retry') { gc.onRetry && gc.onRetry(); return; }
-    // 其余:插入命令前缀到输入框(对齐电脑端 onSlashPick 的"挑命令"语义)
-    if (gc.onSlashPick) gc.onSlashPick(cmd);
-    setText((v) => (v && v !== '/' ? v.replace(/\/$/, '') : '') + cmd.trig);
+    // 其余:把命令前缀写入输入框。
+    // 注意移动端命令对象是 {id, trig, label},而桌面 onSlashPick / Composer 认的是 trigger ——
+    // 直接传过去会留下 pickedCommand.trigger === undefined(跨断点切桌面时 Composer 渲染会崩)。
+    // 移动端不需要命令 chip:清掉旧的 pickedCommand,把 trigger 文本填进输入框即可。
+    if (gc.onClearCommand) gc.onClearCommand();
+    setText(cmd.trig);
     setTimeout(() => taRef.current?.focus(), 60);
   };
 
@@ -412,10 +571,17 @@ export function MobileGame(gc) {
   const onStage = Array.isArray(game.active_entities) ? game.active_entities
     : (game.encounter && Array.isArray(game.encounter.combatants) ? game.encounter.combatants : []);
   const objective = (game.memory && game.memory.current_objective) || '';
-  const pendCount = (pendingWrites?.length || 0) + (pendingQuestions?.length || 0);
+  const pendCount = (pendingWrites?.length || 0) + questionItems.length;
   const suggestions = Array.isArray(game.suggestions) ? game.suggestions : [];
 
-  const submit = () => { const tt = String(text || '').trim(); if (!tt || running) return; onSend(); };
+  const submit = () => {
+    const tt = String(text || '').trim();
+    const hasAttachments = Array.isArray(attachments) && attachments.length > 0;
+    // 附件-only 也应可发送(桌面 Composer 允许):旧逻辑要求文本非空,移动端选了文件后
+    // 必须再打一句话才能发。
+    if ((!tt && !hasAttachments) || running) return;
+    onSend();
+  };
 
   return (
     <div className="m-root">
@@ -505,6 +671,20 @@ export function MobileGame(gc) {
           )}
         </div>
 
+        {/* acceptance A/B 改写候选:移动端旧版没有渲染这个面板,候选生成后直接消失。
+            现在复用桌面同一组件 + 同一 chooseAcceptance 回调;生成中由 busy 禁用。 */}
+        {rewriteAlt && (
+          <div style={{ padding: '0 10px 8px' }}>
+            <AcceptanceAbPanel
+              alt={rewriteAlt}
+              original={acceptanceOriginal}
+              busy={!!abBusy || running}
+              onChoose={(choice) => onChooseAcceptance && onChooseAcceptance(acceptanceIdx, choice)}
+              onDismiss={onDismissAcceptance}
+            />
+          </div>
+        )}
+
         {/* 待确认(找回 pending writes/questions + cliche) */}
         {!running && (pendCount > 0 || clicheNotice) && (
           <div className="confirm-zone">
@@ -526,36 +706,49 @@ export function MobileGame(gc) {
                     <span className={'cb-chev' + (qCollapsed ? '' : ' open')}><Icon name="chevron_down" size={15} /></span>
                   </button>
                   <div className={'cb-body' + (qCollapsed ? ' collapsed' : '')}>
-                    {(pendingQuestions || []).map((q) => {
+                    {questionItems.map(({ q, idx }) => {
+                      // 统一句柄:{id, index}。老 pending(没有 id)靠 index 兜底;直接传
+                      // 原始对象会让 _matchPending 拿不到 index,点击后卡片不消失/后端定位不到。
+                      const handle = { id: q.id != null ? q.id : null, index: idx };
+                      if (isConfigCard(q)) {
+                        return <MobileConfigCard key={`q:${q.id != null ? q.id : idx}`} item={q} handle={handle} running={running} gc={gc} />;
+                      }
                       // 兼容新旧数据形态:question/text 取一,options/choices 取一
                       const qText = q.question || q.text;
-                      const qOpts = q.options || q.choices;
+                      const qOpts = Array.isArray(q.options) ? q.options
+                        : (Array.isArray(q.choices) ? q.choices : []);
+                      // options 可能是对象:展示和回传都用同一个字符串值,避免 startRun 收到
+                      // "[object Object]" 或后端收到对象。
+                      const choiceOf = (c) => (typeof c === 'string' ? c : (c && (c.text || c.label || c.value || c.id)) || String(c));
                       return (
-                        <div key={q.id} className="cb-q">
+                        <div key={`q:${q.id != null ? q.id : idx}`} className="cb-q">
                           <div className="cb-q-row"><span className="cb-tag gm">{t('mobile.game.confirm.gm_question_tag')}</span><span className="cb-q-text">{qText}</span></div>
                           <div className="cb-choices">
-                            {(qOpts || []).map((c, i) => {
-                              const label = typeof c === 'string' ? c : (c.text || c.label || c.id || JSON.stringify(c));
+                            {qOpts.map((c, i) => {
+                              const label = typeof c === 'string' ? c : ((c && (c.text || c.label || c.value || c.id)) || JSON.stringify(c));
                               return (
-                                <button key={i} className={'cb-choice' + (i === 0 ? ' primary' : '')} onClick={() => onAnswerQuestion(q, c)}>{label}</button>
+                                <button key={i} className={'cb-choice' + (i === 0 ? ' primary' : '')} onClick={() => onAnswerQuestion(handle, choiceOf(c))}>{label}</button>
                               );
                             })}
-                            <button className="cb-choice" onClick={() => onDismissConfirm(q)}>{t('mobile.game.confirm.dismiss')}</button>
+                            <button className="cb-choice" onClick={() => onDismissConfirm(handle)}>{t('mobile.game.confirm.dismiss')}</button>
                           </div>
                         </div>
                       );
                     })}
-                    {(pendingWrites || []).map((wr) => (
-                      <div key={wr.id} className={'cb-w ' + (wr.risk || 'low')}>
-                        <div className="cb-w-row"><span className={'cb-tag risk ' + (wr.risk || 'low')}><Icon name="warn" size={11} /> {t('mobile.game.confirm.write_tag')}</span><span className="cb-field mono">{wr.field || wr.path || ''}</span></div>
-                        {wr.to != null && <div className="cb-to">→ {typeof wr.to === 'object' ? JSON.stringify(wr.to) : String(wr.to)}</div>}
-                        {wr.reason && <div className="cb-w-reason">{wr.reason}</div>}
-                        <div className="cb-actions">
-                          <button className="cb-allow" onClick={() => onApprove(wr)}>{t('mobile.game.confirm.allow')}</button>
-                          <button className="cb-deny" onClick={() => onReject(wr)}>{t('mobile.game.confirm.deny')}</button>
+                    {(pendingWrites || []).map((wr, idx) => {
+                      const handle = { id: wr.id != null ? wr.id : null, index: idx };
+                      return (
+                        <div key={`w:${wr.id != null ? wr.id : idx}`} className={'cb-w ' + (wr.risk || 'low')}>
+                          <div className="cb-w-row"><span className={'cb-tag risk ' + (wr.risk || 'low')}><Icon name="warn" size={11} /> {t('mobile.game.confirm.write_tag')}</span><span className="cb-field mono">{wr.field || wr.path || ''}</span></div>
+                          {wr.to != null && <div className="cb-to">→ {typeof wr.to === 'object' ? JSON.stringify(wr.to) : String(wr.to)}</div>}
+                          {wr.reason && <div className="cb-w-reason">{wr.reason}</div>}
+                          <div className="cb-actions">
+                            <button className="cb-allow" onClick={() => onApprove(handle)}>{t('mobile.game.confirm.allow')}</button>
+                            <button className="cb-deny" onClick={() => onReject(handle)}>{t('mobile.game.confirm.deny')}</button>
+                          </div>
                         </div>
-                      </div>
-                    ))}
+                      );
+                    })}
                   </div>
                 </>
               )}

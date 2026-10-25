@@ -48,7 +48,8 @@ def _worldbook_section(script_id: int, scan_text: str) -> str:
         chunk = f"- 【{title}】{body}"
         if used + len(chunk) > _CAP_WORLDBOOK:
             break
-        lines.append(chunk); used += len(chunk)
+        lines.append(chunk)
+        used += len(chunk)
     return "\n".join(lines)
 
 
@@ -72,7 +73,8 @@ def _characters_section(script_id: int, scan_text: str, chapter_index: int | Non
             continue
         if used + len(chunk) > _CAP_CHARACTERS:
             break
-        lines.append(chunk); used += len(chunk)
+        lines.append(chunk)
+        used += len(chunk)
     return "\n\n".join(lines)
 
 
@@ -105,7 +107,8 @@ def _canon_section(db, script_id: int, scan_text: str, chapter_index: int | None
         chunk = f"- {name}({(r.get('type') or '').strip() or '实体'}){('：' + summ) if summ else ''}"
         if used + len(chunk) > _CAP_CANON:
             break
-        lines.append(chunk); used += len(chunk)
+        lines.append(chunk)
+        used += len(chunk)
         if len(lines) >= _MAX_CANON:
             break
     return "\n".join(lines)
@@ -157,7 +160,8 @@ def _summary_section(db, script_id: int, chapter_index: int | None) -> str:
         chunk = f"- 第{r['chapter_index']}章：{_clip(raw, 280)}"
         if used + len(chunk) > _CAP_SUMMARY:
             break
-        lines.append(chunk); used += len(chunk)
+        lines.append(chunk)
+        used += len(chunk)
     return "\n".join(lines)
 
 
@@ -207,6 +211,22 @@ def _writing_rules_section(db, sid: int) -> str:
     if not rules:
         return ""
     return "【作者写作规范(最高优先,务必遵守)】\n" + rules[:4000]
+
+
+def build_writing_rules_block(script_id: int) -> str:
+    """读取并渲染作者写作规范块,供「编辑器右栏聊天」的系统提示直接注入。
+
+    修:此前 writing_rules 只进入续写/改写、内联 ghost 和 get_chapter_context 工具;
+    右栏 agent 若没调该工具就完全看不到写作规范,和「每次生成都会遵守」的 UI 文案不符。
+    与 A 层环境块共用同一 4000 字上限;任何 DB 异常都静默返回空串,不阻断对话。
+    """
+    try:
+        from platform_app.db import connect, init_db
+        init_db()
+        with connect() as db:
+            return _writing_rules_section(db, int(script_id))
+    except Exception:
+        return ""
 
 
 EDITOR_ENVIRONMENT: list[dict[str, Any]] = [

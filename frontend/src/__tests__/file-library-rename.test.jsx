@@ -149,14 +149,15 @@ describe('FileLibrary — 重命名', () => {
 // 锁两条:卡片删除按钮(inline-link 文字色)与确认弹窗按钮(primary 背景色)必须把
 // -esndbs 后缀变量真正写进 style 属性(getButtonStyles 的映射产物)。
 describe('FileLibrary — 删除按钮红色(结构化 style 落地)', () => {
-  it('卡片删除按钮 style 含 --awsui-style-color-default-esndbs: #d63031', async () => {
+  it('卡片删除按钮 style 含 --awsui-style-color-default-esndbs: var(--danger)', async () => {
     stubApi();
     render(<FileLibrary />);
     const btn = await screen.findByRole('button', { name: /删除/ });
     const style = btn.getAttribute('style') || '';
     expect(style, `扁平 CSS 变量被 getButtonStyles 丢弃,实际 style=${style}`)
       .toContain('--awsui-style-color-default-esndbs');
-    expect(style).toContain('#d63031');
+    // 颜色走主题令牌(--danger),不再写死 #d63031;断言令牌真正落到 DOM 上。
+    expect(style).toContain('var(--danger)');
     // hover/active 必须同时设,否则悬停回退默认蓝
     expect(style).toContain('--awsui-style-color-hover-esndbs');
     expect(style).toContain('--awsui-style-color-active-esndbs');
@@ -181,7 +182,8 @@ describe('FileLibrary — 删除按钮红色(结构化 style 落地)', () => {
     const style = confirmBtn.getAttribute('style') || '';
     expect(style, `扁平 --btn-bg 被丢弃,实际 style=${style}`)
       .toContain('--awsui-style-background-default-esndbs');
-    expect(style).toContain('#d63031');
+    // 同理:背景色用主题危险色令牌,不写死 hex。
+    expect(style).toContain('var(--danger)');
     delete window.toast;
   });
 });

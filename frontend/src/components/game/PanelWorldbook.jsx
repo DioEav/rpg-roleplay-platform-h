@@ -10,6 +10,7 @@ function PanelWorldbook({ state }) {
   // task 33：兜底 world / player / worldline.constraints 缺失
   const w = (state && state.world) || {};
   const p = (state && state.player) || {};
+  const saveId = (state && state._raw && state._raw.save_id) || null;
   const tl = (w && w.timeline) || {};
   const constraints = Array.isArray(state && state.worldline && state.worldline.constraints)
     ? state.worldline.constraints : [];
@@ -22,7 +23,7 @@ function PanelWorldbook({ state }) {
   };
   return (
     <div className="gp-stack">
-      <WorldbookOverlaySection />
+      <WorldbookOverlaySection saveId={saveId} />
       <div className="gp-section">
         <div className="section-head">
           <h3>{t('game.worldbook.location_time')}</h3>

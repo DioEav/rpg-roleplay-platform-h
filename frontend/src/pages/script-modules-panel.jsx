@@ -32,7 +32,7 @@ import { RebuildEstimateModal } from '../components/RebuildEstimateModal.jsx';
 // 收敛处置④:「知识库中心」新增三张模块卡(后端并行注册,契约:
 // POST /api/scripts/{id}/rebuild/{module}[/estimate] 与既有 7 模块完全同构,
 // useScriptRebuild 的 cardProps(module) 天然适配,零改动即可接入)。
-const EXTRA_MODULE_CARDS = [
+export const EXTRA_MODULE_CARDS = [
   {
     id: 'facts_refine',
     titleKey: 'modules.facts_refine.title',

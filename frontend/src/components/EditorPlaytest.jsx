@@ -75,11 +75,11 @@ export function usePlaytest(scriptId) {
   const playtest = useCallback(async (chapterIndex, chapterTitle) => {
     if (inFlightRef.current) return;
     if (!scriptId) {
-      window.__apiToast?.(t('md_editor.playtest.no_script', { defaultValue: '请先选择剧本' }), { kind: 'warning' });
+      window.__apiToast?.(t('md_editor.playtest.no_script', { defaultValue: '请先选择剧本' }), { kind: 'warn' });
       return;
     }
     if (chapterIndex == null) {
-      window.__apiToast?.(t('md_editor.playtest.no_chapter', { defaultValue: '请先打开一个章节' }), { kind: 'warning' });
+      window.__apiToast?.(t('md_editor.playtest.no_chapter', { defaultValue: '请先打开一个章节' }), { kind: 'warn' });
       return;
     }
 
@@ -89,10 +89,14 @@ export function usePlaytest(scriptId) {
       title: chapterTitle || '',
       defaultValue: '将从「{{title}}」创建一个新的测试存档「{{n}}」并在新标签页打开游戏台，用于快速验收本章效果。是否继续？',
     });
-    const ok = await window.__confirm?.({
-      title: t('md_editor.playtest.confirm_title', { defaultValue: '试玩本章？' }),
-      message: confirmMsg,
-    });
+    // 修:宿主没安装 window.__confirm 时(单测/换壳)旧代码 await undefined?.() → undefined,
+    // if(!ok) return 会静默无反应。补原生 confirm 兜底,与 ChapterHistory 的删除确认一致。
+    const ok = window.__confirm
+      ? await window.__confirm({
+          title: t('md_editor.playtest.confirm_title', { defaultValue: '试玩本章？' }),
+          message: confirmMsg,
+        })
+      : window.confirm(confirmMsg);
     if (!ok) return;
 
     inFlightRef.current = true;
@@ -124,15 +128,18 @@ async function runPlaytest({ scriptId, chapterIndex, saveTitle, t, allowMarkRevi
     }
   } catch (e) {
     if (allowMarkReviewedRetry && isReviewGateError(e)) {
-      const wantsMark = await window.__confirm?.({
-        title: t('md_editor.playtest.review_gate_title', { defaultValue: '剧本尚未通过 KB 复核' }),
-        message: t('md_editor.playtest.review_gate_msg', {
-          defaultValue: '该剧本还没有标记为「已复核」，无法开局。是否现在标记为已复核并重试试玩？(请确认已在「KB 核查」里检查过实体/时间线/世界观)',
-        }),
-        danger: false,
+      const gateMsg = t('md_editor.playtest.review_gate_msg', {
+        defaultValue: '该剧本还没有标记为「已复核」，无法开局。是否现在标记为已复核并重试试玩？(请确认已在「KB 核查」里检查过实体/时间线/世界观)',
       });
+      const wantsMark = window.__confirm
+        ? await window.__confirm({
+            title: t('md_editor.playtest.review_gate_title', { defaultValue: '剧本尚未通过 KB 复核' }),
+            message: gateMsg,
+            danger: false,
+          })
+        : window.confirm(gateMsg);
       if (!wantsMark) {
-        window.__apiToast?.(t('md_editor.playtest.review_gate_declined', { defaultValue: '已取消:剧本未复核' }), { kind: 'warning' });
+        window.__apiToast?.(t('md_editor.playtest.review_gate_declined', { defaultValue: '已取消:剧本未复核' }), { kind: 'warn' });
         return;
       }
       try {

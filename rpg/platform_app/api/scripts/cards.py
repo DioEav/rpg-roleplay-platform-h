@@ -36,10 +36,21 @@ async def api_script_character_card(script_id: int, card_id: int, user=Depends(r
 
 @router.post("/api/scripts/{script_id}/character-cards")
 async def api_script_upsert_character_card(request: Request, script_id: int, user=Depends(require_user)):
-    """创建/更新剧本角色卡（payload 传 id 则 update，否则 insert）。"""
+    """创建/更新剧本角色卡（payload 传 id 则 update，否则 insert）。
+
+    更新时可带 base_row_version(可选,乐观锁):与服务端 row_version 不一致返回
+    409 + server_card,前端转三方合并。不传保持覆盖语义(导入/老客户端不受影响)。
+    """
     body = await request.json()
     try:
         return json_response({"ok": True, "card": knowledge.upsert_character_card(user["id"], script_id, body)})
+    except knowledge.CharacterCardConflict as conflict:
+        # 冲突时未落库:服务端 DTO 带上 row_version/updated_at,前端据此刷新基线并合并。
+        return json_response(
+            {"ok": False, "conflict": True, "error": "character_card 已被他方更新",
+             "server_card": conflict.server_card},
+            status_code=409,
+        )
     except ValueError as exc:
         return value_error_response(exc)
     except Exception as exc:

@@ -22,8 +22,8 @@ function WritingRules({ scriptId, onClose }) {
     try {
       const r = await api().scripts.saveWritingRules(scriptId, text || '');
       if (r && r.ok) { toast(t('md_editor.rules.saved', { defaultValue: '写作规范已保存,下次对话起生效' }), { kind: 'ok' }); onClose(); }
-      else toast((r && r.error) || t('md_editor.rules.fail', { defaultValue: '保存失败' }), { kind: 'error' });
-    } catch (_) { toast(t('md_editor.rules.fail', { defaultValue: '保存失败' }), { kind: 'error' }); }
+      else toast((r && r.error) || t('md_editor.rules.fail', { defaultValue: '保存失败' }), { kind: 'danger' });
+    } catch (_) { toast(t('md_editor.rules.fail', { defaultValue: '保存失败' }), { kind: 'danger' }); }
     finally { setBusy(false); }
   };
   return (
@@ -32,8 +32,14 @@ function WritingRules({ scriptId, onClose }) {
         <div className="mde-rules-head">{t('md_editor.rules.title', { defaultValue: '写作规范(注入 AI 上下文,务必遵守)' })}</div>
         <div className="mde-rules-desc">{t('md_editor.rules.desc', { defaultValue: '这部剧本的写作规矩:风格/人称/视角、连贯禁忌、命名约定…续写与改写时最高优先遵守。' })}</div>
         {text === null ? <div className="mde-qopen-empty">{t('common.loading')}</div>
-          : <textarea className="mde-rules-ta" value={text} onChange={(e) => setText(e.target.value)}
-              placeholder={t('md_editor.rules.placeholder', { defaultValue: '例:全程第三人称限制视角(只跟主角)；禁止上帝视角剧透；地名统一用「云墟城」不用「云墟」；台词不带现代网络词。' })} />}
+          : <>
+              <textarea className="mde-rules-ta" value={text} maxLength={8000} onChange={(e) => setText(e.target.value)}
+                placeholder={t('md_editor.rules.placeholder', { defaultValue: '例:全程第三人称限制视角(只跟主角)；禁止上帝视角剧透；地名统一用「云墟城」不用「云墟」；台词不带现代网络词。' })} />
+              <div className="mde-rules-meta">
+                <span>{t('md_editor.rules.limits', { defaultValue: '保存上限 8000 字；续写/改写注入前 4000 字，内联续写 1000 字' })}</span>
+                <span>{text.length} / 8000</span>
+              </div>
+            </>}
         <div className="mde-rules-btns">
           <button type="button" className="mde-rules-save" disabled={busy || text === null} onClick={save}>{t('common.save', { defaultValue: '保存' })}</button>
           <button type="button" className="mde-rules-cancel" onClick={onClose}>{t('common.cancel')}</button>
