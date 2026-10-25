@@ -111,6 +111,7 @@ def list_conversations_pg(user_id: int) -> list[dict[str, Any]]:
                 "cum_output_tokens": int(conv.get("cum_output_tokens", 0) or 0),
                 "context_limit": int(conv.get("context_limit", 0) or 0),
                 "last_user_message": (conv.get("last_user_message", "") or "")[:50],
+                "script_id": conv.get("script_id"),
             })
     except Exception:
         pass
@@ -266,6 +267,8 @@ def list_conversations(user_id: int) -> list[dict[str, Any]]:
                 "cum_output_tokens": int(conv.get("cum_output_tokens", 0)),
                 "context_limit": int(conv.get("context_limit", 0)),
                 "last_user_message": (conv.get("last_user_message", "") or "")[:50],
+                # 剧本归属:编辑器历史列表按它过滤,避免跨剧本载入上下文。
+                "script_id": conv.get("script_id"),
             })
         out.sort(key=lambda r: r.get("last_used", ""), reverse=True)
         return out

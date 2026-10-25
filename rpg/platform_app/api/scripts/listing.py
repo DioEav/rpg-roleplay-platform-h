@@ -272,6 +272,10 @@ async def api_script_timeline(script_id: int, user=Depends(require_user)):
         buckets.setdefault(phase, []).append({
             "anchor_id": r["id"],
             "id": r["id"],
+            # 原始 story_phase(可能是空串)。编辑器用它做 MD 回显/冲突比较;
+            # 不要用下面的桶名 phase_label 冒充 —— 空 phase 的锚点会被写成「未分阶段」,
+            # 与服务端 '' 产生假差异,合并时还会把展示文案写进库。
+            "story_phase": r["story_phase"],
             "story_time_label": r["story_time_label"],
             "chapter_min": r["chapter_min"],
             "chapter_max": r["chapter_max"],

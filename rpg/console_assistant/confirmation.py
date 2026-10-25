@@ -90,8 +90,21 @@ def apply_confirmation(
         _trim_messages(conv)
         return {"ok": True, "decision": "reject", "tool": pending["tool"]}
 
-    result = dispatch_assistant_tool(
-        user_id=user_id,
+    # 批准前复核目标状态:预览生成后作者可能手动保存/另一标签写入/AI 先写。
+    # 目标已变化就取消本次写入(不要用旧预览覆盖新内容)。
+    from console_assistant.write_guard import verify_pending_fingerprint
+
+    stale = verify_pending_fingerprint(pending, user_id)
+    if stale:
+        conv["messages"].append({
+            "role": "assistant",
+            "content": f"[确认取消] 工具 {pending['tool']} (call_id={call_id}) 未执行:{stale}",
+        })
+        _trim_messages(conv)
+        persist_conversation(user_id, conversation_id, conv)
+        return {"ok": False, "decision": "approve", "tool": pending["tool"], "error": stale}
+
+    result = dispatch_assistant_tool(        user_id=user_id,
         tool=pending["tool"],
         args=pending["args"],
         save_id=pending.get("save_id"),
@@ -100,7 +113,6 @@ def apply_confirmation(
         call_id=call_id,
         state_provider=state_provider,
     )
-    _pop_pending(conv, call_id)
     conv["messages"].append({
         "role": "assistant",
         "content": _format_tool_result_for_llm(call_id, result),
@@ -165,6 +177,29 @@ def apply_confirmation_stream(
             "tool": pending["tool"],
         })
     else:
+        # 与 legacy 路径同一复核:预览后目标被改过 → 拒绝执行,让助手重新读取。
+        from console_assistant.write_guard import verify_pending_fingerprint
+
+        stale = verify_pending_fingerprint(pending, user_id)
+        if stale:
+            conv["messages"].append({
+                "role": "assistant",
+                "content": f"[确认取消] 工具 {pending['tool']} (call_id={call_id}) 未执行:{stale}",
+            })
+            _trim_messages(conv)
+            persist_conversation(user_id, conversation_id, conv)
+            yield _sse_event("tool_result", {
+                "call_id": call_id,
+                "ok": False,
+                "result": None,
+                "error": stale,
+                "decision": "approve",
+                "tool": pending["tool"],
+            })
+            yield _sse_event("done", {
+                "pending_confirmations": list(conv["pending_confirmations"].keys()),
+            })
+            return
         yield _sse_event("tool_call", {
             "tool": pending["tool"],
             "args": pending["args"] or {},

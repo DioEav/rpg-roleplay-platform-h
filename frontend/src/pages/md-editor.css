@@ -410,6 +410,7 @@
 .mde-agent-tool-err { color: var(--danger, #c8675d); font-size: 11px; margin-top: 3px; }
 .mde-agent-confirm { margin-top: 6px; padding: 9px; border: 1px solid var(--accent, #b5654a); border-radius: 8px; background: rgba(181,101,74,0.08); }
 .mde-agent-confirm-q { font-size: 12px; margin-bottom: 7px; }
+.mde-agent-confirm-warn { font-size: 12px; line-height: 1.5; margin: 0 0 8px; padding: 6px 8px; border-radius: 6px; border-left: 2px solid var(--accent, #b5654a); background: rgba(181,101,74,0.14); color: var(--text, #ebe7df); }
 .mde-agent-confirm-btns { display: flex; gap: 8px; }
 .mde-agent-confirm-btns button { border: none; border-radius: 6px; padding: 5px 12px; font-size: 12px; cursor: pointer; font-family: inherit; }
 .mde-agent-confirm-btns .ok { background: var(--accent, #b5654a); color: #fff; }

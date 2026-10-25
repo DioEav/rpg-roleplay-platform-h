@@ -52,7 +52,10 @@ export const SCHEMAS = {
       'parent_logical_key', 'summary', 'identity', 'first_revealed_chapter', 'public_knowledge', 'importance'],
     writeStrArrays: { aliases: 1 },
     writeObjLists: [], writeOpenObjs: ['attrs'],
-    readonly: ['id', 'created_at'],
+    // logical_key 是实体的稳定标识(防剧透门控/锚点引用/commit 历史都按它),
+    // 后端更新接口也不接受改名。此前它可编辑但保存被静默忽略 → 界面“保存成功”,
+    // 刷新又变回旧 key。这里改为只读回显,保存前再显式报错(见 node-io)。
+    readonly: ['id', 'created_at', 'logical_key'],
     order: ['id', 'logical_key', 'type', 'entity_subtype', 'parent_logical_key', 'name', 'full_name',
       'identity', 'summary', 'aliases', 'first_revealed_chapter', 'public_knowledge', 'importance', 'attrs'],
   },
@@ -88,6 +91,15 @@ export function splitFrontMatter(text) {
   // toMd 写的是 `---\n<yaml>---\n\n<body>`(yaml 末尾自带 \n),分隔符是紧跟的一个 \n;剔除它即得无损正文。
   const body = (text.slice(m[0].length)).replace(/^\n/, '');
   return { fm, body };
+}
+
+// front-matter 结束位置(字符下标;含闭合围栏后的换行)。无/未闭合围栏返回 -1。
+// 用途:AI 续写/ghost 只能作用于正文。光标停在 YAML 值里时继续写,会把散文塞进
+// title/keys 等字段;front-matter 冻结闸只保护「键名」,值被写脏它拦不住。
+// 与 CodeMirrorEditor 里基于 Text 的 frontMatterEnd 语义保持一致。
+export function frontMatterEndOf(text) {
+  const m = /^---\n[\s\S]*?\n---\n/.exec(text || '');
+  return m ? m[0].length : -1;
 }
 
 // row → markdown。

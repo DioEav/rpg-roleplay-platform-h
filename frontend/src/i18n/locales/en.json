@@ -3764,7 +3764,13 @@
         "turn_complete": "Turn complete",
         "generation_failed": "Generation failed",
         "please_retry": "Please try again",
-        "stream_closed_error": "Stream closed: {{detail}}"
+        "stream_closed_error": "Stream closed: {{detail}}",
+        "recovered_title": "Turn recovered",
+        "recovered_detail": "The server had already saved this turn before the connection dropped — restored without resending."
+      },
+      "acceptance_ab": {
+        "stale": "This suggestion is no longer valid (history changed) and was dismissed",
+        "save_failed": "Failed to save the choice"
       },
       "conflict": {
         "toast_title": "Save conflict",
@@ -3779,7 +3785,8 @@
       "opening": {
         "curtain": "Raising the curtain on your story…",
         "raising_curtain": "Raising the curtain…",
-        "waiting": "Waiting for the opening…"
+        "waiting": "Waiting for the opening…",
+        "failed": "Opening generation failed — click Retry to generate it again"
       },
       "save": {
         "untitled": "Save #{{id}}",

@@ -7,9 +7,15 @@
 """
 from __future__ import annotations
 
+import hashlib
 from typing import Any
 
 from ._helpers import _resolve_sid, _user_can_read_script
+
+
+def _content_hash(text: Any) -> str:
+    """正文指纹(与 platform_app/api/scripts/chapters._content_hash 同口径)。"""
+    return hashlib.sha256(str(text or "").encode("utf-8")).hexdigest()[:16]
 
 
 def _t_get_chapter_context(user_id: int, script_id: int | None, args: dict, state: Any) -> str:
@@ -71,19 +77,22 @@ def _t_get_chapter_text(user_id: int, script_id: int | None, args: dict, state: 
             if not _user_can_read_script(db, sid, user_id):
                 return f"失败 (权限): 剧本 #{sid} 不属于当前用户或未订阅"
             row = db.execute(
-                "select title, content from script_chapters where script_id=%s and chapter_index=%s",
+                "select id, title, content from script_chapters where script_id=%s and chapter_index=%s",
                 (sid, ci),
             ).fetchone()
         if not row:
             return f"失败: 剧本 #{sid} 第 {ci} 章不存在"
+        chapter_id = row.get("id")
         title = str(row.get("title") or "")
         content = str(row.get("content") or "")
         total = len(content)
         if total == 0:
-            return f"【第{ci}章 {title}】(本章正文为空)"
+            return f"【第{ci}章 {title}】(本章正文为空,chapter_id={chapter_id})"
         chunk = content[offset:offset + max_chars]
         end = offset + len(chunk)
-        head = f"【第{ci}章 {title}】 正文共 {total} 字符,本段 [{offset}, {end})"
+        # chapter_id:改本章时把它作为 update_script_chapter.base_chapter_id 传回,
+        # 服务端会校验 chapter_index 是否仍指向同一行(外部删改/重排时拒绝跨章写入)。
+        head = f"【第{ci}章 {title}】(chapter_id={chapter_id}) 正文共 {total} 字符,本段 [{offset}, {end})"
         head += (f";还有更多 → 再调本工具传 offset={end} 续读" if end < total else ";(本章已读完)")
         return head + "\n\n" + chunk
     except Exception as exc:
@@ -209,6 +218,12 @@ def _t_update_script_chapter(user_id: int, script_id: int | None, args: dict, st
     title = args.get("title")
     content = args.get("content")
     volume_title = args.get("volume_title")
+    # 可选身份锁:模型/待确认预览注入的稳定 chapter id。只按 chapter_index 写时,
+    # 外部删除/拆分/合并/重切后 index 可能指向另一章;带上 id 由 update_chapter 原子校验。
+    base_chapter_id = args.get("base_chapter_id")
+    # 可选版本锁:待确认预览生成时该章的 updated_at。确认期间作者手动保存/另一标签/
+    # AI 先写 → update_chapter 的原子 WHERE 不命中,ChapterConflict → 拒绝覆盖。
+    base_updated_at = args.get("base_updated_at")
     if title is None and content is None and volume_title is None:
         return "失败: 至少要传 title / content / volume_title 之一"
     try:
@@ -223,7 +238,7 @@ def _t_update_script_chapter(user_id: int, script_id: int | None, args: dict, st
                 return "失败(权限): 剧本不属于当前用户"
             # 撤销快照:落库前抓本章当前值,存进 commit.payload.before,让作者一键撤销 AI 改动。
             prior = db.execute(
-                "select title, content, volume_title from script_chapters where script_id=%s and chapter_index=%s",
+                "select id, title, content, volume_title from script_chapters where script_id=%s and chapter_index=%s",
                 (sid, ci),
             ).fetchone()
         # ③ 复用现成写函数 platform_app.script_import.update_chapter(自带 owner 校验 + word_count 同步)。
@@ -233,6 +248,11 @@ def _t_update_script_chapter(user_id: int, script_id: int | None, args: dict, st
             title=(str(title) if title is not None else None),
             content=(str(content) if content is not None else None),
             volume_title=(str(volume_title) if volume_title is not None else None),
+            # 身份条件与 UPDATE 同一条写函数内校验:chapter_index 指向的行变了 → 抛
+            # ChapterStructureChanged,下面的 except 转成可行动的失败串,不落库。
+            base_chapter_id=base_chapter_id,
+            # 版本条件与 UPDATE 同一条语句:预览后被手动保存/另一标签写入 → ChapterConflict。
+            base_updated_at=base_updated_at,
         )
         # 审计 + 撤销:章节正文走 script_commits(kind=chapter_edit),payload.before 存改前全文供一键撤销。
         try:
@@ -246,6 +266,12 @@ def _t_update_script_chapter(user_id: int, script_id: int | None, args: dict, st
                 "content": before_content if undoable else None,
                 "volume_title": (prior or {}).get("volume_title"),
             } if prior else None
+            # 撤销护栏:记录 AI 写入「之后」的正文/标题/卷名。若作者在 AI 改动后又手动保存过,
+            # /undo 端点会比对 current vs after,不一致就 409 拒绝 —— 否则一键撤销会把
+            # AI 之后的手动修改静默覆盖。(旧记录没有 after_*,退回原行为。)
+            after_content = str(content) if content is not None else before_content
+            after_title = str(title) if title is not None else (prior or {}).get("title")
+            after_volume = str(volume_title) if volume_title is not None else (prior or {}).get("volume_title")
             with connect() as adb:
                 if script_owned(adb, sid, user_id):
                     _write_commit(
@@ -256,11 +282,20 @@ def _t_update_script_chapter(user_id: int, script_id: int | None, args: dict, st
                         message=f"AI 改写章节 #{ci}",
                         payload={
                             "table": "script_chapters", "op": "edit",
-                            "ids": {"chapter_index": ci},
+                            # 稳定章节身份:撤销/恢复时据此拒绝把重排前另一章的记录
+                            # 应用到当前 index(旧记录无此字段,保持原有 index 语义)。
+                            "ids": {
+                                "chapter_index": ci,
+                                "chapter_id": (int(prior["id"])
+                                               if prior and prior.get("id") is not None else None),
+                            },
                             "fields": changed,
                             "before": before_payload,
                             "undoable": undoable,
                             "is_new": prior is None,
+                            "after_hash": _content_hash(after_content),
+                            "after_title": after_title,
+                            "after_volume_title": after_volume,
                         },
                     )
                     adb.commit()
@@ -270,6 +305,14 @@ def _t_update_script_chapter(user_id: int, script_id: int | None, args: dict, st
     except ValueError as exc:
         return f"失败: {exc}"
     except Exception as exc:
+        # 身份/版本冲突用类名判断,避免为了一个 except 在模块顶层引入 platform_app(本文件其他
+        # 依赖都是函数内延迟 import)。这是唯一需要给模型可行动文案的两类结构冲突。
+        if type(exc).__name__ == "ChapterConflict":
+            return ("失败: 章节在确认预览后被修改(可能刚手动保存、另一标签或 AI 写入),"
+                    "已取消本次写入。请用 get_chapter_text 重新读取章节后再改。")
+        if type(exc).__name__ == "ChapterStructureChanged":
+            return (f"失败: 章节结构已变化(第 {ci} 章现在指向另一章),已取消写入。"
+                    "请重新调用 get_script_chapters / get_chapter_text 获取最新章号后再改。")
         return f"失败: {type(exc).__name__}: {exc}"
 
 
@@ -286,30 +329,46 @@ def _t_create_script_chapter(user_id: int, script_id: int | None, args: dict, st
     try:
         from platform_app.db import connect, init_db
         from platform_app.perms import script_owned
+        from platform_app.script_import import _lock_chapter_struct
         init_db()
         with connect() as db:
             if not script_owned(db, sid, user_id):
                 return "失败(权限): 剧本不属于当前用户"
+            # 与 create_chapter / split / merge / delete 用同一把章节结构 advisory lock:
+            # 并发新建(用户同时从文件树新建、另一条 AI 会话、双击)会在拿到同一个
+            # max(chapter_index) 后一起 INSERT,第二笔撞唯一键 500。
+            _lock_chapter_struct(db, sid)
             mx = db.execute(
                 "select coalesce(max(chapter_index),0) as m from script_chapters where script_id=%s",
                 (sid,),
             ).fetchone()
             ci = int(mx["m"]) + 1
-            db.execute(
+            inserted = db.execute(
                 "insert into script_chapters(script_id, chapter_index, title, content, word_count, "
-                "volume_title, source_marker, confidence) values (%s,%s,%s,%s,%s,%s,'manual',1.0)",
+                "volume_title, source_marker, confidence) values (%s,%s,%s,%s,%s,%s,'manual',1.0) "
+                "returning id",
                 (sid, ci, title[:200], content, len(content), str(args.get("volume_title") or "")),
-            )
+            ).fetchone()
             db.execute(
+                # content 非空时也要同步 scripts.word_count,否则剧本总字数长期偏小
+                # (此前只更新 chapter_count)。
                 "update scripts set chapter_count=(select count(*) from script_chapters where script_id=%s),"
-                " updated_at=now() where id=%s", (sid, sid),
+                " word_count=(select coalesce(sum(word_count),0) from script_chapters where script_id=%s),"
+                " updated_at=now() where id=%s", (sid, sid, sid),
             )
             try:
                 from platform_app.api.script_edit import _write_commit
                 _write_commit(db, script_id=sid, user_id=user_id, kind="chapter_add",
                               message=f"新增章节 #{ci}「{title[:40]}」",
                               payload={"table": "script_chapters", "op": "add",
-                                       "ids": {"chapter_index": ci}})
+                                       # 新行稳定 id:索引重排后这条「新增」记录不会
+                                       # 误配到占用同一 index 的另一章。
+                                       "ids": {
+                                           "chapter_index": ci,
+                                           "chapter_id": (int(inserted["id"])
+                                                          if inserted and inserted.get("id") is not None
+                                                          else None),
+                                       }})
             except Exception:
                 pass
             db.commit()

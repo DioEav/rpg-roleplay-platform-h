@@ -80,6 +80,8 @@ def upsert_character_card(user_id: int, script_id: int, payload: dict[str, Any])
     if not name:
         raise ValueError("character.name 不能为空")
     card_id = payload.get("id")
+    # 仅用于「新建」路径的同名冲突保护(见下方 else 分支);更新路径不受影响。
+    create_only = bool(payload.get("create_only"))
     fields = {
         "name": name,
         "full_name": (payload.get("full_name") or "").strip(),
@@ -170,8 +172,7 @@ def upsert_character_card(user_id: int, script_id: int, payload: dict[str, Any])
                 raise CharacterCardConflict(card_to_dto(current) or {})
             row = db.execute("select * from character_cards where id = %s", (int(card_id),)).fetchone()
         else:
-            row = db.execute(
-                """
+            insert_sql = """
                 insert into character_cards(
                   book_id, script_id, name, full_name, aliases, identity, background,
                   appearance, personality, speech_style, current_status, secrets,
@@ -186,23 +187,40 @@ def upsert_character_card(user_id: int, script_id: int, payload: dict[str, Any])
                   %(token_budget)s, %(priority)s, %(enabled)s, %(metadata)s,
                   'npc', 'platform', 'script'
                 )
-                on conflict(script_id, name) where card_type = 'npc'
-                do update set
-                  full_name=excluded.full_name, aliases=excluded.aliases,
-                  identity=excluded.identity, background=excluded.background,
-                  appearance=excluded.appearance, personality=excluded.personality,
-                  speech_style=excluded.speech_style, current_status=excluded.current_status,
-                  secrets=excluded.secrets, sample_dialogue=excluded.sample_dialogue,
-                  tags=excluded.tags,
-                  first_revealed_chapter=excluded.first_revealed_chapter,
-                  importance=excluded.importance, token_budget=excluded.token_budget,
-                  priority=excluded.priority, enabled=excluded.enabled,
-                  metadata=excluded.metadata, source='platform', scope='script',
-                  row_version=character_cards.row_version+1, updated_at=now()
-                returning *
-                """,
-                {**fields, "book_id": book_id, "script_id": script_id},
-            ).fetchone()
+            """
+            insert_params = {**fields, "book_id": book_id, "script_id": script_id}
+            if create_only:
+                # 编辑器「新建角色卡」必须原子地拒绝同名:createNode 只带 {name},若走下面的
+                # ON CONFLICT 全量覆盖,会把已有卡的人设/标签/对话样例清成默认值。
+                # DO NOTHING + 0 行 → ValueError,也堵掉「先查后插」之间另一个同名创建插队
+                # 后被本请求覆盖的并发窗口。提取/导入等 upsert 路径不传该标记,保持原语义。
+                row = db.execute(
+                    insert_sql + " on conflict(script_id, name) where card_type = 'npc' "
+                    "do nothing returning *",
+                    insert_params,
+                ).fetchone()
+                if not row:
+                    raise ValueError(f"该剧本已存在同名 NPC 角色卡「{name}」,请改用不同的名字")
+            else:
+                row = db.execute(
+                    insert_sql + """
+                    on conflict(script_id, name) where card_type = 'npc'
+                    do update set
+                      full_name=excluded.full_name, aliases=excluded.aliases,
+                      identity=excluded.identity, background=excluded.background,
+                      appearance=excluded.appearance, personality=excluded.personality,
+                      speech_style=excluded.speech_style, current_status=excluded.current_status,
+                      secrets=excluded.secrets, sample_dialogue=excluded.sample_dialogue,
+                      tags=excluded.tags,
+                      first_revealed_chapter=excluded.first_revealed_chapter,
+                      importance=excluded.importance, token_budget=excluded.token_budget,
+                      priority=excluded.priority, enabled=excluded.enabled,
+                      metadata=excluded.metadata, source='platform', scope='script',
+                      row_version=character_cards.row_version+1, updated_at=now()
+                    returning *
+                    """,
+                    insert_params,
+                ).fetchone()
     return card_to_dto(row) or {}
 
 

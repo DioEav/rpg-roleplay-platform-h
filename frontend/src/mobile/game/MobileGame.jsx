@@ -523,12 +523,38 @@ export function MobileGame(gc) {
       try {
         const sid = activeSave?.id;
         if (!sid) return;
+        // 后端 message_index 口径是「该轮之前」:从 GM 消息分叉时本轮玩家输入会被从历史删掉。
+        // 桌面 doFork 会把它回填输入框,移动端也必须一致,否则玩家得重打一遍。
+        const h = Array.isArray(gc.history) ? gc.history : [];
+        const cur = h[idx] || {};
+        const prev = idx > 0 ? h[idx - 1] : null;
+        const restoreText = cur.role === 'user'
+          ? (cur.content || '')
+          : (prev && prev.role === 'user' ? (prev.content || '') : '');
         const r = await window.api.branches.continueFrom({ save_id: sid, message_index: idx });
         if (r && r.ok === false) {
           throw new Error(r.error || r.detail || "branch create denied");
         }
-        gc.reloadState && gc.reloadState();
-        window.__apiToast?.(t('mobile.game.toast.fork_ok'), { kind: 'ok', icon: 'fork' });
+        // 与桌面同款:广播 reload(顶层会同时刷新 state/存档列表并撤下旧 A/B 候选),
+        // 延迟 250ms 等 reload 的 setState 落地后再写输入框,避免被重渲染覆盖。
+        try {
+          window.dispatchEvent(new CustomEvent('rpg-state-reload', { detail: { reason: 'branch_fork' } }));
+          window.dispatchEvent(new CustomEvent('rpg-saves-updated'));
+        } catch (_) {}
+        if (restoreText) {
+          setTimeout(() => {
+            try {
+              gc.setText && gc.setText(restoreText);
+              taRef.current?.focus();
+            } catch (_) {}
+          }, 250);
+        }
+        const restoreHint = restoreText
+          ? ' · ' + t(cur.role === 'user'
+            ? 'game.app.msg.fork_restore_input'
+            : 'game.app.msg.fork_restore_player_input')
+          : '';
+        window.__apiToast?.(t('mobile.game.toast.fork_ok'), { kind: 'ok', icon: 'fork', detail: restoreHint || undefined });
       } catch (e) { window.__apiToast?.(t('mobile.game.toast.fork_fail'), { kind: 'danger', detail: e?.message }); }
     },
     rollback: (idx) => {

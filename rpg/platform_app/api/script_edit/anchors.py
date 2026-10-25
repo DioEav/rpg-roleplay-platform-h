@@ -150,7 +150,8 @@ async def api_anchor_add(
 ):
     """新建 anchor，写 commit kind=anchor_add。
 
-    body: {story_time_label, story_phase?, chapter_min, chapter_max, summary?}
+    body: {story_time_label, story_phase?, chapter_min, chapter_max, summary?,
+           keywords?, confidence?, sample_title?}
     """
     try:
         body = await request.json()
@@ -174,16 +175,23 @@ async def api_anchor_add(
             """
             INSERT INTO script_timeline_anchors
               (script_id, story_phase, story_time_label,
-               chapter_min, chapter_max, chapter_count, sample_summary)
-            VALUES (%s, %s, %s, %s, %s, %s, %s)
+               chapter_min, chapter_max, chapter_count, sample_summary,
+               keywords, confidence, sample_title)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             ON CONFLICT (script_id, story_phase, story_time_label) DO NOTHING
-            RETURNING id, story_phase, story_time_label, chapter_min, chapter_max, sample_summary
+            RETURNING id, story_phase, story_time_label, chapter_min, chapter_max,
+                      sample_summary, keywords, confidence, sample_title
             """,
             (
                 script_id, story_phase, story_time_label,
                 chapter_min, chapter_max,
                 max(0, chapter_max - chapter_min + 1),
                 str(body.get("summary") or ""),
+                # keywords 是 PostgreSQL 原生 text[](不是 jsonb):直接绑 Python list。
+                # 复制锚点(duplicateNode)会带这些字段;此前 INSERT 漏列 → 复制后丢失。
+                [str(x) for x in body["keywords"]] if isinstance(body.get("keywords"), list) else [],
+                float(body["confidence"]) if body.get("confidence") is not None else 1.0,
+                str(body.get("sample_title") or ""),
             ),
         ).fetchone()
         if not new_row:

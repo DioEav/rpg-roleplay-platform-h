@@ -18,6 +18,12 @@ from ._shared import _require_owner, _write_commit, router
 _MAX_COMMIT_SNAPSHOT_CHARS = 100_000
 
 
+def _content_hash(text) -> str:
+    """正文指纹(与 platform_app/api/scripts/chapters._content_hash 同口径)。"""
+    import hashlib
+    return hashlib.sha256(str(text or "").encode("utf-8")).hexdigest()[:16]
+
+
 def _chapter_snapshot(db, script_id: int, chapter_index: int) -> dict | None:
     """抓一章当前 title/content/volume_title,压成 commit payload.before 的形状。
 
@@ -26,7 +32,7 @@ def _chapter_snapshot(db, script_id: int, chapter_index: int) -> dict | None:
     """
     try:
         row = db.execute(
-            "select title, content, volume_title from script_chapters "
+            "select id, title, content, volume_title from script_chapters "
             "where script_id = %s and chapter_index = %s",
             (script_id, int(chapter_index)),
         ).fetchone()
@@ -39,6 +45,9 @@ def _chapter_snapshot(db, script_id: int, chapter_index: int) -> dict | None:
         "title": row.get("title"),
         "content": content if len(content) <= _MAX_COMMIT_SNAPSHOT_CHARS else None,
         "volume_title": row.get("volume_title"),
+        # 快照对应的稳定行 id:撤销/恢复时作为 update_chapter.base_chapter_id 回传,
+        # 把「读当前章 → 写回旧文」之间可能发生的重排挡在原子 UPDATE 条件里。
+        "chapter_id": row.get("id"),
     }
 
 
@@ -142,14 +151,22 @@ async def api_chapter_undoable(script_id: int, chapter_index: int, user=Depends(
     with connect() as db:
         if not script_owned(db, script_id, int(user["id"])):
             return json_response({"ok": False, "error": "无权访问该剧本"}, status_code=403)
+        # 新记录带稳定 chapter_id:只把属于当前 index 对应行的记录算作可撤销,
+        # 旧记录(NULL)保持兼容。
+        current = db.execute(
+            "SELECT id FROM script_chapters WHERE script_id=%s AND chapter_index=%s",
+            (script_id, int(chapter_index)),
+        ).fetchone()
         row = db.execute(
             """SELECT id, message FROM script_commits
                WHERE script_id=%s AND kind='chapter_edit'
                  AND coalesce((payload->>'undoable')::boolean, false) IS TRUE
                  AND coalesce((payload->>'undone')::boolean, false) IS FALSE
                  AND coalesce(payload->'ids'->>'chapter_index','') = %s
+                 AND (payload->'ids'->>'chapter_id' IS NULL
+                      OR payload->'ids'->>'chapter_id' = %s)
                ORDER BY id DESC LIMIT 1""",
-            (script_id, str(chapter_index)),
+            (script_id, str(chapter_index), str(current["id"]) if current else None),
         ).fetchone()
     return json_response({"ok": True, "undoable": bool(row),
                           "commit_id": int(row["id"]) if row else None})
@@ -168,14 +185,21 @@ async def api_undo_chapter_edit(script_id: int, chapter_index: int, user=Depends
     with connect() as db:
         if not script_owned(db, script_id, uid):
             return json_response({"ok": False, "error": "无权访问该剧本"}, status_code=403)
+        # 与 /undoable 同一身份过滤:新记录只认当前 index 指向的那一行;旧记录(NULL)兼容。
+        current = db.execute(
+            "SELECT id FROM script_chapters WHERE script_id=%s AND chapter_index=%s",
+            (script_id, int(chapter_index)),
+        ).fetchone()
         row = db.execute(
             """SELECT id, payload FROM script_commits
                WHERE script_id=%s AND kind='chapter_edit'
                  AND coalesce((payload->>'undoable')::boolean, false) IS TRUE
                  AND coalesce((payload->>'undone')::boolean, false) IS FALSE
                  AND coalesce(payload->'ids'->>'chapter_index','') = %s
+                 AND (payload->'ids'->>'chapter_id' IS NULL
+                      OR payload->'ids'->>'chapter_id' = %s)
                ORDER BY id DESC LIMIT 1""",
-            (script_id, str(chapter_index)),
+            (script_id, str(chapter_index), str(current["id"]) if current else None),
         ).fetchone()
         if not row:
             return json_response({"ok": False, "error": "本章没有可撤销的 AI 改动"}, status_code=404)
@@ -183,8 +207,40 @@ async def api_undo_chapter_edit(script_id: int, chapter_index: int, user=Depends
         commit_id = int(row["id"])
         # 撤销前抓当前正文 → 写进本条 revert 的快照,让「撤销」本身可逆。
         prior = _chapter_snapshot(db, script_id, chapter_index)
+        # 撤销护栏(新记录才有 after_*):AI 改动之后作者又手动保存过 → 当前内容已不是
+        # AI 写完的样子,此时恢复 before 会静默覆盖那些手动修改。拒绝并引导去版本历史。
+        payload = row["payload"] or {}
+        # 身份护栏(新记录才有 ids.chapter_id):记录写入时属于另一章 = index 已被重排,
+        # 不能把它的 before 应用到当前章。放在内容护栏之前,避免用错章的哈希做判断。
+        commit_cid = (payload.get("ids") or {}).get("chapter_id")
+        if commit_cid is not None and prior is not None:
+            try:
+                commit_cid = int(commit_cid)
+            except (TypeError, ValueError):
+                commit_cid = None
+            if commit_cid is not None and commit_cid != int(prior.get("chapter_id")):
+                return json_response({
+                    "ok": False,
+                    "structure_changed": True,
+                    "error": "该撤销记录属于另一章(章节已被重排),已取消撤销;请关闭标签后重新打开",
+                }, status_code=409)
+        after_hash = payload.get("after_hash")
+        if after_hash:
+            if not prior:
+                return json_response({"ok": False, "error": "章节不存在"}, status_code=404)
+            mismatch = _content_hash(prior.get("content")) != after_hash
+            if not mismatch and payload.get("after_title") is not None:
+                mismatch = str(prior.get("title") or "") != str(payload.get("after_title") or "")
+            if not mismatch and payload.get("after_volume_title") is not None:
+                mismatch = str(prior.get("volume_title") or "") != str(payload.get("after_volume_title") or "")
+            if mismatch:
+                return json_response({
+                    "ok": False,
+                    "conflict": True,
+                    "error": "章节在 AI 改动后又被编辑过,已取消撤销以避免覆盖手动修改。可在「版本历史」里选择要恢复的版本。",
+                }, status_code=409)
     # 恢复改前全文(走现成 update_chapter,自带 owner 校验 + word_count 同步)
-    from platform_app.script_import import update_chapter
+    from platform_app.script_import import ChapterStructureChanged, update_chapter
     bc = before.get("content")
     try:
         update_chapter(
@@ -192,7 +248,16 @@ async def api_undo_chapter_edit(script_id: int, chapter_index: int, user=Depends
             title=(str(before["title"]) if before.get("title") is not None else None),
             content=(str(bc) if bc is not None else None),
             volume_title=(str(before["volume_title"]) if before.get("volume_title") is not None else None),
+            # 身份锁:prior 是本次撤销前读到的当前章快照。若从读取到写库之间章节被
+            # 重排/删除,update_chapter 的原子 WHERE 会拒绝,避免撤销内容落到另一章。
+            base_chapter_id=(prior or {}).get("chapter_id"),
         )
+    except ChapterStructureChanged as conflict:
+        return json_response(
+            {"ok": False, "structure_changed": True,
+             "error": "章节结构已变化:当前章节序号已指向另一章,已取消撤销;请关闭标签后重新打开",
+             "server_chapter": conflict.server_chapter},
+            status_code=409)
     except ValueError as exc:
         # 章节已被删除等 → 400 而非 500(既有代码未捕获,此处加固)。
         return value_error_response(exc)
@@ -207,7 +272,10 @@ async def api_undo_chapter_edit(script_id: int, chapter_index: int, user=Depends
             db, script_id=script_id, user_id=uid, kind="chapter_revert",
             message=f"撤销章节 #{chapter_index} 的改动",
             payload={"table": "script_chapters", "op": "revert",
-                     "ids": {"chapter_index": int(chapter_index)},
+                     "ids": {
+                         "chapter_index": int(chapter_index),
+                         "chapter_id": (prior or {}).get("chapter_id"),
+                     },
                      "reverted_commit_id": commit_id,
                      "before": prior},
         )
@@ -264,10 +332,12 @@ async def api_undo_edit(request: Request, script_id: int, user=Depends(require_u
             for c in ("title", "content", "priority", "token_budget", "sticky_turns",
                       "cooldown_turns", "probability", "enabled", "insertion_position"):
                 if c in before:
-                    sets.append(f"{c}=%s"); params.append(before[c])
+                    sets.append(f"{c}=%s")
+                    params.append(before[c])
             for c in ("keys", "regex_keys", "character_filter", "scene_filter"):
                 if c in before:
-                    sets.append(f"{c}=%s"); params.append(Jsonb(before[c] or []))
+                    sets.append(f"{c}=%s")
+                    params.append(Jsonb(before[c] or []))
             if sets:
                 sets.append("updated_at=now()")
                 params.extend([entity_id, script_id])
@@ -330,6 +400,14 @@ async def api_chapter_history(script_id: int, chapter_index: int, user=Depends(r
     with connect() as db:
         if not script_owned(db, script_id, uid):
             return json_response({"ok": False, "error": "无权访问该剧本"}, status_code=403)
+        # 当前 chapter_index 指向的稳定行 id。历史记录按 index 归属,但删除/拆分/合并/
+        # 重切后 index 可能指向另一章:列表要过滤掉「明确记录了另一章 id」的旧记录,
+        # 恢复时前端再把它带回做二次身份校验。
+        current = db.execute(
+            "SELECT id FROM script_chapters WHERE script_id=%s AND chapter_index=%s",
+            (script_id, int(chapter_index)),
+        ).fetchone()
+        current_id = int(current["id"]) if current else None
         rows = db.execute(
             """SELECT id, kind, message, created_at,
                       coalesce((payload->>'undone')::boolean, false) AS undone,
@@ -344,17 +422,27 @@ async def api_chapter_history(script_id: int, chapter_index: int, user=Depends(r
                FROM script_commits
                WHERE script_id=%s AND kind IN ('chapter_edit','chapter_revert','chapter_add')
                  AND coalesce(payload->'ids'->>'chapter_index','') = %s
+                 -- 新记录带稳定 chapter_id:与当前行不一致 = index 已被重排给另一章,
+                 -- 不再展示(否则恢复旧快照会污染新章)。旧记录无该键(NULL)仍保留。
+                 AND (payload->'ids'->>'chapter_id' IS NULL
+                      OR payload->'ids'->>'chapter_id' = %s)
                ORDER BY id DESC LIMIT 100""",
-            (script_id, str(chapter_index)),
+            (script_id, str(chapter_index),
+             str(current_id) if current_id is not None else None),
         ).fetchall()
     return json_response({"ok": True, "chapter_index": int(chapter_index),
+                          "chapter_id": current_id,
                           "versions": [dict(r) for r in rows]})
 
 
 @router.post("/api/scripts/{script_id}/chapters/{chapter_index}/restore")
 async def api_chapter_restore(request: Request, script_id: int, chapter_index: int, user=Depends(require_user)):
-    """把某章恢复到指定 commit 的【改前快照】(版本回滚)。body: {commit_id}。仅 owner。
+    """把某章恢复到指定 commit 的【改前快照】(版本回滚)。body: {commit_id, base_chapter_id?}。仅 owner。
     与撤销同款安全网,但可回到历史任意一次改动之前,不止最近一次。
+
+    base_chapter_id(可选,身份锁):前端从 /history 拿到的当前 chapter id。外部删除/拆分/
+    合并/重切后 index 可能已指向另一章,与传入 id 不符时 409 structure_changed,拒绝把
+    旧章快照写进另一章。不传=老前端,保持原行为。
 
     可逆:恢复前抓当前正文写进本条 chapter_revert 的快照,故「恢复」本身也能被再次
     「恢复到此前」退回(修复「点错了无法退回」)。目标可为 chapter_edit 或带快照的
@@ -363,8 +451,10 @@ async def api_chapter_restore(request: Request, script_id: int, chapter_index: i
     try:
         body = await request.json()
         commit_id = int(body.get("commit_id"))
+        raw_base_id = body.get("base_chapter_id")
+        base_chapter_id = int(raw_base_id) if raw_base_id is not None else None
     except Exception:
-        return json_response({"ok": False, "error": "commit_id 必填且为整数"}, status_code=400)
+        return json_response({"ok": False, "error": "commit_id 必填且为整数;base_chapter_id 若传须为整数"}, status_code=400)
     with connect() as db:
         if not script_owned(db, script_id, uid):
             return json_response({"ok": False, "error": "无权访问该剧本"}, status_code=403)
@@ -378,6 +468,36 @@ async def api_chapter_restore(request: Request, script_id: int, chapter_index: i
         ).fetchone()
         if not row:
             return json_response({"ok": False, "error": "找不到该版本"}, status_code=404)
+        # 身份校验必须在挑选 before/写库之前:index 指向的行如果已经换了一章,
+        # 这条历史记录就不再属于当前章节。
+        current = db.execute(
+            "SELECT id FROM script_chapters WHERE script_id=%s AND chapter_index=%s",
+            (script_id, int(chapter_index)),
+        ).fetchone()
+        if not current:
+            return json_response({"ok": False, "error": "章节不存在"}, status_code=404)
+        current_id = int(current["id"])
+        if base_chapter_id is not None and current_id != base_chapter_id:
+            return json_response(
+                {"ok": False, "structure_changed": True,
+                 "error": "章节结构已变化:当前章节序号已指向另一章,已取消恢复;请关闭标签后重新打开",
+                 "chapter_id": current_id},
+                status_code=409)
+        # 记录自身也带稳定 id(新记录才有):它在写入时属于另一章说明 index 已被重排
+        # 给当前章,不能把旧章快照恢复进来。旧记录(NULL)保持兼容,由 base_chapter_id
+        # 与当前行身份兜底。
+        commit_cid = ((row.get("payload") or {}).get("ids") or {}).get("chapter_id")
+        if commit_cid is not None:
+            try:
+                commit_cid = int(commit_cid)
+            except (TypeError, ValueError):
+                commit_cid = None
+            if commit_cid is not None and commit_cid != current_id:
+                return json_response(
+                    {"ok": False, "structure_changed": True,
+                     "error": "该历史版本属于另一章(章节已被重排),已取消恢复;请关闭标签后重新打开",
+                     "chapter_id": current_id},
+                    status_code=409)
         before = ((row["payload"] or {}).get("before") or {})
         if not before:
             return json_response({"ok": False, "error": "该版本未存改前快照,无法恢复"}, status_code=409)
@@ -388,15 +508,25 @@ async def api_chapter_restore(request: Request, script_id: int, chapter_index: i
                 {"ok": False, "error": "该版本未存正文快照(正文过长未保存),无法恢复正文"}, status_code=409)
         # 恢复前抓当前正文 → 写进本条 revert 的快照,让「恢复」本身可逆。
         prior = _chapter_snapshot(db, script_id, chapter_index)
-    from platform_app.script_import import update_chapter
+    from platform_app.script_import import ChapterStructureChanged, update_chapter
     bc = before.get("content")
     try:
+        # 身份锁无条件传入(即使用户/老前端没带 base_chapter_id):读到 current_id
+        # 后到真正写库之间仍可能被并发重排,update_chapter 会在同一条 UPDATE 的
+        # WHERE 里复核 id,保证恢复快照不会落到另一章。
         update_chapter(
             uid, script_id, int(chapter_index),
             title=(str(before["title"]) if before.get("title") is not None else None),
             content=(str(bc) if bc is not None else None),
             volume_title=(str(before["volume_title"]) if before.get("volume_title") is not None else None),
+            base_chapter_id=current_id,
         )
+    except ChapterStructureChanged as conflict:
+        return json_response(
+            {"ok": False, "structure_changed": True,
+             "error": "章节结构已变化:当前章节序号已指向另一章,已取消恢复;请关闭标签后重新打开",
+             "server_chapter": conflict.server_chapter},
+            status_code=409)
     except ValueError as exc:
         # 章节已被删除等 → 400 而非 500(既有代码未捕获,此处加固)。
         return value_error_response(exc)
@@ -406,7 +536,10 @@ async def api_chapter_restore(request: Request, script_id: int, chapter_index: i
         _write_commit(db, script_id=script_id, user_id=uid, kind="chapter_revert",
                       message=f"恢复章节 #{chapter_index} 到版本 #{commit_id} 之前",
                       payload={"table": "script_chapters", "op": "revert",
-                               "ids": {"chapter_index": int(chapter_index)},
+                               "ids": {
+                                   "chapter_index": int(chapter_index),
+                                   "chapter_id": current_id,
+                               },
                                "reverted_commit_id": commit_id,
                                "before": prior})
         db.commit()

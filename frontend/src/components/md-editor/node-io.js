@@ -15,6 +15,10 @@ async function loadNodeContentMeta(kind, sid, id) {
     content: toMd(kind, row),
     updatedAt: (row && row.updated_at) || null,
     version: kind === 'card' && row && row.row_version != null ? row.row_version : null,
+    // 章节稳定身份(script_chapters.id)。chapter_index 会因删除/拆分/合并/重切整本
+    // 重排,只有 id 能判断「这个 index 还是不是打开时那一章」。保存时随
+    // base_chapter_id 回传,服务端不一致直接 409 structure_changed,禁止跨章合并。
+    stableId: kind === 'chapter' && row && row.id != null ? row.id : null,
   };
 }
 async function loadNodeContent(kind, sid, id) {
@@ -32,7 +36,9 @@ async function loadRow(kind, sid, id) {
     return r?.card ?? r ?? {};
   }
   if (kind === 'worldbook') {
-    const r = await A.scripts.worldbook(sid);
+    // 编辑器要能管理全量条目:后端默认 limit=50,不传 fetch_all 时第 51 条之后
+    // 在树里点不到、@引用也搜不到。fetch_all 是后端专门为编辑器加的无分页路径。
+    const r = await A.scripts.worldbook(sid, { fetch_all: 1 });
     const arr = r?.entries || r?.items || (Array.isArray(r) ? r : []);
     return arr.find((x) => String(x.id) === String(id)) || {};
   }
@@ -44,7 +50,10 @@ async function loadRow(kind, sid, id) {
       if (String(a.anchor_id || a.id) === String(id)) {
         return {
           ...a, id: a.anchor_id || a.id,
-          story_phase: a.story_phase || ph.phase_label || '',
+          // timeline 端点现在随锚点返回原始 story_phase(含空串)。旧实现拿桶名
+          // 「未分阶段」兜底,导致冲突快照(DB 的 '')与本地 MD('未分阶段')出现假差异,
+          // 「保留自己」还会把这个展示用桶名写进库。
+          story_phase: a.story_phase !== undefined ? a.story_phase : (ph.phase_label || ''),
           // 乐观锁基线:timeline 接口随锚点下发 updated_at,保存时回传比对。
           updated_at: a.updated_at || null,
         };
@@ -54,9 +63,10 @@ async function loadRow(kind, sid, id) {
   }
   if (kind === 'canon') {
     if (A.scripts.canonGet) { const r = await A.scripts.canonGet(sid, id); return r?.entity ?? r ?? {}; }
-    // 兜底:列表里找
-    if (A.scripts.canonList) {
-      const r = await A.scripts.canonList(sid);
+    // 兜底:列表里找(canonListAll 翻页拉全量;只有旧 client 时才退回默认 200 条)。
+    const list = A.scripts.canonListAll || A.scripts.canonList;
+    if (list) {
+      const r = await list(sid);
       const arr = r?.entities || r?.items || [];
       return arr.find((e) => String(e.logical_key) === String(id)) || { logical_key: id };
     }
@@ -69,8 +79,10 @@ async function loadRow(kind, sid, id) {
 // baseUpdatedAt / baseVersion 是打开标签时拿到的乐观锁基线:
 //   · 时间戳实体(chapter/worldbook/anchor/canon)用 baseUpdatedAt(updated_at);
 //   · 角色卡用 baseVersion(row_version,后端每次写 +1)。
+// baseChapterId 仅章节:打开时拿到的稳定 script_chapters.id,服务端用它校验
+// chapter_index 是否仍指向同一章(外部重排/多标签时防止跨章覆盖)。
 // 返回 { updatedAt, version } 作为下一次保存的新基线;无实际改动返回 null。
-async function saveNodeContent(kind, sid, id, content, original, baseUpdatedAt, baseVersion) {
+async function saveNodeContent(kind, sid, id, content, original, baseUpdatedAt, baseVersion, baseChapterId) {
   const A = api();
   // front-matter 结构冻结(权威闸):顶层字段集合不可增删改名,只能改值。编辑层 frontMatterGuard 已挡掉
   // 改键名/破围栏的交互;此处兜底拦「新增/删除顶层字段」(加项目)—— 否则 fromMd 会静默丢弃非 schema 键,
@@ -94,13 +106,33 @@ async function saveNodeContent(kind, sid, id, content, original, baseUpdatedAt, 
   }
   const cur = fromMd(kind, content);
   const orig = original != null ? fromMd(kind, original) : {};
+  // canon.logical_key 是稳定标识,后端更新接口不接受改名;readonly 会让它从 patch
+  // 里剔除,但若用户在前 front-matter 里改了值,不报错就会“保存成功→刷新回退”。
+  // 这里显式拦截,给出可行动的错误,而不是静默丢弃。
+  if (kind === 'canon' && original != null) {
+    try {
+      const a = (splitFrontMatter(original).fm || {}).logical_key;
+      const b = (splitFrontMatter(content).fm || {}).logical_key;
+      if (String(a ?? '') !== String(b ?? '')) {
+        throw new Error(i18n.t('md_editor.errors.canon_key_readonly', {
+          defaultValue: 'logical_key 是 canon 实体的稳定标识,不能在编辑器中修改。请恢复原值后再保存。',
+        }));
+      }
+    } catch (e) {
+      if (e instanceof Error && /logical_key/.test(e.message)) throw e;
+      /* YAML 解析失败等交给下面 fromMd 报更具体的错 */
+    }
+  }
   const diff = diffPatch(orig, cur);
   if (Object.keys(diff).length === 0) return null;   // 无实际改动
 
   if (kind === 'chapter') {
     // base_updated_at=乐观锁:服务端已被他方(AI 工具/另一标签)改过时 409+服务端版本,
-    // 调用方转三方合并。返回新 updated_at 供刷新基线。
-    const body = baseUpdatedAt ? { ...diff, base_updated_at: baseUpdatedAt } : diff;
+    // 调用方转三方合并。base_chapter_id=身份锁:index 已指向另一章时 409 structure_changed,
+    // 调用方必须拒绝合并/force-save。返回新 updated_at 供刷新基线。
+    const body = { ...diff };
+    if (baseUpdatedAt) body.base_updated_at = baseUpdatedAt;
+    if (baseChapterId != null) body.base_chapter_id = baseChapterId;
     const r = await A.scripts.updateChapter(sid, id, body);
     const ch = (r && r.chapter) || {};
     return { updatedAt: ch.updated_at || null, version: null };
@@ -159,12 +191,19 @@ function conflictServer(err, kind) {
 }
 
 // 服务端快照 → 新基线。时间戳实体取 updated_at;角色卡取 row_version。
+// 章节额外带 chapterId(稳定 id):旧标签(打开时还没有 chapterId)在冲突合并/强制保存时
+// 用它补上身份基线,避免合并期间 index 再次变化时写错章。非章节实体不返回该键,
+// 保持原有基线形状,调用方用 `??` 取值即可兼容。
 function serverBase(kind, server) {
   if (!server) return { updatedAt: null, version: null };
-  return {
+  const base = {
     updatedAt: server.updated_at || null,
     version: kind === 'card' && server.row_version != null ? server.row_version : null,
   };
+  if (kind === 'chapter') {
+    base.chapterId = server.id != null ? server.id : null;
+  }
+  return base;
 }
 
 // 浅 diff:返回 cur 中与 orig 不同(深比较值)的键。

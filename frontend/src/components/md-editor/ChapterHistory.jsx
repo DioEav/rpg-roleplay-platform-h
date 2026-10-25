@@ -5,21 +5,36 @@ import { api, toast } from './helpers.js';
 const { useState, useEffect } = React;
 
 // 章节版本历史(checkpoints):列 AI 改动 + 一键回滚到历史任意版本之前。
-function ChapterHistory({ scriptId, chapterIndex, onClose, onRestored }) {
+function ChapterHistory({ scriptId, chapterIndex, onClose, onRestored, onBeforeRestore }) {
   const { t } = useTranslation();
   const [versions, setVersions] = useState(null);
+  const [chapterId, setChapterId] = useState(null);   // 当前 index 的稳定 chapter id(恢复时回传做身份校验)
   const [busy, setBusy] = useState(false);
+  // Esc 关闭(与其它浮层一致)。编辑器全局快捷键在有浮层打开时已让路,这里自己收口。
+  useEffect(() => {
+    const onKey = (e) => { if (e.key === 'Escape') { e.preventDefault(); onClose(); } };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onClose]);
   const load = React.useCallback(async () => {
     try {
       const r = await api().scripts.chapterHistory(scriptId, chapterIndex);
       setVersions(r && r.ok ? (r.versions || []) : []);
-    } catch (_) { setVersions([]); }
+      // /history 随响应返回当前 index 指向的稳定行 id。恢复时带回,若外部已重排
+      // (index 换了另一章)服务端会 409 structure_changed,拒绝错误恢复。
+      setChapterId(r && r.ok ? (r.chapter_id ?? null) : null);
+    } catch (_) { setVersions([]); setChapterId(null); }
   }, [scriptId, chapterIndex]);
   useEffect(() => { load(); }, [load]);
   const restore = async (cid) => {
-    if (busy) return; setBusy(true);
+    if (busy) return;
+    // 编辑器里有未处理的 AI diff/续写待定区时,恢复会先写库;随后用户若批准 diff
+    // 又会把旧内容写回去,产生互相矛盾的落库。交给父级 guardLiveAiState 决定
+    // (它会给统一提示);被拒绝时不进入 busy、不发请求。
+    if (onBeforeRestore && !onBeforeRestore()) return;
+    setBusy(true);
     try {
-      const r = await api().scripts.chapterRestore(scriptId, chapterIndex, cid);
+      const r = await api().scripts.chapterRestore(scriptId, chapterIndex, cid, chapterId);
       if (r && r.ok) {
         toast(t('md_editor.history.restored', { defaultValue: '已恢复到该版本之前' }), {
           kind: 'ok',
@@ -30,7 +45,10 @@ function ChapterHistory({ scriptId, chapterIndex, onClose, onRestored }) {
         onRestored && onRestored();
       }
       else toast((r && r.error) || t('md_editor.history.restore_fail', { defaultValue: '恢复失败' }), { kind: 'danger' });
-    } catch (_) { toast(t('md_editor.history.restore_fail', { defaultValue: '恢复失败' }), { kind: 'danger' }); }
+    } catch (e) {
+      // 409 structure_changed 的 message 已经是可行动文案(章节结构已变化),直接展示。
+      toast(e?.message || t('md_editor.history.restore_fail', { defaultValue: '恢复失败' }), { kind: 'danger', duration: 5200 });
+    }
     finally { setBusy(false); }
   };
   // 删除单条记录:只删审计记录与快照,正文不受影响;删后刷新列表。

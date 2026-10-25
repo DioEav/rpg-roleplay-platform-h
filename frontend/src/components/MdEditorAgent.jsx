@@ -7,6 +7,8 @@ import { Composer } from '../game-composer.jsx';
 import { RpgMarkdown } from '../markdown-render.jsx';
 import { consumeSSE } from '../lib/sse-consume.js';
 import { lsGet, lsSet, lsRemove } from '../lib/storage.js';
+import { mergePendingCards } from './md-editor/agent-pending.js';
+import { rebuildDirtyKinds } from './md-editor/rebuild-scope.js';
 
 // 编辑器 agent 模型选择落库目标:复用游戏/酒馆同一个 Composer 内置模型选择器,但写到 console_assistant
 // 专属偏好(不污染游戏 GM 模型)。后端 console_assistant 解析优先读此键(app.py)。
@@ -15,6 +17,11 @@ const EDITOR_MODEL_PERSIST = {
 };
 
 const { useState, useRef, useCallback, useEffect, forwardRef, useImperativeHandle } = React;
+
+// 裸 fetch(SSE / 上传 / 会话还原)不走 api-client 的 BASE 与错误处理。至少把跨域部署的
+// api-base 补上,否则静态托管或独立 API 域名下这些请求会打到前端源(401 的全局跳登录
+// 仍由 api-client 的其他请求兜底,这里只修地址)。
+const apiBase = () => (typeof window !== 'undefined' && window.__API_BASE) || '';
 
 // 工具原始 API 名 → 人类可读标签(消息流里不再直接显示 update_script_chapter 这种裸标识符)。
 const TOOL_LABELS = {
@@ -28,6 +35,7 @@ const TOOL_LABELS = {
   update_anchor: '编辑时间线', create_anchor: '新建时间线节点', delete_anchor: '删除时间线节点',
   upsert_canon_entity: '写入设定实体', extract_from_selection: '抽取选区设定',
   read_uploaded_document: '读取拖入文档', preview_document_split: '预览拆章', import_document_as_chapters: '导入为章节',
+  resplit_script: '整本重新切章', rebuild_script_module: '重建知识模块',
   delegate_writing_task: '委派子模型写作',
 };
 function toolLabel(name) { return TOOL_LABELS[name] || name; }
@@ -246,7 +254,7 @@ const REWRITE_PRESETS = [
 // 章节场景下最有用 —— 通读 + 对照设定 + 给可执行建议。
 const WRITING_SKILLS = [
   { key: 'review', label: '审稿', tipKey: 'review',
-    prompt: '请审阅【当前打开的章节】。先用 get_chapter_text 读这章正文,再用 list_worldbook_entries / list_canon_entities / list_script_npcs / list_anchors 对照既有设定与时间线。找出:① 与世界书/正史/时间线/角色卡的设定矛盾;② 前后文连贯性断裂、人物行为不符设定;③ 明显重复的用词或句式;④ 视角(POV)或时态跳脱;⑤ 节奏拖沓或过快的段落。逐条列清单【位置(引一句原文)→ 问题 → 修改建议】。只诊断,先不要改库,等我决定。' },
+    prompt: '请审阅【当前打开的章节】。先用 get_chapter_text 读这章正文,再用 list_worldbook_entries / list_canon_entities / list_script_npcs / list_anchors 对照既有设定与时间线。找出:① 与世界书/正史/时间线/角色卡的设定矛盾;② 前后文连贯性断裂、人物行为不符设定;③ 明显重复的用词或句式;④ 视角(POV)或时态跳脱;⑤ 节奏拖沓或过快的段落。逐条列清单【位置(引一句原文)→ 问题 → 修改建议】。最后【务必调用 report_writing_issues】把清单写入右栏「问题」面板(chapter=当前章号,severity=高/中/低,type=类别,detail=位置+问题+建议),这样作者能逐条跳转/消除。只写问题清单,不要改正文或设定。' },
   { key: 'outline', label: '梳理大纲',
     prompt: '请用 get_chapter_text 读【当前章节】,梳理它的分场/节拍大纲——每个节拍写清:发生了什么 + 推进了什么(信息/关系/张力),并指出结构上可加强或冗余的地方。只输出大纲与建议,不改库。' },
   { key: 'voice', label: '角色嗓音',
@@ -255,7 +263,7 @@ const WRITING_SKILLS = [
     prompt: '请用 get_chapter_text 读【当前章节】(必要时 get_script_chapters 跨章回看),梳理本章埋下或呼应的伏笔/线索:哪些已回收、哪些悬而未决、哪些可能与既有设定冲突。只输出清单与建议,不改库。' },
 ];
 
-const MdEditorAgent = forwardRef(function MdEditorAgent({ scriptId, activeTab, onWriteComplete, onRestructure, onContinue, onProposeChapterEdit, selLen = 0, getSelectionContext, onIssuesReported }, ref) {
+const MdEditorAgentInner = forwardRef(function MdEditorAgent({ scriptId, activeTab, onWriteComplete, onRestructure, onContinue, onProposeChapterEdit, selLen = 0, getSelectionContext, onIssuesReported, getDirtyChapterCount = null, getDirtyCountByKind = null, onDiscardEditorAiState = null, onConfirmFailed = null, guardEditorAiState = null }, ref) {
   const { t } = useTranslation();
   const [messages, setMessages] = useState([]);   // [{role, text, tools:[{call_id,tool,args,status,result}]}]
   const [input, setInput] = useState('');
@@ -267,7 +275,71 @@ const MdEditorAgent = forwardRef(function MdEditorAgent({ scriptId, activeTab, o
   const convIdRef = useRef(null);
   const scrollRef = useRef(null);
   const abortRef = useRef(null);
+  const permSavingRef = useRef(false);   // 写入权限 PUT 在途:send 必须等它落地,否则后端可能还按旧权限执行
+  const permSaveSeqRef = useRef(0);      // 连续切换权限时只让最后一次失败回滚
+  const savedModeRef = useRef('review'); // 最近一次「确认保存成功」的模式;失败回滚到这里而不是切换前那一档
   const scriptIdRef = useRef(scriptId);
+  const activeTabRef = useRef(activeTab);   // makeHandler 依赖 []，用 ref 读最新标签的稳定 chapterId
+  activeTabRef.current = activeTab;
+  // makeHandler deps=[] / resolveConfirm 用 ref 取最新值(避免过期闭包)。
+  // 重构类确认在批准时要再查一次未保存章节数:卡片出现后作者仍可继续编辑。
+  const getDirtyChapterCountRef = useRef(null);
+  getDirtyChapterCountRef.current = getDirtyChapterCount;
+  // rebuild_script_module 要按目标模块统计相关 kind 的 dirty 标签(卡片/世界书/…)。
+  const getDirtyCountByKindRef = useRef(null);
+  getDirtyCountByKindRef.current = getDirtyCountByKind;
+  // 切换/新建/删除对话时清掉编辑器里的 AI 待定区;确认失败(含版本指纹过期)时
+  // 让父级重新拉目标内容,避免编辑器与库不一致。两个都用 ref 防止过期闭包。
+  const onDiscardEditorAiStateRef = useRef(null);
+  onDiscardEditorAiStateRef.current = onDiscardEditorAiState;
+  const onConfirmFailedRef = useRef(null);
+  onConfirmFailedRef.current = onConfirmFailed;
+  // 撤销 AI 改动前检查编辑器是否还有未处理的 diff/续写:有的话先让用户处理,
+  // 否则撤销写库与随后批准 diff 会互相覆盖(与切标签/切剧本同一套守卫)。
+  const guardEditorAiStateRef = useRef(null);
+  guardEditorAiStateRef.current = guardEditorAiState;
+
+  // 把服务端/SSE 的 pending 统一转成侧栏确认卡。实时事件与“刷新后从历史恢复”
+  // 共用同一份逻辑,避免两处字段判断漂移。
+  const makePendingConfirm = (data) => {
+    const pvCid = data.preview ? data.preview.chapter_id : (data.target_chapter_id ?? null);
+    const at = activeTabRef.current;
+    const targetIsActive = !!(at && at.kind === 'chapter' && String(at.id) === String(data.args?.chapter_index));
+    const tabCid = targetIsActive ? (at.chapterId ?? null) : null;
+    // 模型自己读过的章 id(get_chapter_text 的 chapter_id)与当前 index 不一致:
+    // 模型是为旧章生成的内容,批准只会被后端拒绝,或更糟地误导用户;直接禁用。
+    const modelCid = data.args?.base_chapter_id ?? null;
+    const pc = {
+      call_id: data.call_id, tool: data.tool, args: data.args,
+      description: data.description, preview: data.preview,
+      chapterId: pvCid,
+      structureMismatch: !!(
+        (pvCid != null && tabCid != null && String(pvCid) !== String(tabCid))
+        || (pvCid != null && modelCid != null && String(pvCid) !== String(modelCid))
+      ),
+    };
+    // 章节重构(resplit / 整本导入)成功后 handleChaptersRestructured 会关闭所有章节标签。
+    // 有未保存章节时禁用批准,要求先保存/取消,避免未落盘内容被直接丢弃。
+    if (data.tool === 'resplit_script' || data.tool === 'import_document_as_chapters') {
+      let dirty = 0;
+      try { dirty = Number(getDirtyChapterCountRef.current?.()) || 0; } catch (_) { dirty = 0; }
+      pc.dirtyChapters = dirty;
+    }
+    // 重建知识模块:按 module 统计相关 kind 的未保存标签(卡片/世界书/canon/锚点/
+    // 章节派生)。重建基于服务端旧数据,未保存内容会被随后保存/刷新覆盖。
+    if (data.tool === 'rebuild_script_module') {
+      const kinds = rebuildDirtyKinds(data.args?.module);
+      let dirty = 0;
+      for (const k of kinds) {
+        try { dirty += Number(getDirtyCountByKindRef.current?.(k)) || 0; } catch (_) { /* ignore */ }
+      }
+      pc.dirtyKinds = kinds;
+      pc.dirtyTargets = dirty;
+    }
+    return pc;
+  };
+  const makePendingConfirmRef = useRef(null);
+  makePendingConfirmRef.current = makePendingConfirm;
   const scriptSessionRef = useRef(0);
   // 聊天轮次 token:send / confirm 各自持有一个最新 token。
   // 背景:内联 diff 的「批准/拒绝」可能在聊天流还没收到 done(busy 仍 true)时被点击。
@@ -304,7 +376,8 @@ const MdEditorAgent = forwardRef(function MdEditorAgent({ scriptId, activeTab, o
       const [chs, cards, wb] = await Promise.all([
         A?.scripts?.chapters?.(scriptId, { limit: 5000 }).catch(() => null),
         A?.cards?.scriptList?.(scriptId).catch(() => null),
-        A?.scripts?.worldbook?.(scriptId).catch(() => null),
+        // fetch_all:后端默认只返回 50 条世界书;@引用必须能搜到全部条目。
+        A?.scripts?.worldbook?.(scriptId, { fetch_all: 1 }).catch(() => null),
       ]);
       if (scriptSessionRef.current !== session) return;   // 期间已切剧本
       const items = [];
@@ -342,7 +415,7 @@ const MdEditorAgent = forwardRef(function MdEditorAgent({ scriptId, activeTab, o
       const bytes = new Uint8Array(buf);
       let bin = '';
       for (let i = 0; i < bytes.length; i += 1) bin += String.fromCharCode(bytes[i]);
-      const res = await fetch(`/api/scripts/${scriptId}/agent-doc`, {
+      const res = await fetch(`${apiBase()}/api/scripts/${scriptId}/agent-doc`, {
         method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ filename: name, content_b64: btoa(bin) }),
       });
@@ -382,7 +455,11 @@ const MdEditorAgent = forwardRef(function MdEditorAgent({ scriptId, activeTab, o
         const m = prefs['editor.write_mode'];
         // 修:初始加载也要归一。旧代码把 'default' 原样塞进 state,UI 显示「默认权限」,
         // 后端实际按 review 处理 —— 高亮与实际权限不一致。
-        if (m) setWriteMode(normalizeEditorWriteMode(m));
+        if (m) {
+          const mm = normalizeEditorWriteMode(m);
+          setWriteMode(mm);
+          savedModeRef.current = mm;   // 失败回滚的锚点 = 服务端确认过的值
+        }
         const ov = prefs['console_assistant_model_override'];
         if (ov && ov.model) setModel(ov.model);   // 底部标签显示当前编辑器 agent 模型
       } catch (_) { /* 默认 review */ }
@@ -392,9 +469,28 @@ const MdEditorAgent = forwardRef(function MdEditorAgent({ scriptId, activeTab, o
   const changeWriteMode = useCallback(async (m) => {
     // 游戏侧 4 档标题里的 'default' 归一成编辑器 3 档中的 review;未知值也回 review。
     const mm = normalizeEditorWriteMode(m);
+    const seq = ++permSaveSeqRef.current;
     setWriteMode(mm);
-    try { await window.api?.me?.preferences?.({ 'editor.write_mode': mm }); } catch (_) {}
-  }, []);
+    permSavingRef.current = true;
+    try {
+      if (!window.api?.me?.preferences) throw new Error('preferences API unavailable');
+      await window.api.me.preferences({ 'editor.write_mode': mm });
+      savedModeRef.current = mm;   // 只有服务端确认成功才更新回滚锚点
+    } catch (e) {
+      // 保存失败必须回滚 UI:否则界面显示「只读」而后端仍是旧的 full_access(或相反),
+      // 用户会按错误的权限预期操作。连续切换时只有最后一次失败才回滚,且回滚到
+      // 「最近一次确认成功」的模式 —— 连续切换中前一档也可能保存失败。
+      if (permSaveSeqRef.current === seq) {
+        setWriteMode(savedModeRef.current);
+        window.__apiToast?.(
+          t('components.md_editor_agent.permission.save_failed', { defaultValue: '写入权限保存失败,已恢复原设置' }),
+          { kind: 'danger', detail: e?.message },
+        );
+      }
+    } finally {
+      if (permSaveSeqRef.current === seq) permSavingRef.current = false;
+    }
+  }, [t]);
 
   useEffect(() => {
     if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
@@ -415,6 +511,10 @@ const MdEditorAgent = forwardRef(function MdEditorAgent({ scriptId, activeTab, o
     setAttached(null);
     setPinnedRefs([]);
     setRefPicker(null);
+    // 历史对话列表是全局的(后端按 user 返回,不区分剧本);切剧本时必须收起并清空,
+    // 否则用户会在新剧本里看到旧列表,点进去把别的剧本/游戏的上下文载进来。
+    setConvList(null);
+    setShowConvList(false);
     convIdRef.current = null;
     setMessages([]);
     if (scriptId) {
@@ -423,12 +523,21 @@ const MdEditorAgent = forwardRef(function MdEditorAgent({ scriptId, activeTab, o
         convIdRef.current = cid;
         (async () => {
           try {
-            const res = await fetch(`/api/console_assistant/conversations/${encodeURIComponent(cid)}/messages`, { credentials: 'include' });
+            const res = await fetch(`${apiBase()}/api/console_assistant/conversations/${encodeURIComponent(cid)}/messages`, { credentials: 'include' });
             if (cancelled || !res.ok) return;
             const j = await res.json();
             if (cancelled || !j?.ok || !Array.isArray(j.messages) || !j.messages.length) return;
+            // 本地 mde.conv.<sid> 可能指向旧版全局列表里“另一个剧本/游戏”的对话。
+            // 后端已打 script_id 标记:不一致就不载入,避免把别处上下文带进当前剧本。
+            if (j.script_id != null && scriptId != null && String(j.script_id) !== String(scriptId)) {
+              convIdRef.current = null;
+              try { lsRemove(`mde.conv.${scriptId}`); } catch (_) {}
+              return;
+            }
             // 恢复工具调用历史(后端 ui_turns 现带 tools:名/参数/状态/结果)→ 折叠块可还原。
-            setMessages(j.messages.map((m) => ({ role: m.role, text: m.text, tools: Array.isArray(m.tools) ? m.tools : [] })));
+            // 同时把服务端仍挂着的待确认项挂回对应消息:刷新页面后仍能批准/拒绝。
+            const base = j.messages.map((m) => ({ role: m.role, text: m.text, tools: Array.isArray(m.tools) ? m.tools : [] }));
+            setMessages(mergePendingCards(base, j.pending_confirmations, (p) => makePendingConfirmRef.current?.(p)));
           } catch (_) { /* 还原失败静默,照常新会话 */ }
         })();
       }
@@ -444,7 +553,23 @@ const MdEditorAgent = forwardRef(function MdEditorAgent({ scriptId, activeTab, o
   const [convList, setConvList] = useState(null);
   const [showConvList, setShowConvList] = useState(false);
 
+  // 切换/新建/删除对话前先中止在途 SSE。旧实现只清 messages:流还在跑,后续 token 仍按
+  // 旧 assistantIdx 往新会话的消息数组里写(拼接/覆盖到错误条目),busy 也一直挂着。
+  const abortInFlight = useCallback(() => {
+    try { abortRef.current?.abort(); } catch (_) {}
+    abortRef.current = null;
+    activeTurnRef.current = 0;
+    pendingConfirmTurnRef.current = 0;
+    setBusy(false);
+  }, []);
+
   const loadConversation = useCallback(async (cid) => {
+    // 切对话前清掉编辑器里尚未处理的 agent diff:diff 的批准/拒绝回调绑定旧对话的
+    // call_id,切走后继续点会把旧 call_id 发到新对话(必然失败),而且 AI 文本已经
+    // 替换进文档。这里只做本地回滚,不自动 reject —— 旧对话的待确认项会在切回去时
+    // 由历史恢复成确认卡,仍可决定。
+    try { onDiscardEditorAiStateRef.current?.(); } catch (_) {}
+    abortInFlight();
     const session = scriptSessionRef.current;
     convIdRef.current = cid || null;
     setMessages([]);
@@ -454,11 +579,22 @@ const MdEditorAgent = forwardRef(function MdEditorAgent({ scriptId, activeTab, o
       const j = await window.api?.consoleAssistant?.getMessages?.(cid);
       if (scriptSessionRef.current !== session) return;   // 期间已切剧本
       if (!j?.ok || !Array.isArray(j.messages)) return;
-      setMessages(j.messages.map((m) => ({ role: m.role, text: m.text, tools: Array.isArray(m.tools) ? m.tools : [] })));
+      // 同初始恢复:拒载属于另一个剧本的对话,并清掉错误绑定。
+      if (j.script_id != null && scriptIdRef.current != null
+          && String(j.script_id) !== String(scriptIdRef.current)) {
+        convIdRef.current = null;
+        try { lsRemove(`mde.conv.${scriptIdRef.current}`); } catch (_) {}
+        setMessages([]);
+        return;
+      }
+      const base = j.messages.map((m) => ({ role: m.role, text: m.text, tools: Array.isArray(m.tools) ? m.tools : [] }));
+      setMessages(mergePendingCards(base, j.pending_confirmations, (p) => makePendingConfirmRef.current?.(p)));
     } catch (_) { /* 静默 */ }
-  }, []);
+  }, [abortInFlight]);
 
   const newConversation = useCallback(async () => {
+    try { onDiscardEditorAiStateRef.current?.(); } catch (_) {}
+    abortInFlight();
     const session = scriptSessionRef.current;
     let nid = null;
     try { nid = (await window.api?.consoleAssistant?.newConversation?.())?.conversation_id || null; } catch (_) {}
@@ -470,21 +606,29 @@ const MdEditorAgent = forwardRef(function MdEditorAgent({ scriptId, activeTab, o
     }
     setMessages([]);
     setShowConvList(false);
-  }, []);
+  }, [abortInFlight]);
 
   const toggleConvList = useCallback(async () => {
     const next = !showConvList;
     setShowConvList(next);
     if (next) {
       try {
-        const r = await window.api?.consoleAssistant?.listConversations?.();
+        // 只列当前剧本的对话:后端按 conv.script_id 过滤,避免从游戏/另一个剧本
+        // 载入上下文继续在当前剧本里写。
+        const r = await window.api?.consoleAssistant?.listConversations?.(scriptId);
         setConvList(Array.isArray(r?.items) ? r.items : []);
       } catch (_) { setConvList([]); }
     }
-  }, [showConvList]);
+  }, [showConvList, scriptId]);
 
   const deleteConv = useCallback(async (cid, e) => {
     try { e?.stopPropagation?.(); } catch (_) {}
+    // 删除的是当前正在看的对话 → 先清编辑器里绑旧对话的 diff,再断流,
+    // 避免它继续往已清空的 messages 里写、或留下无主的 AI 文本。
+    if (convIdRef.current === cid) {
+      try { onDiscardEditorAiStateRef.current?.(); } catch (_) {}
+      abortInFlight();
+    }
     try { await window.api?.consoleAssistant?.deleteConversation?.(cid); } catch (_) {}
     setConvList((list) => (Array.isArray(list) ? list.filter((c) => c.id !== cid) : list));
     if (convIdRef.current === cid) {
@@ -492,7 +636,7 @@ const MdEditorAgent = forwardRef(function MdEditorAgent({ scriptId, activeTab, o
       setMessages([]);
       if (scriptIdRef.current) lsRemove(`mde.conv.${scriptIdRef.current}`);
     }
-  }, []);
+  }, [abortInFlight]);
 
   const pageContext = useCallback(() => {
     // 章节 tab 的 id 即 chapter_index(见 md-editor.jsx tree/create)。带上它,后端在弱模型漏填
@@ -511,7 +655,7 @@ const MdEditorAgent = forwardRef(function MdEditorAgent({ scriptId, activeTab, o
   }, [scriptId, activeTab]);
 
   // 统一 SSE 事件处理(chat 与 confirm 共用)。assistantIdx = 当前 assistant 消息下标。
-  const makeHandler = useCallback((assistantIdx, turn) => (event, data) => {
+  const makeHandler = useCallback((assistantIdx, turn, extras = {}) => (event, data) => {
     if (event === 'meta') {
       if (data.conversation_id) {
         convIdRef.current = data.conversation_id;
@@ -549,6 +693,11 @@ const MdEditorAgent = forwardRef(function MdEditorAgent({ scriptId, activeTab, o
       }));
       // 写工具成功 → 刷新编辑器对应标签。用 ref 取最新 tryRefresh(makeHandler deps=[],否则捕获过期闭包→读到旧 tabs)。
       if (data.ok !== false) tryRefreshRef.current?.(data);
+      // confirm 流额外关心失败:版本指纹过期/写库失败时,父级要把目标标签拉回服务端
+      // 真实内容(内联 diff 已把 AI 文本写进编辑器,不刷新会与本机状态不一致)。
+      if (data.ok === false && typeof extras.onToolResult === 'function') {
+        try { extras.onToolResult(data); } catch (_) {}
+      }
       return;
     }
     if (event === 'done') {
@@ -564,16 +713,27 @@ const MdEditorAgent = forwardRef(function MdEditorAgent({ scriptId, activeTab, o
       // 记录这一轮的 token:内联 diff 的按钮可能在聊天流 done(busy=false)之前就被点击,
       // confirmCall 需要知道"这个待确认属于当前轮",才能放行同一轮尾部的确认。
       pendingConfirmTurnRef.current = turn || activeTurnRef.current;
-      const pc = { call_id: data.call_id, tool: data.tool, args: data.args, description: data.description, preview: data.preview };
+      // 统一构造确认卡(实时事件与历史恢复共用):身份比对、模型读章 id 比对、
+      // 重构类未保存章节计数都在 makePendingConfirm 里。
+      const pc = makePendingConfirmRef.current(data);
       // 章节改写 → 优先在【中间编辑器】里内联 diff 审阅(绿增/红删 + 顶栏全部批准/拒绝)。
       // 仅当该章正是当前激活 tab 时拦截;否则(或异常)退回侧栏确认块。
       if (data.tool === 'update_script_chapter' && data.preview && data.preview.after != null
+          && !pc.structureMismatch
           && typeof onProposeChapterEditRef.current === 'function') {
         let ok = false;
         try {
+          // 把 tool/args 带给 confirmCall:批准失败(版本指纹过期/网络错误)时父级
+          // 需要知道刷新哪个标签,见 onConfirmFailed。
           ok = onProposeChapterEditRef.current(data.args?.chapter_index, data.preview.after, {
-            onAccept: () => confirmCallRef.current?.(pc.call_id, 'approve'),
-            onReject: () => confirmCallRef.current?.(pc.call_id, 'reject'),
+            onAccept: () => confirmCallRef.current?.(pc.call_id, 'approve', { tool: pc.tool, args: pc.args }),
+            onReject: () => confirmCallRef.current?.(pc.call_id, 'reject', { tool: pc.tool, args: pc.args }),
+          }, {
+            // preview 有 16000 字截断护栏。截断的 after 绝不能整篇替换编辑器
+            // (否则长章接受后本地只剩前 16k);交给侧栏确认块,写库仍用完整 args。
+            truncated: !!data.preview.truncated,
+            // 身份比对交给父级再兜一层(active tab 的 chapterId vs preview.chapter_id)。
+            chapterId: pc.chapterId,
           });
         } catch (_) { ok = false; }
         if (ok) {
@@ -652,6 +812,22 @@ const MdEditorAgent = forwardRef(function MdEditorAgent({ scriptId, activeTab, o
   // 通用撤销:章节正文 / 世界书条目 / NPC 角色卡。info 由 _undoInfo(tc) 给出。
   const doUndo = useCallback(async (msgIdx, toolIdx, info) => {
     if (!scriptId || !info) return;
+    // 编辑器里有未处理的 AI diff/续写待定区 → 先阻止:撤销会写库,之后批准 diff
+    // 又会写回旧内容。guard 会弹统一提示(切标签/切剧本同款)。
+    if (typeof guardEditorAiStateRef.current === 'function' && !guardEditorAiStateRef.current()) return;
+    // 撤销是「恢复到 AI 改动前」,会覆盖 AI 之后的服务端修改。章节写入现在带 after_hash,
+    // 后端会精确拒绝;世界书/角色卡的旧记录没有指纹,这里统一加一道显式确认。
+    const ask = window.__confirm
+      ? await window.__confirm({
+          title: t('components.md_editor_agent.undo_confirm_title', { defaultValue: '撤销这次 AI 改动?' }),
+          message: t('components.md_editor_agent.undo_confirm_msg', {
+            defaultValue: '会恢复到 AI 改动前的版本。如果之后你手动保存过修改,可能被覆盖(章节会由后端校验并拒绝;世界书/角色卡无指纹,请确认)。',
+          }),
+          danger: true,
+          confirmText: t('components.md_editor_agent.undo_btn', { defaultValue: '撤销此次改动' }),
+        })
+      : window.confirm(t('components.md_editor_agent.undo_confirm_title', { defaultValue: '撤销这次 AI 改动?' }));
+    if (!ask) return;
     try {
       const r = info.kind === 'chapter'
         ? await window.api?.scripts?.undoChapter?.(scriptId, info.ci)
@@ -676,6 +852,15 @@ const MdEditorAgent = forwardRef(function MdEditorAgent({ scriptId, activeTab, o
   const send = useCallback(async (text) => {
     const raw = (text ?? input).trim();
     if (!raw || busy) return;
+    // 权限切换刚点、PUT 还在飞:后端本回合仍会读旧值。等保存完再发送,避免
+    // 「UI 显示只读、实际按 full_access 直接写库」这种权限错位。
+    if (permSavingRef.current) {
+      window.__apiToast?.(
+        t('components.md_editor_agent.permission.saving', { defaultValue: '写入权限正在保存,请稍候再发送' }),
+        { kind: 'warn' },
+      );
+      return;
+    }
     // 新一轮聊天:activeTurn 换成自己的 token。若旧轮随后收到 done,它的 finally
     // 会因 token 不匹配而不清掉本轮 busy。
     const turn = ++turnSeqRef.current;
@@ -721,18 +906,20 @@ const MdEditorAgent = forwardRef(function MdEditorAgent({ scriptId, activeTab, o
     const ctrl = new AbortController();
     abortRef.current = ctrl;
     try {
-      const res = await fetch('/api/console_assistant/chat', {
+      const res = await fetch(`${apiBase()}/api/console_assistant/chat`, {
         method: 'POST', credentials: 'include', signal: ctrl.signal,
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ message: sentMsg, conversation_id: convIdRef.current || undefined, page_context: pageContext() }),
       });
       const handler = makeHandler(assistantIdx, turn);
       await consumeSSE(res, (ev, data) => {
-        if (scriptSessionRef.current === session) handler(ev, data);   // 已切剧本:丢弃旧流
+        // 切剧本 或 已开始新一轮(含切换/新建对话)时丢弃旧流:旧 token 不能按旧 assistantIdx
+        // 拼进当前消息数组。abort 之外再加 turn 校验,覆盖「abort 与最后一帧」的竞态。
+        if (scriptSessionRef.current === session && activeTurnRef.current === turn) handler(ev, data);
       });
     } catch (e) {
       // 用户按停止 / 切剧本触发的 abort 不是错误,不往气泡里写 AbortError。
-      if (!ctrl.signal.aborted && scriptSessionRef.current === session) {
+      if (!ctrl.signal.aborted && scriptSessionRef.current === session && activeTurnRef.current === turn) {
         setMessages((m) => m.map((msg2, i) => i === assistantIdx ? { ...msg2, error: e?.message || String(e) } : msg2));
       }
     } finally {
@@ -741,11 +928,11 @@ const MdEditorAgent = forwardRef(function MdEditorAgent({ scriptId, activeTab, o
         if (abortRef.current === ctrl) abortRef.current = null;
       }
     }
-  }, [input, busy, pageContext, makeHandler, selLen, selCtxOff, getSelectionContext, attached, pinnedRefs]);
+  }, [input, busy, pageContext, makeHandler, selLen, selCtxOff, getSelectionContext, attached, pinnedRefs, t]);
 
   // 按 call_id 直接发 /confirm(approve|reject)——既给 sidebar 确认块用,也给编辑器内联 diff 的
   // 「全部批准/拒绝」回调用(见 makeHandler 的 confirmation_required 拦截)。
-  const confirmCall = useCallback(async (callId, decision) => {
+  const confirmCall = useCallback(async (callId, decision, context = null) => {
     if (!callId) return;
     // 同一轮尾部(聊天流还没 done,但待确认就是本轮产生的)允许确认;
     // 若 busy 属于更新的聊天轮(pendingConfirmTurn !== activeTurn),才拒绝,避免两个回合并发。
@@ -760,19 +947,40 @@ const MdEditorAgent = forwardRef(function MdEditorAgent({ scriptId, activeTab, o
     // 确认请求也挂到 abortRef:Composer 的停止按钮在确认流上同样可用。
     const ctrl = new AbortController();
     abortRef.current = ctrl;
+    // 失败时用「谁被确认」回传父级:内联 diff 已经先把 AI 文本写进编辑器,
+    // 若后端因版本指纹过期/写库失败而没有落库,必须让父级重新拉目标内容。
+    const failCtx = context || { tool: null, args: {} };
+    let sawToolResult = false;
     try {
-      const res = await fetch('/api/console_assistant/confirm', {
+      const res = await fetch(`${apiBase()}/api/console_assistant/confirm`, {
         method: 'POST', credentials: 'include', signal: ctrl.signal,
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ conversation_id: convIdRef.current, call_id: callId, decision, page_context: pageContext() }),
       });
-      const handler = makeHandler(assistantIdx, turn);
-      await consumeSSE(res, (ev, data) => {
-        if (scriptSessionRef.current === session) handler(ev, data);   // 已切剧本:丢弃旧流
+      const handler = makeHandler(assistantIdx, turn, {
+        onToolResult: (d) => {
+          sawToolResult = true;
+          if (d && d.decision === 'approve' && d.ok === false) {
+            try { onConfirmFailedRef.current?.(failCtx); } catch (_) {}
+          }
+        },
       });
+      await consumeSSE(res, (ev, data) => {
+        // 同上:只有仍属于本 confirm 回合的流才能写消息。
+        if (scriptSessionRef.current === session && activeTurnRef.current === turn) handler(ev, data);
+      });
+      // 后端异常时可能只发 error/done 而不发 tool_result;只要这次是 approve 且
+      // 没见到工具结果,就按失败处理,让父级回灌目标内容。
+      if (decision === 'approve' && !sawToolResult && !ctrl.signal.aborted) {
+        try { onConfirmFailedRef.current?.(failCtx); } catch (_) {}
+      }
     } catch (e) {
-      if (!ctrl.signal.aborted && scriptSessionRef.current === session) {
+      if (!ctrl.signal.aborted && scriptSessionRef.current === session && activeTurnRef.current === turn) {
         setMessages((m) => m.map((msg2, i) => i === assistantIdx ? { ...msg2, error: e?.message || String(e) } : msg2));
+        // 网络层失败(没拿到任何 tool_result):同样不能把 AI 文本留在编辑器里冒充已落库。
+        if (!sawToolResult && decision === 'approve') {
+          try { onConfirmFailedRef.current?.(failCtx); } catch (_) {}
+        }
       }
     } finally {
       if (scriptSessionRef.current === session && activeTurnRef.current === turn) {
@@ -785,8 +993,33 @@ const MdEditorAgent = forwardRef(function MdEditorAgent({ scriptId, activeTab, o
   const resolveConfirm = useCallback(async (msgIdx, decision) => {
     const pc = messages[msgIdx]?.pendingConfirm;
     if (!pc || busy) return;
+    // 重构/重建类确认只在事件到达时记录了未保存标签数;确认卡出现后作者仍能继续编辑,
+    // 批准时必须再查一次,否则「卡片出现 → 写两行 → 批准」仍会丢内容。
+    if (decision === 'approve' && pc.dirtyChapters !== undefined) {
+      let dirty = 0;
+      try { dirty = Number(getDirtyChapterCountRef.current?.()) || 0; } catch (_) { dirty = 0; }
+      if (dirty > 0) {
+        setMessages((m) => m.map((msg, i) => i === msgIdx
+          ? { ...msg, pendingConfirm: msg.pendingConfirm ? { ...msg.pendingConfirm, dirtyChapters: dirty } : null }
+          : msg));
+        return;
+      }
+    }
+    // rebuild_script_module:按目标模块统计 dirty(卡片/世界书/canon/锚点/章节派生)。
+    if (decision === 'approve' && Array.isArray(pc.dirtyKinds)) {
+      let dirty = 0;
+      for (const k of pc.dirtyKinds) {
+        try { dirty += Number(getDirtyCountByKindRef.current?.(k)) || 0; } catch (_) { /* ignore */ }
+      }
+      if (dirty > 0) {
+        setMessages((m) => m.map((msg, i) => i === msgIdx
+          ? { ...msg, pendingConfirm: msg.pendingConfirm ? { ...msg.pendingConfirm, dirtyTargets: dirty } : null }
+          : msg));
+        return;
+      }
+    }
     setMessages((m) => m.map((msg, i) => i === msgIdx ? { ...msg, pendingConfirm: null } : msg));
-    confirmCall(pc.call_id, decision);
+    confirmCall(pc.call_id, decision, { tool: pc.tool, args: pc.args });
   }, [messages, busy, confirmCall]);
 
   // makeHandler deps=[] → 用 ref 取最新 onProposeChapterEdit / confirmCall(避免过期闭包)。
@@ -942,9 +1175,35 @@ const MdEditorAgent = forwardRef(function MdEditorAgent({ scriptId, activeTab, o
                   <div className="mde-agent-confirm-q">
                     {t('components.md_editor_agent.confirm_prompt', { tool: toolLabel(m.pendingConfirm.tool) })}{m.pendingConfirm.description ? `:${m.pendingConfirm.description}` : ''}
                   </div>
+                  {m.pendingConfirm.structureMismatch && (
+                    <div className="mde-agent-confirm-warn">
+                      {t('components.md_editor_agent.confirm_structure_mismatch', {
+                        defaultValue: '该章节已被重排:当前章号已指向另一章,继续写入会覆盖错章。批准已禁用,请取消后让助手重新读取章节。',
+                      })}
+                    </div>
+                  )}
+                  {m.pendingConfirm.dirtyChapters > 0 && (
+                    <div className="mde-agent-confirm-warn">
+                      {t('components.md_editor_agent.confirm_dirty_chapters', {
+                        count: m.pendingConfirm.dirtyChapters,
+                        defaultValue: '有 {{count}} 个未保存的章节标签;本次重构会关闭这些标签。请先取消并保存,再重新执行。',
+                      })}
+                    </div>
+                  )}
+                  {m.pendingConfirm.dirtyTargets > 0 && (
+                    <div className="mde-agent-confirm-warn">
+                      {t('components.md_editor_agent.confirm_dirty_targets', {
+                        count: m.pendingConfirm.dirtyTargets,
+                        defaultValue: '有 {{count}} 个未保存的相关标签;本次重建会基于服务端旧数据执行,可能覆盖它们。请先取消并保存,再重新执行。',
+                      })}
+                    </div>
+                  )}
                   {m.pendingConfirm.preview && <MdeWritePreview pv={m.pendingConfirm.preview} t={t} />}
                   <div className="mde-agent-confirm-btns">
-                    <button className="ok" disabled={busy} onClick={() => resolveConfirm(i, 'approve')}>{t('components.md_editor_agent.confirm_approve')}</button>
+                    <button className="ok"
+                      disabled={busy || m.pendingConfirm.structureMismatch
+                        || m.pendingConfirm.dirtyChapters > 0 || m.pendingConfirm.dirtyTargets > 0}
+                      onClick={() => resolveConfirm(i, 'approve')}>{t('components.md_editor_agent.confirm_approve')}</button>
                     <button className="no" disabled={busy} onClick={() => resolveConfirm(i, 'reject')}>{t('common.cancel')}</button>
                   </div>
                 </div>
@@ -1084,6 +1343,9 @@ const MdEditorAgent = forwardRef(function MdEditorAgent({ scriptId, activeTab, o
   );
 });
 
+// memo:父级每次键入都会 setTabs/光标状态。activeTab 已换成稳定 meta、回调已稳定,
+// 只有切标签/改名/选区变化才需要重渲染这条可能很长的消息列表。
+const MdEditorAgent = React.memo(MdEditorAgentInner);
 export default MdEditorAgent;
 
 function labelKind(kind) {

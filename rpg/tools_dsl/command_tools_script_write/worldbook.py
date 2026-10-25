@@ -92,12 +92,29 @@ def _wb_upsert_one(db: Any, sid: int, user_id: int, args: dict) -> dict:
                 params.append(Jsonb(_strlist(args[col])))
         if not sets:
             return {"ok": False, "id": eid, "action": None, "title": before["title"], "error": "没有要更新的字段"}
+        # 确认预览时注入的版本基线:和 UPDATE 放在同一条 WHERE 里,确认期间作者/
+        # 另一标签/AI 改过该条目 → rowcount=0,拒绝覆盖。
+        base_ts = None
+        if args.get("base_updated_at"):
+            try:
+                from platform_app.api.script_edit._shared import _parse_baseline_ts
+                base_ts = _parse_baseline_ts(args.get("base_updated_at"))
+            except Exception:
+                return {"ok": False, "id": eid, "action": None, "title": before["title"],
+                        "error": "base_updated_at 不是合法时间戳"}
         sets.append("updated_at=now()")
         params.extend([eid, sid])
-        db.execute(
-            f"update worldbook_entries set {', '.join(sets)} where id=%s and script_id=%s",
+        where = "id=%s and script_id=%s"
+        if base_ts is not None:
+            where += " and updated_at=%s"
+            params.append(base_ts)
+        cur = db.execute(
+            f"update worldbook_entries set {', '.join(sets)} where {where}",
             tuple(params),
         )
+        if base_ts is not None and cur.rowcount == 0:
+            return {"ok": False, "id": eid, "action": None, "title": before["title"],
+                    "error": "条目在确认预览后已被修改,已取消写入。请重新读取后再改"}
         try:
             _write_commit(db, script_id=sid, user_id=user_id, kind="worldbook_edit",
                           message=f"编辑 worldbook #{eid}",
@@ -258,7 +275,23 @@ def _t_delete_worldbook_entry(user_id: int, script_id: int | None, args: dict, s
             ).fetchone()
             if not row:
                 return f"失败: 世界书条目 #{eid} 不存在或不属于剧本 #{sid}"
-            db.execute("delete from worldbook_entries where id=%s and script_id=%s", (eid, sid))
+            # 删除也是写:确认预览后条目被改过 → 拒绝删除,避免误删新内容。
+            base_ts = None
+            if args.get("base_updated_at"):
+                try:
+                    from platform_app.api.script_edit._shared import _parse_baseline_ts
+                    base_ts = _parse_baseline_ts(args.get("base_updated_at"))
+                except Exception:
+                    return "失败: base_updated_at 不是合法时间戳"
+            where = "id=%s and script_id=%s"
+            params: list = [eid, sid]
+            if base_ts is not None:
+                where += " and updated_at=%s"
+                params.append(base_ts)
+            cur = db.execute(f"delete from worldbook_entries where {where}", tuple(params))
+            if base_ts is not None and cur.rowcount == 0:
+                return ("失败: 世界书条目在确认预览后已被修改,已取消删除。"
+                        "请用 list_worldbook_entries 重新读取后再改。")
             try:
                 from platform_app.api.script_edit import _write_commit
                 _write_commit(db, script_id=sid, user_id=user_id, kind="worldbook_delete",

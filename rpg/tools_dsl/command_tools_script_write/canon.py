@@ -95,13 +95,28 @@ def _t_upsert_canon_entity(user_id: int, script_id: int | None, args: dict, stat
                     sets.append("attrs = coalesce(attrs,'{}'::jsonb) || '{\"source\":\"editor\"}'::jsonb")
                 # 推进 updated_at:canon 编辑器以它为乐观锁基线,AI 写入必须让基线变化,
                 # 否则编辑器里未保存的旧内容保存时不会冲突、会静默覆盖 AI 的修改。
+                # 确认预览注入的 base_updated_at 同时进 WHERE:确认期间被手动/他方
+                # 修改 → rowcount=0,拒绝覆盖。
+                base_ts = None
+                if args.get("base_updated_at"):
+                    try:
+                        from platform_app.api.script_edit._shared import _parse_baseline_ts
+                        base_ts = _parse_baseline_ts(args.get("base_updated_at"))
+                    except Exception:
+                        return "失败: base_updated_at 不是合法时间戳"
                 sets.append("updated_at=now()")
                 params.extend([sid, logical_key])
-                db.execute(
-                    f"update kb_canon_entities set {', '.join(sets)} "
-                    f"where script_id=%s and logical_key=%s",
+                where = "script_id=%s and logical_key=%s"
+                if base_ts is not None:
+                    where += " and updated_at=%s"
+                    params.append(base_ts)
+                cur = db.execute(
+                    f"update kb_canon_entities set {', '.join(sets)} where {where}",
                     tuple(params),
                 )
+                if base_ts is not None and cur.rowcount == 0:
+                    return ("失败: canon 实体在确认预览后已被修改(可能刚手动保存或另一处写入),"
+                            "已取消本次写入。请用 list_canon_entities 重新读取后再改。")
                 try:
                     _write_commit(
                         db, script_id=sid, user_id=user_id, kind="canon_edit",

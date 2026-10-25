@@ -53,6 +53,10 @@ def _t_update_npc_card(user_id: int, script_id: int | None, args: dict, state: A
             "tags", "importance", "first_revealed_chapter", "enabled",
         )
         payload: dict[str, Any] = {"id": cid}
+        # 确认预览时注入的 row_version:upsert 的 UPDATE WHERE 会原子复核,
+        # 确认期间角色卡被手动/他方修改时抛 CharacterCardConflict,不落库。
+        if args.get("base_row_version") is not None:
+            payload["base_row_version"] = args["base_row_version"]
         for k in editable:
             if k in args and args[k] is not None:
                 payload[k] = args[k]
@@ -89,6 +93,9 @@ def _t_update_npc_card(user_id: int, script_id: int | None, args: dict, state: A
     except ValueError as exc:
         return f"失败: {exc}"
     except Exception as exc:
+        if type(exc).__name__ == "CharacterCardConflict":
+            return ("失败: 角色卡在确认预览后已被修改(可能刚手动保存或另一处写入),"
+                    "已取消本次写入。请用 list_script_npcs / get_script_character_card 重新读取后再改。")
         return f"失败: {type(exc).__name__}: {exc}"
 
 

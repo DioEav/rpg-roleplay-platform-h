@@ -35,6 +35,8 @@ def _write_entity_crud_specs() -> list:
             description=(
                 "更新剧本某一章的正文/标题/分卷名(覆盖整章正文,destructive)。"
                 "chapter_index 必填;title/content/volume_title 至少传一个。"
+                "建议把 get_chapter_text 返回的 chapter_id 作为 base_chapter_id 传回:"
+                "章节被外部删改/重排后 index 可能指向另一章,服务端会据此拒绝跨章写入。"
                 "改前先向用户说清要改哪一章、改成什么。"
             ),
             input_schema={
@@ -44,6 +46,14 @@ def _write_entity_crud_specs() -> list:
                     "title": {"type": "string"},
                     "content": {"type": "string", "description": "整章正文(会覆盖原正文)"},
                     "volume_title": {"type": "string"},
+                    "base_chapter_id": {
+                        "type": "integer",
+                        "description": "可选:读取该章时拿到的稳定 chapter_id(get_chapter_text 输出);用于防止章节重排后写错章。",
+                    },
+                    "base_updated_at": {
+                        "type": "string",
+                        "description": "可选:确认预览时该章的 updated_at(服务端注入);确认期间被手动/他方修改时拒绝覆盖。",
+                    },
                 },
                 "required": ["chapter_index"],
             },

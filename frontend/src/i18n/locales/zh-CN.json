@@ -3868,7 +3868,13 @@
         "turn_complete": "本轮完成",
         "generation_failed": "生成失败",
         "please_retry": "请重试",
-        "stream_closed_error": "连接中断：{{detail}}"
+        "stream_closed_error": "连接中断：{{detail}}",
+        "recovered_title": "已恢复本轮回复",
+        "recovered_detail": "连接中断前服务端已保存本轮回复，已直接恢复，无需重试。"
+      },
+      "acceptance_ab": {
+        "stale": "候选已失效（历史已变化），已为你撤下",
+        "save_failed": "选择保存失败"
       },
       "conflict": {
         "toast_title": "存档冲突",
@@ -3883,7 +3889,8 @@
       "opening": {
         "curtain": "正在为你拉开剧本帷幕…",
         "raising_curtain": "正在拉开帷幕…",
-        "waiting": "等待开场…"
+        "waiting": "等待开场…",
+        "failed": "开场生成失败，请点击「重试」重新生成"
       },
       "save": {
         "untitled": "存档 #{{id}}",

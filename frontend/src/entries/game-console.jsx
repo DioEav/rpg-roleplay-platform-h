@@ -408,6 +408,15 @@ function App() {
   // `await reloadState(); await reloadSaves()`,此时 setActiveSave 还没重新渲染,
   // activeSaveIdRef 可能仍是旧档,reloadSaves 的详情兜底会拿错 id。
   const stateSaveIdRef = useRef(null);
+  // 开场请求的三道闸:
+  //  · openingInFlightRef —— 同一存档已有开场流在飞时不再重复开流(两次 /api/state 响应
+  //    落在同一帧时 rAF 都会过 seq 检查)。
+  //  · openingFailedRef —— 开场最终失败后置位,让错误条的「重试」走「重新生成开场」
+  //    而不是重发玩家输入(此时历史里没有可重发的输入)。
+  //  · forceOpeningRef —— 「重试开场」置位一次,reloadState 消费后无视 seenKey 再开一次。
+  const openingInFlightRef = useRef(null);
+  const openingFailedRef = useRef(false);
+  const forceOpeningRef = useRef(false);
 
   const PICK_STATE_KEYS = [
     'player','world','relationships','npc_agendas','memory','worldline','permissions','suggestions','turn',
@@ -421,6 +430,9 @@ function App() {
 
   const reloadState = useCallback(async () => {
     const seq = ++stateSeqRef.current;
+    // 「重试开场」只强制一次;不消费掉的话后续每次普通刷新都会避开 seenKey 反复开场。
+    const forceOpening = forceOpeningRef.current;
+    forceOpeningRef.current = false;
     try {
       // 请求发出时先记一次在途状态:请求可能跨过回合开始/结束,只在「发送和返回时都没有
       // SSE 在途」才允许用服务端 history 覆盖本地(避免用 pre-commit 的旧 history 覆盖已落库结果)。
@@ -493,17 +505,24 @@ function App() {
           );
           const seenKey = 'gc.opened_save.' + data.save_id;
           const alreadyOpened = sessionStorage.getItem(seenKey);
-          if (isFresh && !alreadyOpened) {
+          // forceOpening 来自错误条的「重试」:开场最终失败时已 removeItem(seenKey),
+          // 这里再无视一次标记重开,避免失败后只能靠换标签页。
+          // openingFailedRef:同一页面会话内已失败过就不要再被普通刷新自动拉起(否则每次
+          // 面板操作都重试一次,持续烧 token);刷新页面(ref 归零)或点「重试」才再开。
+          if (isFresh && (forceOpening || (!alreadyOpened && !openingFailedRef.current))) {
             // G7: 从 800ms 硬延迟改为 requestAnimationFrame,UI 已 mount 直接发请求
             requestAnimationFrame(() => {
               try {
                 // rAF 可能晚于下一次 reloadState(切档/刷新)才执行。序号已过期就放弃:
                 // 否则会拿旧档的 save_id 往新档 history 里塞开场占位,甚至并发两条开场流。
-                // opened 标记也延后到这里写:被放弃时新请求仍能正常判定「该开场」。
                 if (seq !== stateSeqRef.current) return;
-                sessionStorage.setItem(seenKey, '1');
+                // 同一存档已有开场流在飞(同一帧两次 reloadState 都会走到这里)→ 不重复开流。
+                if (openingInFlightRef.current === String(data.save_id)) return;
+                openingInFlightRef.current = String(data.save_id);
+                // opened 标记改到 on_done(成功)再写:请求最终失败时本 tab 仍能重试/刷新重开,
+                // 旧实现发请求前就写 → 开场失败后刷新也永远不会再触发。
                 const sse = window.api && window.api.raw && window.api.raw.sseStream;
-                if (!sse) return;
+                if (!sse) { openingInFlightRef.current = null; return; }
                 let openingText = '';
                 let openingRetried = false;
                 setHistory((h) => {
@@ -520,6 +539,7 @@ function App() {
                   // 同时清掉 running,避免「停止」按钮一直停在生成中。
                   const openingSaveId = data.save_id != null ? String(data.save_id) : null;
                   if (openingSaveId && stateSaveIdRef.current && stateSaveIdRef.current !== openingSaveId) {
+                    openingInFlightRef.current = null;
                     runRef.current.sse = null;
                     setRunState((r) => ({ ...r, running: false, publicStage: null, label: '', detail: '' }));
                     return;
@@ -540,12 +560,32 @@ function App() {
                     if (allowRetry && !openingText && !openingRetried) {
                       openingRetried = true;
                       openingRetryScheduled = true;
-                      setTimeout(() => { try { triggerOpening(); } catch (e) { console.warn('[opening] retry error', e); } }, 1000);
+                      // 挂进 timers:切档/停止/卸载时统一清掉,避免 1s 后对已离开的页面重开流。
+                      const retryTimer = setTimeout(() => {
+                        runRef.current.timers = (runRef.current.timers || []).filter((id) => id !== retryTimer);
+                        try { triggerOpening(); } catch (e) {
+                          console.warn('[opening] retry error', e);
+                          openingInFlightRef.current = null;
+                          openingFailedRef.current = true;
+                          try { sessionStorage.removeItem(seenKey); } catch (_) {}
+                          setRunState((r) => ({ ...r, running: false, publicStage: null, label: '', detail: '' }));
+                          setHasError(t('game.console.opening.failed'));
+                        }
+                      }, 1000);
+                      runRef.current.timers.push(retryTimer);
                       return;
                     }
                     openingFinalized = true;
+                    openingInFlightRef.current = null;
+                    // 最终失败:清掉 seenKey 并标记 openingFailed —— 刷新页面或错误条的
+                    // 「重试」都能重新生成开场;旧实现请求前就写入 seenKey,失败后永久卡死。
+                    try { sessionStorage.removeItem(seenKey); } catch (_) {}
+                    openingFailedRef.current = true;
                     runRef.current.sse = null;
                     setRunState((r) => ({ ...r, running: false, publicStage: null, label: '', detail: '' }));
+                    // 错误条(标题「生成失败」+ 重试按钮)接管恢复入口;onRetry 会识别
+                    // openingFailedRef 走「重新生成开场」而不是重发玩家输入。
+                    setHasError(t('game.console.opening.failed'));
                     const note = t('game.console.run.disconnected_incomplete');
                     // 就地更新既有占位气泡:旧 on_error 在已有部分文本时会再 push 一条
                     // 「同文本 + 断线提示」→ 开场正文出现两份。onClose 原本的“只在没有文本时
@@ -598,6 +638,11 @@ function App() {
                     },
                     on_done: () => {
                       gotDone = true;
+                      // 开场真正成功才写 opened 标记;失败路径会 removeItem,保证可重试。
+                      try { sessionStorage.setItem(seenKey, '1'); } catch (_) {}
+                      openingInFlightRef.current = null;
+                      openingFailedRef.current = false;
+                      setHasError(false);
                       runRef.current.sse = null;
                       // 标记 opening message 流式完成,避免 onClose 误判为断线
                       setHistory((h) => {
@@ -652,7 +697,16 @@ function App() {
                   if (handle && typeof handle === 'object') runRef.current.sse = handle;
                 };
                 triggerOpening();
-              } catch (e) { console.warn('[opening] trigger error', e); }
+              } catch (e) {
+                // 同步构造/开流失败:必须解开 in-flight 闸并给出可见错误,否则后续
+                // 刷新都会以为「已有开场在飞」而永远不再重试。
+                console.warn('[opening] trigger error', e);
+                openingInFlightRef.current = null;
+                openingFailedRef.current = true;
+                try { sessionStorage.removeItem(seenKey); } catch (_) {}
+                setRunState((r) => ({ ...r, running: false, publicStage: null, label: '', detail: '' }));
+                setHasError(t('game.console.opening.failed'));
+              }
             });
           }
         } catch (_) {}
@@ -762,6 +816,22 @@ function App() {
     }
     if (abBusy || !rewriteAlt) return;
     const alt = rewriteAlt;
+    // 选择前重新定位目标,不信任渲染时的 idx:等待选择期间 history 可能已被分支切换/
+    // 回退/编辑替换。对不上就撤下候选,绝不能让后端采用一个指向别的 assistant 的 index
+    // (后端内容匹配失败时会回退到它,直接改写该位置)。
+    const target = acceptanceTarget(alt, history);
+    const targetMsg = target.idx >= 0 ? history[target.idx] : null;
+    const curSaveId = activeSave && activeSave.id != null ? String(activeSave.id) : null;
+    const altSaveId = alt.save_id != null ? String(alt.save_id) : null;
+    if (
+      (curSaveId && altSaveId && curSaveId !== altSaveId)
+      || target.idx < 0 || !targetMsg || targetMsg.role !== 'assistant'
+    ) {
+      setRewriteAlt(null);
+      window.__apiToast?.(t('game.console.acceptance_ab.stale'), { kind: 'warn', duration: 3000 });
+      return;
+    }
+    idx = target.idx;
     const prevMsg = (choice === 'rewrite' && idx >= 0 && history[idx]) ? { ...history[idx] } : null;
     setAbBusy(true);
     try {
@@ -780,7 +850,7 @@ function App() {
     } finally {
       setAbBusy(false);
     }
-  }, [rewriteAlt, abBusy, history, runState.running, t]);
+  }, [rewriteAlt, abBusy, history, runState.running, activeSave, t]);
 
   useEffect(() => {
     let cancelled = false;
@@ -802,7 +872,14 @@ function App() {
   }, [reloadState, reloadSaves]);
 
   useEffect(() => {
-    const onReload = () => { reloadState(); reloadSaves(); };
+    const onReload = () => {
+      // 分支切换 / 回退删消息 / 消息编辑 / fork 都会换掉 history:A/B 候选的「首稿」
+      // 目标可能已不在新历史里。先撤下候选,否则选择「改写稿」时前端按当前 history
+      // 重算的 message_index 会指到另一条 assistant(后端内容匹配失败时会采用它)。
+      setRewriteAlt(null);
+      reloadState();
+      reloadSaves();
+    };
     window.addEventListener('rpg-state-reload', onReload);
     window.addEventListener('game-state-refresh', onReload);
     return () => {
@@ -830,6 +907,8 @@ function App() {
       if (runRef.current && runRef.current.sse) return;  // 回合进行中(SSE 未收尾)不弹
       setRewriteAlt((prev) => prev || {
         alt_id: payload.alt_id, turn: payload.turn,
+        // 记下候选所属存档:选择前再校验一次,避免极端时序下把 A 档的改写稿用到 B 档。
+        save_id: (payload.save_id != null ? payload.save_id : curSave),
         rewrite: String(payload.rewrite || ''),
         unmet: Array.isArray(payload.unmet) ? payload.unmet : [],
         // 后端按首稿全文算的权威展示序 index(可能 null=旧档/未命中);优先用它定位改写目标,
@@ -875,6 +954,16 @@ function App() {
     if (runRef.current.inactivityTimer) { clearTimeout(runRef.current.inactivityTimer); runRef.current.inactivityTimer = null; }
     runRef.current.runId = (runRef.current.runId || 0) + 1;
     if (runRef.current.sse) { try { runRef.current.sse.stop('manual_stop'); } catch (_) {} runRef.current.sse = null; }
+    // 停止会 abort 开场流(sseStream 的 abort 不回调 onClose,不会自动收尾)。玩家按下停止
+    // = 明确不想再等开场:给该档写上 opened 标记,避免下一次普通刷新又把开场自动拉起;
+    // 之后想重开可以刷新页面/新开标签页(新会话没有这个标记)。
+    if (openingInFlightRef.current) {
+      try { sessionStorage.setItem('gc.opened_save.' + openingInFlightRef.current, '1'); } catch (_) {}
+    }
+    openingInFlightRef.current = null;
+    // 已到达的 A/B 候选属于被停止的回合(首稿可能还没落库),继续挂着选择会按
+    // message_index 改到新历史的另一条 assistant 上 —— 直接撤下。
+    setRewriteAlt(null);
     try { window.api.game.stop(); } catch (_) {}
     setRunState((r) => ({ ...r, running: false, label: t('game.console.run.stopped'), detail: '', publicStage: null, completedAt: 0, completedElapsed: r.totalElapsed }));
   }, [t]);
@@ -894,6 +983,10 @@ function App() {
       rc.timers.forEach((t) => { try { clearTimeout(t); } catch (_) {} try { clearInterval(t); } catch (_) {} });
       rc.timers = [];
       if (rc.inactivityTimer) { clearTimeout(rc.inactivityTimer); rc.inactivityTimer = null; }
+      // 玩家已经进入正式回合:之前失败的开场标记不应再劫持后续的 Retry;被 supersede
+      // 的开场流也不会再收尾,一并解开 in-flight 闸。
+      openingInFlightRef.current = null;
+      openingFailedRef.current = false;
     }
     const runId = (runRef.current.runId || 0) + 1;
     runRef.current.runId = runId;
@@ -943,6 +1036,9 @@ function App() {
     let gotReceipt = false;  // #13: 本轮是否收到 system_receipt(斜杠命令回执)
     let gotDone = false;
     let streamFailed = false;
+    // /set rewind 会先回滚上一轮再重演:本轮的 assistant 总数可能不增反平,
+    // 落库核对不能用严格的 +1 判定。
+    let sawRewind = false;
     let reasoningBuf = '';   // #7: 本轮累计的 reasoning(思考过程)文本
     const describeLastSseEvent = () => {
       const ev = lastSseEvent || {};
@@ -994,19 +1090,107 @@ function App() {
         return h;
       });
     };
+    // 流在没有 done 的情况下收尾(EOF/读流错误/客户端 abort/空闲超时)时,先回查服务端
+    // 确认本轮是否其实已经落库:服务端是「先提交回合、再发 done」,done 可能在传输中丢失,
+    // 而客户端 abort 也不代表服务端没跑完。旧逻辑直接当失败 → restoreFailedDraft 置
+    // lastRunFailedUnpersisted → onRetry 跳过 rollback 再发一次 → 存档里多出重复回合。
+    // 判定口径与 on_done 的空回复兜底一致:assistant 条数确实增加且最后一条有正文。
+    let brokenStreamHandled = false;
+    const handleBrokenStream = async ({ errorMsg, label, detail, toastTitle, toastKind = 'warn', toastDetail }) => {
+      if (brokenStreamHandled || !isCurrentRun() || gotDone) return;
+      brokenStreamHandled = true;
+      streamFailed = true;
+      runRef.current.sse = null;
+      clearInterval(tickerId);
+      if (runRef.current.doneTimer) { clearTimeout(runRef.current.doneTimer); runRef.current.doneTimer = null; }
+      if (runRef.current.inactivityTimer) { clearTimeout(runRef.current.inactivityTimer); runRef.current.inactivityTimer = null; }
+      // 斜杠命令回执已收到:本轮语义已完成(只是 done 没到),不该报“生成失败”。
+      if (gotReceipt) {
+        setRewriteAlt(null);
+        setPickedCommand(null);
+        setRunState((r) => ({ ...r, running: false, publicStage: null, label: '', detail: '', completedAt: 0 }));
+        try { window.dispatchEvent(new CustomEvent('game-state-refresh')); } catch (_) {}
+        return;
+      }
+      let recovered = false;
+      try {
+        const d2 = await window.api.game.state();
+        if (!isCurrentRun()) return;
+        if (d2 && Array.isArray(d2.history)) {
+          const beforeCount = Number(runRef.current.assistantCountBefore) || 0;
+          const afterCount = d2.history.filter((m) => m && m.role === 'assistant').length;
+          const lastSrv = d2.history.length ? d2.history[d2.history.length - 1] : null;
+          // 正常回合严格 +1(rewind 可能持平);再校验服务端最后一条玩家输入确实是本轮输入,
+          // 避免「首屏 history 还没加载完就发送」时把旧回合误判成本轮已落库。
+          const countOk = sawRewind ? afterCount >= beforeCount : afterCount === beforeCount + 1;
+          const wantInput = String(runRef.current.activeInput || '').trim();
+          const srvLastUser = [...d2.history].reverse().find((m) => m && m.role === 'user');
+          const inputOk = !wantInput || String((srvLastUser && srvLastUser.content) || '').trim().startsWith(wantInput);
+          if (countOk && inputOk && lastSrv && lastSrv.role === 'assistant' && String(lastSrv.content || '').trim()) {
+            // 本轮已落库:采用服务端最终 history,清掉失败标记;不动 A/B 候选 —— 它对应的
+            // 首稿现在确实存在,仍然可以选。
+            logEvent('recovered_turn', { before: beforeCount, after: afterCount });
+            setHistory(d2.history);
+            if (d2.player) setGame((g) => {
+              const next = { ...g };
+              for (const k of PICK_STATE_KEYS) if (d2[k] !== undefined) next[k] = d2[k];
+              next._raw = {
+                save_id: d2.save_id ?? next._raw?.save_id,
+                save_title: d2.save_title ?? next._raw?.save_title,
+                turn: d2.turn ?? next._raw?.turn,
+                isTavern: tavernFlagFrom(d2, next._raw),
+              };
+              return next;
+            });
+            if (d2.permissions) {
+              setPermission(normalizePermissionForUi(d2.permissions.mode));
+              setPendingWrites(d2.permissions.pending_writes || []);
+              setPendingQuestions(d2.permissions.pending_questions || []);
+            }
+            if (d2.save_id != null) setActiveSave((prev) => saveMetaFrom(d2, prev, t));
+            runRef.current.lastRunFailedUnpersisted = false;
+            setPickedCommand(null);
+            setHasError(false);
+            setRunState((r) => ({
+              ...r, running: false, publicStage: null,
+              label: t('game.console.run.turn_complete'), detail: '',
+              completedAt: Date.now(), completedElapsed: r.totalElapsed,
+            }));
+            if (runRef.current.doneTimer) clearTimeout(runRef.current.doneTimer);
+            runRef.current.doneTimer = setTimeout(() => {
+              runRef.current.doneTimer = null;
+              setRunState((r) => (r.running ? r : { ...r, publicStage: null, completedAt: 0, label: '' }));
+            }, 1800);
+            window.__apiToast?.(t('game.console.run.recovered_title'), {
+              kind: 'ok', detail: t('game.console.run.recovered_detail'), duration: 3500,
+            });
+            try { window.dispatchEvent(new CustomEvent('game-state-refresh')); } catch (_) {}
+            recovered = true;
+          }
+        }
+      } catch (_) { /* 回查失败 → 按未落库处理,与旧行为一致 */ }
+      if (recovered) return;
+      if (!isCurrentRun() || gotDone) return;
+      // 确认没落库:撤下该回合的 A/B 候选(目标不存在),恢复草稿并报错。
+      setRewriteAlt(null);
+      restoreFailedDraft();
+      setRunState((r) => ({ ...r, running: false, label, detail, publicStage: null, completedAt: 0 }));
+      setHasError(errorMsg);
+      window.__apiToast?.(toastTitle, { kind: toastKind, detail: toastDetail });
+    };
     const resetInactivityTimer = () => {
       if (runRef.current.inactivityTimer) clearTimeout(runRef.current.inactivityTimer);
       runRef.current.inactivityTimer = setTimeout(() => {
         if (!isCurrentRun()) return;
-        streamFailed = true;
         logEvent('idle_timeout', { ms: STREAM_IDLE_TIMEOUT_MS });
         try { runRef.current.sse && runRef.current.sse.stop && runRef.current.sse.stop('idle_timeout'); } catch (_) {}
-        restoreFailedDraft();
-        setRunState((r) => {
-          if (!r.running) return r;
-          setHasError(t('game.console.run.idle_timeout_error'));
-          window.__apiToast?.(t('game.console.run.idle_timeout_title'), { kind: 'warn', detail: t('game.console.run.idle_timeout_detail'), duration: 4000 });
-          return { ...r, running: false, label: t('game.console.run.timed_out'), detail: t('game.console.run.idle_timeout_detail'), publicStage: null, completedAt: 0 };
+        void handleBrokenStream({
+          errorMsg: t('game.console.run.idle_timeout_error'),
+          label: t('game.console.run.timed_out'),
+          detail: t('game.console.run.idle_timeout_detail'),
+          toastTitle: t('game.console.run.idle_timeout_title'),
+          toastKind: 'warn',
+          toastDetail: t('game.console.run.idle_timeout_detail'),
         });
       }, STREAM_IDLE_TIMEOUT_MS);
     };
@@ -1018,22 +1202,37 @@ function App() {
         // task #61: HTTP 层错误（如 409 save_id_mismatch）
         onError: (err) => {
           if (!isCurrentRun()) return;
-          streamFailed = true;
           clearInterval(tickerId);
           if (runRef.current.inactivityTimer) { clearTimeout(runRef.current.inactivityTimer); runRef.current.inactivityTimer = null; }
           const code = err && err.payload && err.payload.code;
           const detail = err && err.payload && err.payload.message;
           logEvent('http_error', { status: err && err.status, code, message: (err && err.message) || detail || t('game.console.run.request_failed') });
           if (code === 'save_id_mismatch') {
+            streamFailed = true;
             setRunState((r) => ({ ...r, running: false, label: t('game.console.conflict.toast_title'), detail: detail || t('game.console.conflict.save_switched'), publicStage: null, completedAt: 0 }));
             setHasError(detail || t('game.console.conflict.save_switched_refresh'));
             window.__apiToast?.(t('game.console.conflict.toast_title'), { kind: 'warn', detail: detail || t('game.console.conflict.refresh_hint'), duration: 5000 });
-          } else {
-            const msg = (err && err.message) || t('game.console.run.request_failed');
-            setRunState((r) => ({ ...r, running: false, label: t('game.console.run.request_failed'), detail: msg, publicStage: null, completedAt: 0 }));
-            setHasError(msg);
-            window.__apiToast?.(t('game.console.run.request_failed'), { kind: 'danger', detail: msg });
+            // 请求根本没跑起来(存档已被切走),本轮不可能落库,直接恢复草稿。
+            restoreFailedDraft();
+            return;
           }
+          const msg = (err && err.message) || t('game.console.run.request_failed');
+          if (err && err.code === 'stream_read') {
+            // 已是流式阶段后读失败:服务端可能已经提交回合,先核对再决定是否判失败。
+            void handleBrokenStream({
+              errorMsg: msg,
+              label: t('game.console.run.interrupted'),
+              detail: (err && err.message) || '',
+              toastTitle: t('game.console.run.generation_interrupted'),
+              toastKind: 'warn',
+              toastDetail: (err && err.message) || t('game.console.run.please_retry'),
+            });
+            return;
+          }
+          streamFailed = true;
+          setRunState((r) => ({ ...r, running: false, label: t('game.console.run.request_failed'), detail: msg, publicStage: null, completedAt: 0 }));
+          setHasError(msg);
+          window.__apiToast?.(t('game.console.run.request_failed'), { kind: 'danger', detail: msg });
           // 撤回本轮用户消息
           restoreFailedDraft();
         },
@@ -1049,13 +1248,17 @@ function App() {
             runRef.current.sse = null;
             return;
           }
-          streamFailed = true;
-          const msg = t('game.console.run.browser_abort_error');
-          restoreFailedDraft();
-          setRunState((r) => ({ ...r, running: false, label: t('game.console.run.cancelled'), detail: t('game.console.run.browser_abort_detail'), publicStage: null, completedAt: 0 }));
-          setHasError(msg);
-          window.__apiToast?.(t('game.console.run.generation_cancelled'), { kind: 'warn', detail: t('game.console.run.browser_abort_detail'), duration: 5000 });
+          // 浏览器/网络侧 abort:服务端可能已经跑完并提交(只是响应读不到了),
+          // 不能直接当失败恢复草稿 —— 否则 Retry 会跳过 rollback 再发一遍。
           runRef.current.sse = null;
+          void handleBrokenStream({
+            errorMsg: t('game.console.run.browser_abort_error'),
+            label: t('game.console.run.cancelled'),
+            detail: t('game.console.run.browser_abort_detail'),
+            toastTitle: t('game.console.run.generation_cancelled'),
+            toastKind: 'warn',
+            toastDetail: t('game.console.run.browser_abort_detail'),
+          });
         },
         on_status: (data) => {
           if (!isCurrentRun()) return;
@@ -1150,6 +1353,8 @@ function App() {
           if (data && data.alt_id && String(data.rewrite || '').trim()) {
             setRewriteAlt({
               alt_id: data.alt_id, turn: data.turn,
+              // SSE 内联候选不带 save_id,用本轮发送时绑定的存档兜底,供选择前校验。
+              save_id: _chatSaveId,
               rewrite: String(data.rewrite || ''),
               unmet: Array.isArray(data.unmet) ? data.unmet : [],
             });
@@ -1162,6 +1367,7 @@ function App() {
           // 重演用的原始输入气泡,随后到来的 GM token 会开一条新的 assistant 气泡。
           resetInactivityTimer();
           logEvent('rewind', data);
+          sawRewind = true;
           const replayUser = (data && data.replay_user) || '';
           if (replayUser) {
             // 后端用“上一轮的原始输入”重演;后续失败/重试要恢复和重发的都是这句，
@@ -1283,6 +1489,8 @@ function App() {
                   }
                 } catch (_) { /* 回查失败 → 落到下面的空回复提示 */ }
               }
+              // 空回复/被中断:本轮首稿没有落库,A/B 候选的目标不存在,先撤下。
+              setRewriteAlt(null);
               restoreFailedDraft({ force: true });
               const msg = _interrupted ? t('game.console.run.interrupted_msg') : t('game.console.run.empty_reply_msg');
               setRunState((r) => ({
@@ -1398,6 +1606,8 @@ function App() {
           if (runRef.current.doneTimer) { clearTimeout(runRef.current.doneTimer); runRef.current.doneTimer = null; }
           if (runRef.current.inactivityTimer) { clearTimeout(runRef.current.inactivityTimer); runRef.current.inactivityTimer = null; }
           const realMsg = (data && (data.message || data.detail || data.error)) || '';
+          // 服务端明确报错:本轮不会有首稿落库,A/B 候选的目标不存在,先撤下。
+          setRewriteAlt(null);
           setRunState((r) => ({ ...r, running: false, label: t('game.console.run.generation_failed'), detail: realMsg, publicStage: null, completedAt: 0 }));
           setHasError(realMsg || true);
           window.__apiToast?.(t('game.console.run.generation_failed'), { kind: 'danger', detail: realMsg || t('game.console.run.please_retry') });
@@ -1413,18 +1623,16 @@ function App() {
             runRef.current.sse = null;
             return;
           }
-          setRunState((r) => {
-            if (!r.running) return r;
-            const msg = t('game.console.run.stream_closed_error', { detail: lastDetail });
-            setHasError(msg);
-            window.__apiToast?.(t('game.console.run.generation_interrupted'), { kind: 'warn', detail: lastDetail, duration: 5000 });
-            restoreFailedDraft();
-            return { ...r, running: false, label: t('game.console.run.interrupted'), detail: lastDetail, publicStage: null, completedAt: 0 };
-          });
-          setHistory((h) => {
-            const last = h[h.length - 1];
-            if (!last || last.role !== 'assistant' || !last.streaming) return h;
-            return [...h.slice(0, -1), { ...last, streaming: false, streaming_done: true }];
+          // EOF 但没有 done:服务端可能已在关闭前提交本轮。先核对 /api/state,
+          // 已落库就采用服务端 history;否则才恢复草稿并报「连接中断」。
+          runRef.current.sse = null;
+          void handleBrokenStream({
+            errorMsg: t('game.console.run.stream_closed_error', { detail: lastDetail }),
+            label: t('game.console.run.interrupted'),
+            detail: lastDetail,
+            toastTitle: t('game.console.run.generation_interrupted'),
+            toastKind: 'warn',
+            toastDetail: lastDetail,
           });
         },
       }
@@ -1541,6 +1749,31 @@ function App() {
     // → 本轮彻底丢失。这里提前拦;回滚 await 期间横幅可能才出现,发送前还会用 ref 再拦一次。
     if (tabConflictRef.current) {
       window.__apiToast?.(t('game.console.conflict.toast_title'), { kind: 'warn', detail: t('game.console.conflict.toast_detail'), duration: 4000 });
+      return;
+    }
+    // 开场最终失败:此时历史里没有可重发的玩家输入,「重试」应重新生成开场。
+    // 失败收尾时已 removeItem(seenKey),这里置 forceOpening 让 reloadState 无视标记再开一次。
+    if (openingFailedRef.current) {
+      openingFailedRef.current = false;
+      setHasError(false);
+      setRewriteAlt(null);
+      const sid = stateSaveIdRef.current || activeSaveIdRef.current;
+      if (sid) { try { sessionStorage.removeItem('gc.opened_save.' + sid); } catch (_) {} }
+      forceOpeningRef.current = true;
+      await reloadState();
+      // 等 reloadState 里排的 opening rAF 执行完再判断:开流会置 in-flight;成功会写 seenKey。
+      // 不能直接用 reloadState 的返回值 —— 新建档在开场前可能还没有 player,返回 false 属正常。
+      await new Promise((resolve) => setTimeout(resolve, 120));
+      // 等待期间玩家可能已切档:状态已换成新档,别把错误条写到新档上。
+      if (sid && stateSaveIdRef.current && stateSaveIdRef.current !== sid) return;
+      const started = !!openingInFlightRef.current
+        || openingFailedRef.current
+        || !!(sid && (() => { try { return sessionStorage.getItem('gc.opened_save.' + sid); } catch (_) { return null; } })());
+      if (!started && !tavernRedirectRef.current) {
+        // 请求失败/没有可重开的开场:保留错误条,让玩家可以再点一次。
+        openingFailedRef.current = true;
+        setHasError(t('game.console.opening.failed'));
+      }
       return;
     }
     // 「重试」语义 = 删除本轮输出(回滚到本轮玩家输入之前)+ 再次发送本轮输入。
@@ -1835,6 +2068,12 @@ function App() {
     runRef.current.activeInput = '';
     runRef.current.lastRunFailedUnpersisted = false;
     runRef.current.assistantCountBefore = 0;
+    // 开场状态是存档级的:切档后旧档的失败标记/强制标记必须失效,否则新档会被误判成
+    // 「开场失败」或误用旧档的重试。注意不要清 openingInFlightRef:切档流程是
+    // reloadState 先排 rAF、activeSave 变化后才触发本 reset,清掉会把刚起步的新档开场
+    // 从「在飞」状态抹掉,后续刷新就可能重复开流(它按 save_id 区分,旧档残留无害)。
+    openingFailedRef.current = false;
+    forceOpeningRef.current = false;
     setRunState({ running: false, publicStage: null, label: '', detail: '', totalElapsed: 0, completedAt: 0, completedElapsed: 0, rawSteps: [] });
   }, []);
   const activeSaveId = (activeSave && activeSave.id != null) ? String(activeSave.id) : null;
@@ -1875,6 +2114,9 @@ function App() {
   if (mobileGame && mountStage >= 1) {
     // A/B 候选的定位在桌面/移动共用同一 helper;移动端只负责渲染面板。
     const acceptance = rewriteAlt ? acceptanceTarget(rewriteAlt, history) : null;
+    // 目标已被分支切换/回退换掉时不再渲染面板(否则点选会把改写稿落到别的消息上)。
+    const acceptanceUsable = !!(acceptance && acceptance.idx >= 0
+      && history[acceptance.idx] && history[acceptance.idx].role === 'assistant');
     return (
       <>
         <MobileGame
@@ -1894,7 +2136,7 @@ function App() {
           onConfigDefault={onConfigDefault} onConfigContinue={onConfigContinue}
           onConfigSettings={onConfigSettings} onHardConfig={onHardConfig}
           /* acceptance A/B(移动端也要能选;旧版只在桌面 foot 渲染,移动端候选直接消失) */
-          rewriteAlt={rewriteAlt} acceptanceIdx={acceptance ? acceptance.idx : -1}
+          rewriteAlt={acceptanceUsable ? rewriteAlt : null} acceptanceIdx={acceptance ? acceptance.idx : -1}
           acceptanceOriginal={acceptance ? acceptance.original : ''}
           abBusy={abBusy} onChooseAcceptance={chooseAcceptance}
           onDismissAcceptance={() => setRewriteAlt(null)}
@@ -1903,7 +2145,7 @@ function App() {
           clicheNotice={clicheNotice} onRetryCliche={() => { setClicheNotice(null); onRetry(); }} onDismissCliche={() => setClicheNotice(null)}
           hasError={hasError}
           activeSave={activeSave} realSaves={realSaves.length ? realSaves : ((window.RPG_AUTH && window.RPG_AUTH.authed) ? [] : (window.MOCK_PLATFORM?.saves || []))}
-          onSwitchSave={async (sid) => { if (activeSave && String(activeSave.id) === String(sid)) return; try { if (runRef.current.sse || runState.running) stopRun(); await window.api.saves.activate(sid); resetSessionUiState(); await reloadState(); await reloadSaves(); } catch (e) { window.__apiToast?.(t('game.console.save.switch_failed'), { kind: 'danger', detail: e?.message }); } }}
+          onSwitchSave={async (sid) => { if (activeSave && String(activeSave.id) === String(sid)) return; try { if (runRef.current.sse || runState.running) stopRun(); await window.api.saves.activate(sid); resetSessionUiState(); openingInFlightRef.current = null; await reloadState(); await reloadSaves(); } catch (e) { window.__apiToast?.(t('game.console.save.switch_failed'), { kind: 'danger', detail: e?.message }); } }}
           onNew={async () => { if (!await window.__confirm({ message: t('game.console.save.new_confirm') })) return; location.href = '/saves'; }}
         onSave={manualSave}
           reloadState={reloadState}
@@ -1992,7 +2234,7 @@ function App() {
         state={game} runState={runState}
         onNew={async () => { if (!await window.__confirm({ message: t('game.console.save.new_confirm') })) return; window.open('/saves', '_blank'); }}
         onSave={manualSave}
-        onSwitchSave={async (sid) => { setMobileNav(false); if (activeSave && String(activeSave.id) === String(sid)) return; try { if (runRef.current.sse || runState.running) stopRun(); await window.api.saves.activate(sid); resetSessionUiState(); await reloadState(); await reloadSaves(); } catch (e) { window.__apiToast?.(t('game.console.save.switch_failed'), { kind: 'danger', detail: e?.message }); } }}
+        onSwitchSave={async (sid) => { setMobileNav(false); if (activeSave && String(activeSave.id) === String(sid)) return; try { if (runRef.current.sse || runState.running) stopRun(); await window.api.saves.activate(sid); resetSessionUiState(); openingInFlightRef.current = null; await reloadState(); await reloadSaves(); } catch (e) { window.__apiToast?.(t('game.console.save.switch_failed'), { kind: 'danger', detail: e?.message }); } }}
         currentSaveId={activeSave?.id ?? null}
         activeSave={activeSave}
         saves={realSaves.length ? realSaves : ((window.RPG_AUTH && window.RPG_AUTH.authed) ? [] : (window.MOCK_PLATFORM?.saves || []))}
@@ -2065,6 +2307,8 @@ function App() {
           {rewriteAlt && (() => {
             // 候选定位/裁决逻辑与移动端共用(acceptanceTarget / chooseAcceptance)。
             const { idx, original } = acceptanceTarget(rewriteAlt, history);
+            // 目标已不存在(分支切换/回退/编辑后 history 被换)→ 不渲染。
+            if (idx < 0 || !history[idx] || history[idx].role !== 'assistant') return null;
             return (
               <AcceptanceAbPanel
                 alt={rewriteAlt} original={original} busy={abBusy || runState.running}

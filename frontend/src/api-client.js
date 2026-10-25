@@ -500,7 +500,9 @@
       search: (sid, q, opts) => GET(`${API_PREFIX}/scripts/${sid}/search`, Object.assign({ q }, opts || {})),
       // 章节版本历史 + 回滚到任意历史版本(改前快照)。
       chapterHistory: (sid, ci) => GET(`${API_PREFIX}/scripts/${sid}/chapters/${ci}/history`),
-      chapterRestore: (sid, ci, commitId) => POST(`${API_PREFIX}/scripts/${sid}/chapters/${ci}/restore`, { commit_id: commitId }),
+      // baseChapterId(可选):/history 返回的当前稳定 chapter id,restore 时服务端校验
+      // index 是否仍指向同一章,防止外部重排后把历史快照恢复到另一章。
+      chapterRestore: (sid, ci, commitId, baseChapterId) => POST(`${API_PREFIX}/scripts/${sid}/chapters/${ci}/restore`, { commit_id: commitId, base_chapter_id: baseChapterId }),
       // 删除单条历史记录(只删审计记录与快照,不动正文)。
       commitDelete: (sid, commitId) => DEL(`${API_PREFIX}/scripts/${sid}/commits/${commitId}`),
       // 作者写作规范(.cursorrules 风,注入编辑器 agent)。
@@ -532,6 +534,19 @@
       worldbookBatch: (sid, body) => POST(`${API_PREFIX}/scripts/${sid}/worldbook/batch`, body),
       // canon 实体(MD 编辑器):list/get 读 + upsert(有 logical_key → PUT,否则 POST)/delete
       canonList: (sid) => GET(`${API_PREFIX}/scripts/${sid}/canon-entities`),
+      // 编辑器文件树/快速打开需要全量 canon:后端默认单页 200 条,分页拉完
+      // (page 1-based + limit 上限 1000;has_more 由 offset 分页分支返回)。
+      canonListAll: async (sid) => {
+        const all = [];
+        for (let page = 1; page <= 50; page += 1) {
+          const r = await GET(`${API_PREFIX}/scripts/${sid}/canon-entities`, { page, limit: 1000 });
+          const items = (r && (r.items || r.entities)) || [];
+          all.push(...items);
+          const more = !!(r && (r.has_more === true || (r.page && r.page.has_more === true)));
+          if (!more || !items.length) break;
+        }
+        return { ok: true, items: all, total: all.length };
+      },
       canonGet: (sid, key) => GET(`${API_PREFIX}/scripts/${sid}/canon-entities/${encodeURIComponent(key)}`),
       // 显式 POST 新建:后端 POST 要求 logical_key,而 canonUpsert 见到 logical_key 会走 PUT
       // (PUT 只更新已存在实体)。编辑器「新建 / 复制 canon」必须用这个端点带新 key 创建。
@@ -1055,7 +1070,7 @@
     // ---------- 剧本编辑器写作搭档(console_assistant)对话管理 ----------
     // 端点用绝对 /api/console_assistant/*(非 API_PREFIX);SSE 的 /chat、/confirm 仍由组件裸 fetch。
     consoleAssistant: {
-      listConversations: () => GET(`/api/console_assistant/conversations`),
+      listConversations: (scriptId) => GET(`/api/console_assistant/conversations`, scriptId != null ? { script_id: scriptId } : undefined),
       getMessages: (id) => GET(`/api/console_assistant/conversations/${encodeURIComponent(id)}/messages`),
       newConversation: () => POST(`/api/console_assistant/new_conversation`, {}),
       deleteConversation: (id) => POST(`/api/console_assistant/delete_conversation`, { conversation_id: id }),

@@ -9,6 +9,12 @@ const { useState, useEffect, useCallback } = React;
 function ProblemsPanel({ scriptId, reloadKey, onJump, onClose, onCountChange }) {
   const { t } = useTranslation();
   const [issues, setIssues] = useState(null);
+  // Esc 关闭(与其它浮层一致)。编辑器全局快捷键在有浮层打开时已让路,这里自己收口。
+  useEffect(() => {
+    const onKey = (e) => { if (e.key === 'Escape') { e.preventDefault(); onClose(); } };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onClose]);
   const load = useCallback(async () => {
     try { const r = await api().scripts.issues(scriptId); const arr = (r && r.ok) ? (r.issues || []) : []; setIssues(arr); onCountChange && onCountChange(arr.length); }
     catch (_) { setIssues([]); }

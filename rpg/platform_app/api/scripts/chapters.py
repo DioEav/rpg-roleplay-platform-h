@@ -5,17 +5,18 @@
 """
 from __future__ import annotations
 
-import os
 import hashlib
-from datetime import datetime, timezone
+import os
+from datetime import UTC, datetime
 
 from fastapi import Depends, Request
+
+from core.logging import get_logger
 
 from ... import script_import
 from ...db import connect
 from .._deps import json_response, require_user, value_error_response
 from ._shared import router
-from core.logging import get_logger
 
 log = get_logger(__name__)
 
@@ -32,11 +33,15 @@ _MAX_COMMIT_SNAPSHOT_CHARS = 100_000
 
 
 def _fetch_chapter_prior(script_id: int, chapter_index: int) -> dict | None:
-    """落库前抓本章当前 title/content/volume_title(即改动前的版本)。失败返回 None。"""
+    """落库前抓本章当前 id/title/content/volume_title(即改动前的版本)。失败返回 None。
+
+    带 id 是为了给 commit 记录稳定章节身份:chapter_index 会因删除/拆分/合并/重切
+    重排,只按 index 归属的历史记录之后可能被恢复进另一章。
+    """
     try:
         with connect() as db:
             row = db.execute(
-                "select title, content, volume_title from script_chapters "
+                "select id, title, content, volume_title from script_chapters "
                 "where script_id = %s and chapter_index = %s",
                 (script_id, chapter_index),
             ).fetchone()
@@ -60,8 +65,8 @@ def _within_merge_window(last_saved_iso, minutes: int) -> bool:
     except ValueError:
         return False
     if ts.tzinfo is None:
-        ts = ts.replace(tzinfo=timezone.utc)
-    return (datetime.now(timezone.utc) - ts).total_seconds() < minutes * 60
+        ts = ts.replace(tzinfo=UTC)
+    return (datetime.now(UTC) - ts).total_seconds() < minutes * 60
 
 
 def _record_chapter_edit_commit(*, script_id: int, user_id: int, chapter_index: int,
@@ -89,7 +94,7 @@ def _record_chapter_edit_commit(*, script_id: int, user_id: int, chapter_index: 
         # 拿不到 after 时退回 prior(等价于"不合并",安全方向;最多多几条记录,不会串章)。
         prior_hash = _content_hash(before_content)
         after_hash = _content_hash(after_content if after_content is not None else before_content)
-        now_iso = datetime.now(timezone.utc).isoformat()
+        now_iso = datetime.now(UTC).isoformat()
         with connect() as db:
             if not script_owned(db, script_id, user_id):
                 return
@@ -98,6 +103,7 @@ def _record_chapter_edit_commit(*, script_id: int, user_id: int, chapter_index: 
             # 任何插进来的记录 —— AI 改写/新增、撤销/恢复、他人的编辑 —— 都打断会话;
             # 不走 commit 的正文写入(结构操作换章等)由 after_hash 兜住。
             if _CHAPTER_COMMIT_MERGE_MINUTES > 0:
+                prior_id = (prior or {}).get("id")
                 row = db.execute(
                     """select id, kind, author_user_id,
                               coalesce(payload->>'source', '') as source,
@@ -106,8 +112,13 @@ def _record_chapter_edit_commit(*, script_id: int, user_id: int, chapter_index: 
                        from script_commits
                        where script_id = %s
                          and coalesce(payload->'ids'->>'chapter_index', '') = %s
+                         -- 新记录还要求稳定 id 一致:两章正文恰好相同(hash 相同)时,
+                         -- 也不能把新章的编辑并进旧章的会话记录。旧记录(NULL)保持兼容。
+                         and (payload->'ids'->>'chapter_id' is null
+                              or payload->'ids'->>'chapter_id' = %s)
                        order by id desc limit 1""",
-                    (script_id, str(chapter_index)),
+                    (script_id, str(chapter_index),
+                     str(prior_id) if prior_id is not None else None),
                 ).fetchone()
                 if (row
                         and row["kind"] == "chapter_edit"
@@ -136,7 +147,13 @@ def _record_chapter_edit_commit(*, script_id: int, user_id: int, chapter_index: 
                 message=f"手动编辑章节 #{chapter_index}",
                 payload={
                     "table": "script_chapters", "op": "edit",
-                    "ids": {"chapter_index": int(chapter_index)},
+                    # chapter_id = 稳定身份。历史列表/恢复会用它拒绝把「index 重排前
+                    # 属于另一章」的快照写进当前章;旧记录无此字段 → 前端仍按 index 展示。
+                    "ids": {
+                        "chapter_index": int(chapter_index),
+                        "chapter_id": (int((prior or {}).get("id"))
+                                       if prior and prior.get("id") is not None else None),
+                    },
                     "fields": changed,
                     "before": {
                         "title": (prior or {}).get("title"),
@@ -230,6 +247,9 @@ async def api_chapter_update(request: Request, script_id: int, chapter_index: in
 
     body.base_updated_at(可选,乐观锁):与服务端 updated_at 不一致时 409+服务端当前版本,
     前端转三方合并(编辑器 P0:AI 写库与未保存改动互相静默覆盖)。不传=覆盖语义不变。
+    body.base_chapter_id(可选,身份锁):与服务端 script_chapters.id 不一致时 409
+    structure_changed —— 说明 chapter_index 因外部删除/拆分/合并/重切已指向另一章,
+    前端必须禁止合并/force-save,只提示重新打开,避免跨章覆盖。
 
     落库成功后写一条 chapter_edit 审计(编辑会话粒度,见 _record_chapter_edit_commit);
     审计写入失败不影响本次保存。"""
@@ -242,7 +262,16 @@ async def api_chapter_update(request: Request, script_id: int, chapter_index: in
             title=body.get("title"), content=body.get("content"),
             volume_title=body.get("volume_title"),
             base_updated_at=body.get("base_updated_at"),
+            base_chapter_id=body.get("base_chapter_id"),
         )
+    except script_import.ChapterStructureChanged as conflict:
+        # 结构变了:正文未落库。绝不返回普通的 server_chapter 让前端合并(那会把旧章
+        # 内容 force-save 到另一章),用 structure_changed 明确禁止合并。
+        return json_response(
+            {"ok": False, "conflict": True, "structure_changed": True,
+             "error": "章节结构已变化:当前章节序号已指向另一章,请关闭标签后从文件树重新打开",
+             "server_chapter": conflict.server_chapter},
+            status_code=409)
     except script_import.ChapterConflict as conflict:
         # 冲突时正文未落库 → 不写审计(用户会走三方合并后重新保存)。
         return json_response(

@@ -67,7 +67,7 @@ export function clearGhost(view) {
 }
 
 // 触发器:作者「打字」停顿 delay 后,取光标前文 fetchCompletion → 若期间无新输入/光标未移 → setGhost。
-function ghostTrigger({ isEnabled, fetchCompletion, delay = 650 }) {
+function ghostTrigger({ isEnabled, fetchCompletion, delay = 650, isBlocked = null }) {
   let timer = null, seq = 0;
   return EditorView.updateListener.of((u) => {
     if (!u.docChanged && !u.selectionSet) return;
@@ -76,6 +76,9 @@ function ghostTrigger({ isEnabled, fetchCompletion, delay = 650 }) {
     const mySeq = seq;
     if (typeof isEnabled === 'function' && !isEnabled()) return;
     if (typeof fetchCompletion !== 'function') return;
+    // 编辑器处于「不可续写」状态(diff 审阅中 / AI 待定区 / front-matter 内)时
+    // 不发请求:ghost 是正文补全,写进 YAML 值或 diff 审阅中的文档都会造成脏数据。
+    if (typeof isBlocked === 'function' && isBlocked(u.view)) return;
     const sel = u.state.selection.main;
     if (!sel.empty) return;                              // 有选区不触发
     // 仅「打字输入」触发(input.type / 其 compose 变体);粘贴/删除/采纳(input.complete)不触发
@@ -87,10 +90,13 @@ function ghostTrigger({ isEnabled, fetchCompletion, delay = 650 }) {
     if (before.trim().length < 4) return;
     timer = setTimeout(async () => {
       timer = null;
+      // 请求飞行期间可能打开了 diff / 进入了 front-matter:回来后再判一次。
+      if (typeof isBlocked === 'function' && isBlocked(view)) return;
       let text = '';
       try { text = await fetchCompletion(before); } catch (_) { return; }
       if (mySeq !== seq) return;                         // 期间又动过 → 作废
       if (!text) return;
+      if (typeof isBlocked === 'function' && isBlocked(view)) return;
       const cur = view.state.selection.main;
       if (!cur.empty || cur.head !== pos) return;        // 光标已移 → 作废
       if (view.state.field(ghostField, false)) return;   // 已有幽灵

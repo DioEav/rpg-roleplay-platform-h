@@ -116,11 +116,20 @@ def _t_inject_pending_question(state: Any, args: dict) -> str:
 # ────────────────────────────────────────────────────────────
 
 
+# 敏感偏好:写入权限等只能由用户在 UI 显式修改。set_preference 对 console_assistant
+# origin 开放,若不拦 key,LLM 可把 editor.write_mode 改成 full_access,下一轮就绕过
+# 用户选的只读/审查模式(右栏 UI 也不会同步,用户看不出已被提权)。与 set_permission_mode
+# 的 _SAVE_SENSITIVE 闸同一安全等级。
+_SENSITIVE_PREF_KEYS = frozenset({"editor.write_mode", "permission_mode"})
+
+
 def _t_set_preference(user_id: int, args: dict) -> str:
     key = (args.get("key") or "").strip()
     value = args.get("value")
     if not key:
         return "失败: key 为空"
+    if key in _SENSITIVE_PREF_KEYS:
+        return "失败: 该偏好只能由用户在界面上修改,助手不能代改"
     # SEC(M-12): value 限长,防 console_assistant LLM 放大存储。
     if value is not None and len(json.dumps(value, ensure_ascii=False)) > 4096:
         return "失败: value 过大(上限 4096 字符)"

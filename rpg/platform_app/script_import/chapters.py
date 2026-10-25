@@ -1,9 +1,34 @@
 from __future__ import annotations
 
+import datetime as _dt
 from typing import Any
 
 from ..db import connect, cursor_id, expose, init_db, limit_value, page_payload
 from ..perms import script_owned, script_readable
+
+
+def _parse_base_ts(value: Any) -> _dt.datetime | None:
+    """把 base_updated_at 解析成 UTC datetime;空值返回 None。
+
+    与 api/script_edit/_shared._parse_baseline_ts 同一语义(本章节模块不反向依赖
+    API 层,故保留一份等价实现):jsonable_encoder 下发的 ISO 用 'T' 分隔,psycopg
+    读回的是 datetime/空格分隔字符串,时区可能写成 'Z' / '+00:00'。直接比字符串
+    会因格式误判冲突,统一转 UTC 后按微秒比较,只反映真实变化。
+    非法值抛 ValueError → 端点回 400,不交给 Postgres 变 500。
+    """
+    if value is None or value == "":
+        return None
+    try:
+        if isinstance(value, _dt.datetime):
+            ts = value
+        else:
+            ts = _dt.datetime.fromisoformat(str(value).strip().replace("Z", "+00:00"))
+    except (TypeError, ValueError) as exc:
+        raise ValueError("base_updated_at 不是合法时间戳") from exc
+    if ts.tzinfo is None:
+        ts = ts.replace(tzinfo=_dt.UTC)
+    return ts.astimezone(_dt.UTC)
+
 
 
 def list_chapters(user_id: int, script_id: int, limit: int | str | None = None, cursor: str | None = None) -> dict[str, Any]:
@@ -73,6 +98,9 @@ def create_chapter(user_id: int, script_id: int, title: str = "") -> dict[str, A
     with connect() as db:
         if not script_owned(db, script_id, user_id):
             raise ValueError("无权编辑该剧本")
+        # 与 split/merge/delete 用同一把章节结构 advisory lock:并发双击「新建章节」
+        # 会同时读到同一个 max(chapter_index),第二笔 INSERT 撞唯一键 → 500。
+        _lock_chapter_struct(db, script_id)
         mx = db.execute(
             "select coalesce(max(chapter_index),0) as m from script_chapters where script_id = %s",
             (int(script_id),),
@@ -102,20 +130,50 @@ class ChapterConflict(Exception):
         self.server_chapter = server_chapter
 
 
+class ChapterStructureChanged(Exception):
+    """章节身份冲突:调用方的稳定 chapter id 与当前 chapter_index 指向的行不一致。
+
+    chapter_index 会因删除/拆分/合并/重切整本重排;编辑器标签如果还按旧 index 保存,
+    服务端此时指向的可能是**另一章**。这种情况绝不能走内容三方合并/force-save ——
+    会把旧章正文写进另一章。端点转 409 + structure_changed,前端只提示重新打开,
+    不提供合并。携带当前行供调用方提示/刷新。
+    """
+
+    def __init__(self, server_chapter: dict[str, Any]):
+        super().__init__("chapter structure changed")
+        self.server_chapter = server_chapter
+
+
 def update_chapter(user_id: int, script_id: int, chapter_index: int, *,
                    title: str | None = None, content: str | None = None,
                    volume_title: str | None = None,
-                   base_updated_at: str | None = None) -> dict[str, Any]:
+                   base_updated_at: str | None = None,
+                   base_chapter_id: int | str | None = None) -> dict[str, Any]:
     """编辑单章。title/content/volume_title 任一可传。
 
     base_updated_at(可选,乐观锁):传入调用方打开/上次保存时拿到的 updated_at;
     与服务端当前值不一致时抛 ChapterConflict(不落库),端点转 409+服务端版本。
-    不传=老客户端/AI 工具路径,保持覆盖语义不变。"""
+    base_chapter_id(可选,身份锁):传入编辑器打开的稳定 chapter id(script_chapters.id)。
+    当前 index 若已指向另一行(外部删除/拆分/合并/重切),抛 ChapterStructureChanged,
+    端点返回 structure_changed,前端禁止合并/force-save,避免跨章覆盖。
+    不传=老客户端/AI 工具路径,保持原覆盖语义。"""
     init_db()
+
+    # 时间戳基线统一解析成 UTC datetime(微秒精度),与文档内其他实体的
+    # _parse_baseline_ts 保持一致:秒级截断会让同一秒内的两次并发保存都通过,
+    # 后写者仍会静默覆盖先写者。
+    base_ts = _parse_base_ts(base_updated_at)
+
     with connect() as db:
         if not script_owned(db, script_id, user_id):
             raise ValueError("无权访问该剧本")
-        if base_updated_at:
+        want_id = None
+        if base_chapter_id is not None:
+            try:
+                want_id = int(base_chapter_id)
+            except (TypeError, ValueError) as exc:
+                raise ValueError("base_chapter_id 必须是整数") from exc
+        if base_ts is not None or want_id is not None:
             cur = db.execute(
                 "select id, public_id, chapter_index, title, volume_title, word_count, "
                 "content, created_at, updated_at from script_chapters "
@@ -124,12 +182,11 @@ def update_chapter(user_id: int, script_id: int, chapter_index: int, *,
             ).fetchone()
             if not cur:
                 raise ValueError(f"章节 {chapter_index} 不存在")
-            # 秒级比对+分隔符归一(DB datetime str 是空格分隔,前端拿到的 expose 值是
-            # ISO 'T' 分隔):保存节奏远大于 1 秒,秒级足够判「被他方改过」,微秒/时区
-            # 尾缀差异不误伤。
-            def _norm_ts(x):
-                return str(x or "").replace("T", " ")[:19]
-            if _norm_ts(cur.get("updated_at")) != _norm_ts(base_updated_at):
+            if want_id is not None:
+                # 先判身份再判内容版本:身份都变了,内容合并没有意义。
+                if int(cur["id"]) != want_id:
+                    raise ChapterStructureChanged(expose(cur))
+            if base_ts is not None and _parse_base_ts(cur.get("updated_at")) != base_ts:
                 raise ChapterConflict(expose(cur))
         sets, params = [], []
         if title is not None:
@@ -147,13 +204,38 @@ def update_chapter(user_id: int, script_id: int, chapter_index: int, *,
         if not sets:
             raise ValueError("没有要更新的字段")
         sets.append("updated_at = now()")
+        # 上面的 SELECT 只做「快速失败」;真正的并发保护放进 UPDATE 的 WHERE:
+        # 两个标签同时保存时都会通过预检(读到同一基线),若只按 index 更新,后写者
+        # 会静默覆盖先写者。把 id / 微秒级 updated_at 一起放进条件,数据库行级锁下
+        # 只有基线仍一致的那个 UPDATE 能命中。
+        where = ["script_id = %s", "chapter_index = %s"]
         params.extend([script_id, chapter_index])
+        if want_id is not None:
+            where.append("id = %s")
+            params.append(want_id)
+        if base_ts is not None:
+            where.append("updated_at = %s")
+            params.append(base_ts)
         row = db.execute(
             f"update script_chapters set {', '.join(sets)} "
-            f"where script_id = %s and chapter_index = %s returning *",
+            f"where {' and '.join(where)} returning *",
             tuple(params),
         ).fetchone()
         if not row:
+            # 预检通过但 UPDATE 0 行 = 检查与写入之间被并发删除/重排/改写。
+            # 重新取当前行区分原因,返回与预检一致的异常(不能伪装成成功或 404)。
+            cur = db.execute(
+                "select id, public_id, chapter_index, title, volume_title, word_count, "
+                "content, created_at, updated_at from script_chapters "
+                "where script_id = %s and chapter_index = %s",
+                (script_id, chapter_index),
+            ).fetchone()
+            if not cur:
+                raise ValueError(f"章节 {chapter_index} 不存在")
+            if want_id is not None and int(cur["id"]) != want_id:
+                raise ChapterStructureChanged(expose(cur))
+            if base_ts is not None:
+                raise ChapterConflict(expose(cur))
             raise ValueError(f"章节 {chapter_index} 不存在")
         # 同步刷新 scripts.word_count
         total = db.execute(
@@ -332,7 +414,26 @@ def delete_chapters(user_id: int, script_id: int, chapter_indexes: list[int]) ->
             "update scripts set chapter_count = %s, word_count = %s, updated_at = now() where id = %s",
             (int(cnt["n"]), int(cnt["w"]), script_id),
         )
-    return {"ok": True, "deleted": len(hit), "new_chapter_count": int(cnt["n"])}
+        # 重排会给「所有」章节 bump updated_at(_renumber_contiguous)。编辑器还开着其他
+        # 章节标签时,它们手里的 base_updated_at 全部失效,下一次保存会误报 409。
+        # 把重排后的真实 updated_at 随响应带回,前端据此刷新打开标签的基线(只更新基线,
+        # 不动用户未保存的正文),避免删除一章导致所有打开章节弹假冲突。
+        renumbered = db.execute(
+            "select id, chapter_index, updated_at from script_chapters "
+            "where script_id = %s order by chapter_index",
+            (script_id,),
+        ).fetchall()
+    return {
+        "ok": True,
+        "deleted": len(hit),
+        "new_chapter_count": int(cnt["n"]),
+        "chapters": [
+            # id = 稳定身份;前端用它更新打开标签的 chapterId,后续保存可校验 index
+            # 是否还指向同一章(外部重排/多标签场景下的跨章覆盖防护)。
+            {"chapter_index": int(r["chapter_index"]), "id": int(r["id"]), "updated_at": r["updated_at"]}
+            for r in (renumbered or [])
+        ],
+    }
 
 
 def split_chapter(user_id: int, script_id: int, chapter_index: int,

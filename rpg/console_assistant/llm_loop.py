@@ -162,6 +162,63 @@ _SCRIPT_READ_TOOLS = frozenset({
     "get_chapter_context",
 })
 
+# 编辑器面只允许操作当前打开的剧本。这两个工具的 executor 只接 args,模型可以
+# 自己填 script_id;若不绑定,一个误判/提示词注入就能对用户另一个剧本做整本重切
+# 或重建知识模块(破坏性,且脏章守卫只覆盖当前编辑器)。
+_EDITOR_SCRIPT_BOUND_TOOLS = frozenset({"resplit_script", "rebuild_script_module"})
+
+
+def _bind_editor_script_scope(
+    tool_name: str, args: dict[str, Any] | None, page_script_id: int | None,
+) -> tuple[dict[str, Any] | None, str | None]:
+    """把编辑器专属的破坏性工具绑定到当前剧本。返回 (可能补全的 args, 错误文案)。"""
+    if tool_name not in _EDITOR_SCRIPT_BOUND_TOOLS:
+        return args, None
+    if page_script_id is None:
+        # 编辑器面没有打开剧本时不允许凭 args 里的 id 操作任意剧本。
+        return args, "请先在编辑器打开要操作的剧本。"
+    if not isinstance(args, dict):
+        return args, None
+    requested = args.get("script_id")
+    if requested not in (None, ""):
+        try:
+            if int(requested) != int(page_script_id):
+                return args, "该工具只能操作当前编辑器打开的剧本,已拒绝其它 script_id。"
+        except (TypeError, ValueError):
+            return args, "script_id 不合法。"
+    if requested in (None, ""):
+        args = {**args, "script_id": int(page_script_id)}
+    return args, None
+
+
+def _is_editor_write_tool(tool_name: str) -> bool:
+    """编辑器面会写库的工具(含 resplit/rebuild 这类结构破坏工具)。
+
+    read_only 模式必须把它们全部拦住。此前只判断 _SCRIPT_WRITE_TOOLS,而
+    resplit_script / rebuild_script_module 不在其中,导致「只读」下仍可在确认后
+    执行整本重切/知识库重建。
+    """
+    return tool_name in _SCRIPT_WRITE_TOOLS or tool_name in _EDITOR_SCRIPT_BOUND_TOOLS
+
+
+# 编辑器面共享的“非脚本内容”写工具:存档/人设/用户角色卡。它们不在
+# _SCRIPT_WRITE_TOOLS 里,但同样会写库。只读模式在编辑器面必须一并拦住;
+# 游戏控制台(非 editor surface)不受影响,存档管理照常可用。
+_EDITOR_READONLY_EXTRA_TOOLS = frozenset({
+    "create_save", "delete_save", "delete_saves", "rename_save", "activate_save",
+    "create_persona", "delete_persona",
+    "create_character_card", "delete_character_card",
+})
+
+
+def _readonly_blocks_tool(tool_name: str, mode: str, editor_surface: bool) -> bool:
+    """read_only 模式下该工具是否必须拒绝执行。"""
+    if mode != "read_only":
+        return False
+    if _is_editor_write_tool(tool_name):
+        return True
+    return bool(editor_surface and tool_name in _EDITOR_READONLY_EXTRA_TOOLS)
+
 
 def _read_user_pref(user_id: int, key: str) -> str:
     """读 user_preferences.preferences->>key(jsonb 单键)。缺/失败返回空串。"""
@@ -251,21 +308,41 @@ def _run_llm_loop(
                     arguments["chapter_index"] = int(_oci)
             except (TypeError, ValueError):
                 pass
+        # 破坏性结构工具(resplit / rebuild)强制绑定当前打开剧本:模型传了别的
+        # script_id 直接拒绝,没传则补成当前剧本。放在 needs_confirm 之前,
+        # 确认卡预览/fingerprint/执行拿到的都是同一个目标。
+        arguments, _scope_err = _bind_editor_script_scope(tool_name, arguments, page_script_id)
+        if _scope_err:
+            return {"ok": False, "error": "SCRIPT_SCOPE_MISMATCH", "result": f"失败: {_scope_err}"}
         # 三级权限(Q3,替代旧 P0 ad-hoc):编辑器写库工具按 editor.write_mode 走 ——
         # read_only=只读不写(仅给建议)、review=写前二次确认(默认,已涵盖防注入静默写)、full_access=按原行为。
         # 非 script-write(游戏管理类)保持原行为(仅 destructive 走确认)。
-        if tool_name in _SCRIPT_WRITE_TOOLS:
-            if _editor_write_mode == "read_only":
-                return {
-                    "ok": False, "error": "EDITOR_READ_ONLY",
-                    "result": ("当前为「只读模式」,本回合不写库。请把要改的内容写在回复里供用户手动应用,"
-                               "或让用户在编辑器把写入权限改为「审查后写」或「直接写」。"),
-                }
+        # 只读模式:脚本写入 + (仅编辑器面)存档/人设/用户卡写入一律拒绝。
+        # 存档类工具在游戏控制台仍然可用,避免把编辑器偏好扩散到别的面。
+        from console_assistant.surfaces import is_editor_surface
+
+        if _readonly_blocks_tool(tool_name, _editor_write_mode, is_editor_surface(page_context)):
+            return {
+                "ok": False, "error": "EDITOR_READ_ONLY",
+                "result": ("当前为「只读模式」,本回合不写库。请把要改的内容写在回复里供用户手动应用,"
+                           "或让用户在编辑器把写入权限改为「审查后写」或「直接写」。"),
+            }
+        if _is_editor_write_tool(tool_name):
             needs_confirm = spec.destructive or (_editor_write_mode != "full_access")
         else:
             needs_confirm = spec.destructive
         if needs_confirm:
             args_for_pending = dict(arguments or {})
+            # 目标版本基线必须在生成预览**之前**捕获:若先预览再取基线,二者之间的
+            # 并发写入会被基线“追上”,批准时反而无法发现预览已经过期。
+            # 章节走 update_chapter 自己的 base_updated_at;其余工具用这里的基线
+            # 在 UPDATE/DELETE WHERE 中原子复核,消除 verify→dispatch 小窗口。
+            _baseline: dict[str, Any] = {}
+            try:
+                from console_assistant.write_guard import preview_baseline
+                _baseline = preview_baseline(tool_name, args_for_pending, user_id, page_script_id) or {}
+            except Exception:
+                _baseline = {}
             # task 120 UX: 在确认弹窗里显示 title/turn, 不只是 save_id
             if tool_name == "delete_save":
                 args_for_pending["save_details"] = _fetch_save_details(
@@ -285,14 +362,80 @@ def _run_llm_loop(
             }
             # 写库工具:算一份 before→after 改动预览,让作者落库前看清「到底改了什么」
             # (章节给真·前后全文供前端 diff;结构化写给将写入的字段)。失败不阻断确认。
-            if tool_name in _SCRIPT_WRITE_TOOLS:
-                try:
-                    from console_assistant.write_preview import build_write_preview
-                    _pv = build_write_preview(tool_name, args_for_pending, user_id, page_script_id)
-                    if _pv:
-                        pending["preview"] = _pv
-                except Exception:
-                    pass
+            # 写库工具:算一份 before→after 改动预览,让作者落库前看清「到底改了什么」
+            # (章节给真·前后全文供前端 diff;结构化写给将写入的字段)。失败不阻断确认。
+            # 破坏性结构工具也走这里:预览会显示目标剧本/切章规则/模块,避免用户
+            # 在只看到一句工具描述时批准整本重切。
+            try:
+                from console_assistant.write_preview import (
+                    build_write_preview,
+                    current_chapter_meta,
+                )
+                _pv = build_write_preview(tool_name, args_for_pending, user_id, page_script_id)
+                if _pv:
+                    pending["preview"] = _pv
+                if tool_name == "update_script_chapter":
+                    # 身份锁:把「确认预览时这个 chapter_index 指向哪一行」固化进待确认
+                    # args。确认执行时 update_script_chapter 会比对 base_chapter_id;
+                    # 若期间用户/另一个标签删改/重排了章节,拒绝落库,避免跨章覆盖。
+                    # 同时固化内容版本 base_updated_at:确认期间作者手动保存/另一标签
+                    # 写入时,update_chapter 的原子 WHERE 会 409,而不是 AI 整段覆盖。
+                    _cid = (_pv or {}).get("chapter_id")
+                    _base_ts = (_pv or {}).get("base_updated_at")
+                    if _cid is None or not _base_ts:
+                        # 只改标题时 _pv 为 None;重排/版本也必须现查一次。
+                        _meta = current_chapter_meta(
+                            page_script_id, args_for_pending.get("chapter_index"))
+                        if _cid is None:
+                            _cid = _meta.get("id")
+                        if not _base_ts:
+                            _base_ts = _meta.get("updated_at")
+                    if _cid is not None:
+                        # 前端确认卡用它识别「模型读的章」和「当前 index 指向的章」不一致
+                        # (只改标题时没有 preview,也得有目标 id 才能判断)。
+                        pending["target_chapter_id"] = int(_cid)
+                        # 关键:模型自己传了 base_chapter_id(get_chapter_text 输出)时绝不覆盖。
+                        # 它代表模型实际读过的章;若期间被重排,应让写入被拒绝,而不是把
+                        # 模型为旧章生成的内容改写到当前占用该 index 的新章。
+                        if args_for_pending.get("base_chapter_id") is None:
+                            args_for_pending["base_chapter_id"] = int(_cid)
+                    if _base_ts:
+                        # 服务端在确认那一刻捕获的版本最权威;模型可能回显旧值/乱填,
+                        # 直接覆盖,避免一个坏 base_updated_at 让写入恒失败。
+                        args_for_pending["base_updated_at"] = _base_ts
+            except Exception:
+                pass
+            # 合并基线(服务端权威,覆盖模型回显的旧值):世界书/锚点/canon 用
+            # base_updated_at,角色卡用 base_row_version,批量世界书按 entry_id 分条。
+            if _baseline:
+                _entries_base = _baseline.get("entries")
+                if isinstance(_entries_base, dict):
+                    _entries = args_for_pending.get("entries")
+                    if isinstance(_entries, list):
+                        for _e in _entries:
+                            if not isinstance(_e, dict) or _e.get("entry_id") in (None, ""):
+                                continue
+                            try:
+                                _ek = str(int(_e.get("entry_id")))
+                            except (TypeError, ValueError):
+                                _ek = str(_e.get("entry_id"))
+                            _v = _entries_base.get(_ek)
+                            if _v:
+                                _e["base_updated_at"] = _v
+                for _k in ("base_updated_at", "base_row_version"):
+                    if _baseline.get(_k) is not None:
+                        args_for_pending[_k] = _baseline[_k]
+            # 所有待确认写操作都固化一份「目标当前状态」指纹。确认期间目标被更新
+            # (手动保存/另一标签/AI 写入),执行前复核不一致 → 拒绝本次写入。
+            # 章节有原子 base_updated_at;指纹兜住世界书/角色卡/锚点/canon 以及
+            # resplit / 整本导入这类没有逐实体基线的时间窗。
+            try:
+                from console_assistant.write_guard import preview_fingerprint
+                _fp = preview_fingerprint(tool_name, args_for_pending, user_id, page_script_id)
+                if _fp:
+                    pending["target_fingerprint"] = _fp
+            except Exception:
+                pass
             conv["pending_confirmations"][call_id] = pending
             pending_for_this_turn.append(pending)
             return {

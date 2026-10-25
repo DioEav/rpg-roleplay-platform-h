@@ -10,6 +10,8 @@ function writableSubset(kind, row) {
   for (const k of sc.writeObjLists) out[k] = Array.isArray(row[k]) ? row[k] : [];
   for (const k of sc.writeOpenObjs) out[k] = row[k] && typeof row[k] === 'object' ? row[k] : {};
   out[sc.bodyField] = row[sc.bodyField] != null ? String(row[sc.bodyField]) : '';
+  // 与 fromMd 的生产行为一致:readonly 字段不进 patch(canon.logical_key 现在是只读)。
+  for (const k of sc.readonly) delete out[k];
   return out;
 }
 

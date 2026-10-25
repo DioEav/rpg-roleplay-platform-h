@@ -3,7 +3,7 @@
 // 原位(block widget)。审阅粒度有两级:① 顶栏「全部批准 / 拒绝」② 每个改动块(hunk)自己的
 // 「接受 / 拒绝」小工具条(Copilot 逐块审阅)。批准=保留新文,拒绝=还原旧文,逐块取舍=两者混合。
 // 复用 md-continue.js 同款 StateField+Decoration+showPanel 原语(零新依赖)。
-import { StateField, StateEffect } from '@codemirror/state';
+import { StateField, StateEffect, EditorState, Transaction } from '@codemirror/state';
 import { EditorView, Decoration, WidgetType, showPanel } from '@codemirror/view';
 import { setPanelVisible } from './md-panel.js';
 
@@ -159,6 +159,37 @@ export function chapterDiffCancelEffect(view, { reject = false } = {}) {
   return setChapterDiff.of(null);
 }
 
+// 放弃一份「agent 提议」的内联 diff:把文档还原成打开 diff 前的 oldText,再清状态。
+// 用于切换 AI 对话/新建对话等场景 —— 此时既不执行 AI 写库,也不应把 AI 文本留在
+// 编辑器里等自动保存。不发 onReject:待确认项仍留在旧对话,用户切回去还能看到卡片;
+// 这里只做本地文档回滚,避免在对话切换过程中又启动一条 /confirm SSE。
+// conflict diff(保存冲突)不归对话管,原样保留,由用户决定。
+export function discardAgentChapterDiff(view) {
+  const v = view && view.state.field(chapterDiffField, false);
+  if (!v || v.kind !== 'agent') return false;
+  const spec = { effects: setChapterDiff.of(null) };
+  if (typeof v.oldText === 'string' && v.oldText !== view.state.doc.toString()) {
+    spec.changes = { from: 0, to: view.state.doc.length, insert: v.oldText };
+    spec.annotations = Transaction.addToHistory.of(false);
+  }
+  try { view.dispatch(spec); } catch (_) { return false; }
+  return true;
+}
+
+// ── 草稿持久化用:审阅期间「本地侧」的文本 ────────────────────────────────
+// showChapterDiff 打开时已经把文档整篇换成 AI/服务端文本,本地版本只存在 field 的
+// oldText 里。草稿若存当前 doc,刷新后会丢掉本地版本,甚至把未批准的 AI 文本当普通
+// 脏稿自动保存。persistDraftsNow 用这两个函数把 oldText + diff 类型存进草稿。
+export function chapterDiffLocalText(view) {
+  const v = view && view.state.field(chapterDiffField, false);
+  return v && typeof v.oldText === 'string' ? v.oldText : null;
+}
+
+export function chapterDiffReviewKind(view) {
+  const v = view && view.state.field(chapterDiffField, false);
+  return v ? v.kind : null;   // 'agent' | 'conflict' | 其它调用方自定义 kind
+}
+
 // 块装饰(删除块 / 逐块工具条)CM6 不允许由 ViewPlugin 提供,必须从 StateField 经
 // EditorView.decorations 提供 → buildDeco 直接吃 state(无 view)。
 function buildDeco(state) {
@@ -211,7 +242,14 @@ function applyDecisions(view, newDecisions) {
   if (!v) return false;
   const finalText = reconstruct(v.ops, v.opHunk, newDecisions);
   if (allResolved(v.hunkCount, newDecisions)) {
-    view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: finalText }, effects: setChapterDiff.of(null) });
+    // 整篇重建不进 undo 历史:diff 的 ops 是打开时的快照,若 Ctrl+Z 能撤销这次重建,
+    // 文档会回到与 ops 不一致的状态;更危险的是冲突「采用对方」后撤销 + 自动保存会用
+    // 旧基线把服务端新文覆盖掉。纠正应重新触发 diff/保存,而不是 CM 的撤销栈。
+    view.dispatch({
+      changes: { from: 0, to: view.state.doc.length, insert: finalText },
+      effects: setChapterDiff.of(null),
+      annotations: Transaction.addToHistory.of(false),
+    });
     view.focus();
     const vals = Object.values(newDecisions);
     const allAcc = vals.length > 0 && vals.every((d) => d === 'accept');
@@ -223,7 +261,11 @@ function applyDecisions(view, newDecisions) {
       else if (typeof v.onAccept === 'function') v.onAccept();   // 兜底
     } catch (_) { /* 静默 */ }
   } else {
-    view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: finalText }, effects: setChapterDiff.of({ ...v, decisions: newDecisions }) });
+    view.dispatch({
+      changes: { from: 0, to: view.state.doc.length, insert: finalText },
+      effects: setChapterDiff.of({ ...v, decisions: newDecisions }),
+      annotations: Transaction.addToHistory.of(false),
+    });
     view.focus();
   }
   return true;
@@ -263,6 +305,7 @@ export function showChapterDiff(view, oldText, newText, cbs = {}) {
   const ops = lineDiff(oldText || '', newText || '');
   const { opHunk, hunkCount } = tagHunks(ops);
   // doc→newText 与 diff 数据一并 dispatch(一笔事务):装饰由 chapterDiffField 计算,需在 doc 更新后生效。
+  // 同样不进 undo 历史:打开 diff 本身是程序性整篇替换,撤销它只会让文档与 ops 脱节。
   view.dispatch({
     changes: { from: 0, to: view.state.doc.length, insert: newText || '' },
     effects: setChapterDiff.of({
@@ -270,6 +313,7 @@ export function showChapterDiff(view, oldText, newText, cbs = {}) {
       kind: cbs.kind || 'unknown',
       onAccept: cbs.onAccept, onReject: cbs.onReject, onMixed: cbs.onMixed,
     }),
+    annotations: Transaction.addToHistory.of(false),
   });
   view.focus();
   return true;
@@ -310,5 +354,20 @@ function diffPanel(view) {
 }
 
 export function chapterDiffExtension() {
-  return [chapterDiffField, diffDecorations, showPanel.of(diffPanel)];
+  return [
+    chapterDiffField,
+    diffDecorations,
+    showPanel.of(diffPanel),
+    // diff 打开期间冻结用户编辑:ops/装饰都按「打开时文档」的行号计算,用户一旦改动,
+    // 接受/拒绝会用旧 ops 重建全文并覆盖这些输入。编辑锁只拦用户输入;applyDecisions
+    // 自己的整篇重建带 setChapterDiff 效果,过滤器放行。
+    EditorState.transactionFilter.of((tr) => {
+      if (!tr.docChanged) return tr;
+      if (!tr.startState.field(chapterDiffField, false)) return tr;
+      if (tr.effects.some((e) => e.is(setChapterDiff))) return tr;
+      return [];
+    }),
+    // 光标/输入也被关掉(用户可见的锁);程序性 dispatch 仍可改文档。
+    EditorView.editable.compute([chapterDiffField], (state) => !state.field(chapterDiffField, false)),
+  ];
 }

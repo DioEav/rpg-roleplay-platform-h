@@ -12,7 +12,8 @@ import { EditorState } from '@codemirror/state';
 import { EditorView } from '@codemirror/view';
 import {
   chapterDiffExtension, showChapterDiff, acceptChapterDiff, rejectChapterDiff,
-  hasChapterDiff, lineDiff, chapterDiffCancelEffect,
+  hasChapterDiff, lineDiff, chapterDiffCancelEffect, discardAgentChapterDiff,
+  chapterDiffLocalText, chapterDiffReviewKind,
 } from '../lib/md-diff.js';
 
 function mkView(text) {
@@ -31,6 +32,46 @@ describe('md-diff lineDiff', () => {
 });
 
 describe('md-diff 逐块审阅', () => {
+  it('放弃 agent diff:文档还原 oldText、清状态,不触发 onReject', () => {
+    const v = mkView('旧文第一行\n旧文第二行');
+    const onReject = vi.fn();
+    showChapterDiff(v, '旧文第一行\n旧文第二行', 'AI 新第一行\nAI 新第二行', {
+      kind: 'agent', onAccept: vi.fn(), onReject, onMixed: vi.fn(),
+    });
+    expect(v.state.doc.toString()).toBe('AI 新第一行\nAI 新第二行');
+    expect(discardAgentChapterDiff(v)).toBe(true);
+    expect(hasChapterDiff(v)).toBe(false);
+    expect(v.state.doc.toString()).toBe('旧文第一行\n旧文第二行');
+    expect(onReject).not.toHaveBeenCalled();   // 切换对话只做本地回滚
+    v.destroy();
+  });
+
+  it('放弃只对 agent diff 生效:conflict diff 原样保留', () => {
+    const v = mkView('old');
+    showChapterDiff(v, 'old', 'server-new', {
+      kind: 'conflict', onAccept: vi.fn(), onReject: vi.fn(), onMixed: vi.fn(),
+    });
+    expect(discardAgentChapterDiff(v)).toBe(false);
+    expect(hasChapterDiff(v)).toBe(true);
+    expect(v.state.doc.toString()).toBe('server-new');
+    v.destroy();
+  });
+
+  it('diff 打开时提供「本地侧原文」供草稿持久化,关闭后为空', () => {
+    const v = mkView('本地原文');
+    showChapterDiff(v, '本地原文', 'AI 新文', {
+      kind: 'agent', onAccept: vi.fn(), onReject: vi.fn(), onMixed: vi.fn(),
+    });
+    // 文档已被替换成 AI 文本,但草稿必须存本地原文,否则刷新会丢本地版本/自动保存 AI 文本。
+    expect(v.state.doc.toString()).toBe('AI 新文');
+    expect(chapterDiffLocalText(v)).toBe('本地原文');
+    expect(chapterDiffReviewKind(v)).toBe('agent');
+    rejectChapterDiff(v);
+    expect(chapterDiffLocalText(v)).toBeNull();
+    expect(chapterDiffReviewKind(v)).toBeNull();
+    v.destroy();
+  });
+
   it('两处改动 → 两条逐块工具条;doc=newText', () => {
     const v = mkView('L1\nL2\nL3\nL4\nL5');
     showChapterDiff(v, 'L1\nL2\nL3\nL4\nL5', 'L1\nX2\nL3\nX4\nL5', { onAccept: vi.fn(), onReject: vi.fn(), onMixed: vi.fn() });

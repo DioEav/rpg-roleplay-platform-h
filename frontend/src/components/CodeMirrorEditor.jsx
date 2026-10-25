@@ -9,8 +9,8 @@ import { defaultKeymap, history, historyKeymap, indentWithTab } from '@codemirro
 import { markdown } from '@codemirror/lang-markdown';
 import { syntaxHighlighting, defaultHighlightStyle, bracketMatching, indentOnInput, codeFolding, foldGutter, foldKeymap } from '@codemirror/language';
 import { searchKeymap, highlightSelectionMatches, selectNextOccurrence } from '@codemirror/search';
-import { aiContinueExtension, cmdKKeymap, pendingCancelEffect } from '../lib/md-continue.js';
-import { chapterDiffExtension, chapterDiffCancelEffect } from '../lib/md-diff.js';
+import { aiContinueExtension, cmdKKeymap, pendingCancelEffect, hasPendingContinue } from '../lib/md-continue.js';
+import { chapterDiffExtension, chapterDiffCancelEffect, hasChapterDiff, chapterDiffKind } from '../lib/md-diff.js';
 import { ghostCompleteExtension } from '../lib/md-ghost.js';
 
 const { useRef, useEffect } = React;
@@ -89,6 +89,15 @@ export function baseExtensions(onChange, readOnly, getScriptId, getOnAccept, get
       fetchCompletion: (before) => { try { const f = getGhostFetch && getGhostFetch(); return f ? f(before) : ''; } catch (_) { return ''; } },
       // 采纳 ghost 后触发与「续写到正文」相同的知识同步提示(短文不足 12 字时父级会自行忽略)。
       onAccept: (text) => { try { getOnAccept?.()?.(text, { rewrite: false }); } catch (_) {} },
+      // ghost 只在正文可用:front-matter 内会写脏 YAML 值;diff 审阅中/待定区未处理时
+      // 继续生成会把文本插进一份即将被重建的文档。三种情况都直接不触发。
+      isBlocked: (view) => {
+        try {
+          if (hasChapterDiff(view) || hasPendingContinue(view)) return true;
+          const fmEnd = frontMatterEnd(view.state.doc);
+          return fmEnd >= 0 && view.state.selection.main.head <= fmEnd;
+        } catch (_) { return false; }
+      },
     }),
     cmdKKeymap(getScriptId, getOnAccept, getChapterIndex),
     lineNumbers(),
@@ -168,35 +177,52 @@ export default function CodeMirrorEditor({ value, docKey, onChange, readOnly = f
     lastKeyRef.current = docKey;
     if (import.meta.env?.DEV) { try { window.__mdeView = view; } catch (_) {} }   // 仅 DEV:e2e 测试句柄(生产构建剔除)
     onViewReadyRef.current?.(view);   // 暴露给侧栏 agent 的「续写到正文」用
-    return () => { onViewReadyRef.current?.(null); view.destroy(); viewRef.current = null; };
+    return () => {
+      // 组件卸载(切路由/切剧本)时中止在飞续写:否则 runContinue 的异步流会继续往
+      // 已 destroy 的 view 上 dispatch,抛错或插到不该插的地方。这里只 abort,不还原原文。
+      try { pendingCancelEffect(view); } catch (_) {}
+      onViewReadyRef.current?.(null);
+      view.destroy();
+      viewRef.current = null;
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // 切标签(docKey 变)→ 整篇替换为新 value;同一 docKey 内不回灌(避免光标乱跳)。
-  // 切走时必须同时清掉上一视图的 AI 待定区 / diff:它们存在同一个 EditorView 里,不清就会跟着
-  // 新标签继续生效(流式 token 插进新章、diff 的拒绝把旧章全文写回新章)。
-  // 清理 effect 与整篇替换放在【同一笔事务】:分成两次 dispatch 时,React 已切到新 tab 的 onChange
-  // 闭包会先收到旧标签的中间文档,把新标签内容短暂污染。
+  // 切标签(docKey 变)→ 用新文档重建 EditorState。
+  // 为什么不是 dispatch 整篇替换:同一个 EditorView 的 history() 会把整篇替换记进撤销栈,
+  // 用户切到第 2 章后按一次 Ctrl+Z / 工具栏撤销,就会把第 1 章正文倒回第 2 章标签;
+  // onChange 标 dirty 后 2.5s 自动保存会用第 2 章的基线把第 1 章内容写进库。
+  // setState 同时重置 history 和 pending/diff/ghost 这些 per-document 状态。
+  // 旧状态的 AI 收尾回调仍要执行(中止流 / reject agent 提议),否则后端待确认会悬空。
   useEffect(() => {
     const view = viewRef.current;
     if (!view) return;
     if (lastKeyRef.current === docKey) return;   // 同标签,跳过(避免回灌)
     lastKeyRef.current = docKey;
-    const cur = view.state.doc.toString();
-    const next = value || '';
-    const effects = [];
-    const pe = pendingCancelEffect(view);
-    if (pe) effects.push(pe);
-    // agent 提议改章可以安全 reject(同步后端待确认);conflict diff 不自动回调,
-    // 避免用户只是切个标签就替他把本地版本 force-save 覆盖服务端新文。
-    const de = chapterDiffCancelEffect(view, { reject: true });
-    if (de) effects.push(de);
-    if (cur !== next) {
-      view.dispatch({ changes: { from: 0, to: cur.length, insert: next }, selection: { anchor: 0 }, effects });
-    } else if (effects.length) {
-      view.dispatch({ effects });
-    }
-    if (effects.length) { try { onAiStateDiscardedRef.current?.(); } catch (_) {} }
+    let hadAiState = false;
+    try {
+      if (hasPendingContinue(view)) {
+        hadAiState = true;
+        pendingCancelEffect(view);          // abort 在飞请求;返回的 effect 随旧 state 丢弃
+      }
+      if (chapterDiffKind(view)) {
+        hadAiState = true;
+        // agent diff 需要显式 reject 后端待确认;conflict diff 不替用户 force-save。
+        chapterDiffCancelEffect(view, { reject: true });
+      }
+    } catch (_) {}
+    const extensions = baseExtensions(
+      (v) => onChangeRef.current?.(v),
+      readOnly,
+      () => scriptIdRef.current,
+      () => onContinueAcceptRef.current,
+      () => chapterIndexRef.current,
+      () => onSelChangeRef.current,
+      () => ghostEnabledRef.current,
+      () => ghostFetchRef.current,
+    );
+    view.setState(EditorState.create({ doc: value || '', extensions }));
+    if (hadAiState) { try { onAiStateDiscardedRef.current?.(); } catch (_) {} }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [docKey]);
 

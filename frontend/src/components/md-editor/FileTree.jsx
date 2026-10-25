@@ -43,8 +43,10 @@ function FileTree({ scriptId, openNode, activeKey, reloadKey, onMutate, onChapte
 
   // 切剧本 → 清缓存 + 清多选(旧 nodeKey 失效),重载所有当前展开的组。
   useEffect(() => { setLists({}); setSelSet(new Set()); setSel(null); setAnchor(null); if (scriptId) [...expanded].forEach(loadGroup); /* eslint-disable-next-line */ }, [scriptId]);
-  // agent / CRUD 写库后(reloadKey 变)→ 重载所有展开组(名称/数量可能变)。
-  useEffect(() => { if (reloadKey && scriptId) [...expanded].forEach(loadGroup); /* eslint-disable-next-line */ }, [reloadKey]);
+  // agent / CRUD 写库后(reloadKey 变)→ 重载全部组。
+  // 旧实现只重载 expanded:AI 往折叠组里新建条目后,展开时用的还是缓存,永远看不到;
+  // 刷新按钮也只刷 expanded,等于没有手动恢复路径。5 个组的请求量可以接受。
+  useEffect(() => { if (reloadKey && scriptId) NODE_GROUPS.forEach((g) => loadGroup(g.kind)); /* eslint-disable-next-line */ }, [reloadKey]);
   // 有搜索词时:自动加载所有组(才能跨组搜),搜索时分组全展开命中。
   useEffect(() => {
     if (!scriptId || !filter.trim()) return;
@@ -67,10 +69,19 @@ function FileTree({ scriptId, openNode, activeKey, reloadKey, onMutate, onChapte
 
   // 扁平可见条目(供键盘上下移动)。
   const flat = [];
-  for (const g of NODE_GROUPS) if (isOpen(g.kind)) for (const it of groupItems(g.kind)) flat.push({ kind: g.kind, id: it.id, label: it.label, meta: it });
+  for (const g of NODE_GROUPS) if (isOpen(g.kind)) for (const it of groupItems(g.kind)) flat.push({ kind: g.kind, id: it.id, label: it.label, renameValue: it.renameValue, meta: it });
 
   const startNew = (kind) => { if (!isOpen(kind)) toggle(kind); setEditing({ kind, id: '__new__', value: '' }); setCtx(null); };
-  const startRename = (kind, it) => { setEditing({ kind, id: it.id, value: (kind === 'chapter') ? stripChapterPrefix(it.meta?.title ?? it.label) : it.label }); setCtx(null); };
+  // 重命名预填裸值,不能用展示 label:card 的 label 是 "Name (Full Name)"、canon 是
+  // "Name (类型)"、anchor 是 "Label (1-5)"。旧实现把展示串塞进输入框,用户直接回车
+  // 就会把后缀写进 name/story_time_label,且每次重命名都会再叠一层。
+  const startRename = (kind, it) => {
+    const raw = it.renameValue != null
+      ? it.renameValue
+      : (kind === 'chapter' ? stripChapterPrefix(it.meta?.title ?? it.label) : it.label);
+    setEditing({ kind, id: it.id, value: raw });
+    setCtx(null);
+  };
 
   const commitEdit = async () => {
     if (submittingRef.current) return;        // 已在提交中(Enter 已触发,onBlur 别再发一次)
@@ -113,10 +124,13 @@ function FileTree({ scriptId, openNode, activeKey, reloadKey, onMutate, onChapte
     onMutatingChange?.(true);
     setBusy(true);
     try {
-      await deleteNode(kind, scriptId, it.id);
+      const delRes = await deleteNode(kind, scriptId, it.id);
       await loadGroup(kind);
-      if (kind === 'chapter' && onChaptersDeleted) onChaptersDeleted([it.id]);
-      else onMutate?.('delete', kind, it.id);
+      if (kind === 'chapter' && onChaptersDeleted) {
+        // delete 响应带回重排后所有章节的 updated_at:父级据此刷新已打开章节标签的
+        // 乐观锁基线(_renumber_contiguous 会 bump 全表,不刷新的话下次保存必假冲突)。
+        onChaptersDeleted([it.id], delRes?.chapters);
+      } else onMutate?.('delete', kind, it.id);
       setSelSet(new Set());
       toast(t('md_editor.toast.deleted'), { kind: 'ok', duration: 1100 });
     } catch (err) { toast(t('md_editor.toast.delete_failed'), { kind: 'danger', detail: err?.message }); }
@@ -147,17 +161,21 @@ function FileTree({ scriptId, openNode, activeKey, reloadKey, onMutate, onChapte
     let failed = 0;
     const A = api();
     let deletedChapterIds = [];
+    let deletedChapterRes = null;
     try {
       if ((byKind.chapter || []).length) {
         try {
-          await A.scripts.deleteChapters(scriptId, byKind.chapter.map((it) => it.id));
+          deletedChapterRes = await A.scripts.deleteChapters(scriptId, byKind.chapter.map((it) => it.id));
           deletedChapterIds = byKind.chapter.map((it) => it.id);
           // 有专门的重映射回调时由它统一处理(关闭被删标签 + 给其他章节改号);
           // 没有时保持旧行为:逐个通知 onMutate 关闭标签。
           if (!onChaptersDeleted) deletedChapterIds.forEach((id) => onMutate?.('delete', 'chapter', id));
         } catch (e) { failed += byKind.chapter.length; toast(t('md_editor.toast.chapter_batch_delete_failed'), { kind: 'danger', detail: e?.message }); }
       }
-      if (deletedChapterIds.length && onChaptersDeleted) onChaptersDeleted(deletedChapterIds);
+      if (deletedChapterIds.length && onChaptersDeleted) {
+        // 同单删:响应里的 chapters 携带重排后每章的 updated_at,用于刷新打开标签的基线。
+        onChaptersDeleted(deletedChapterIds, deletedChapterRes?.chapters);
+      }
       for (const kind of Object.keys(byKind)) {
         if (kind === 'chapter') continue;
         for (const it of byKind[kind]) {
@@ -218,13 +236,21 @@ function FileTree({ scriptId, openNode, activeKey, reloadKey, onMutate, onChapte
       const n = flat[ni]; const nk = order[ni]; setSel(nk);
       if (ev.shiftKey && anchor) { const ia = order.indexOf(anchor); const [lo, hi] = ia < ni ? [ia, ni] : [ni, ia]; setSelSet(new Set(order.slice(lo, hi + 1))); }
       else { setSelSet(new Set([nk])); setAnchor(nk); }
+      // 键盘上下移动时让游标保持在视口内(旧实现只改 state,长列表里游标会跑到屏幕外)。
+      requestAnimationFrame(() => {
+        try {
+          const esc = (typeof CSS !== 'undefined' && CSS.escape) ? CSS.escape(nk) : nk;
+          bodyRef.current?.querySelector(`[data-node-key="${esc}"]`)?.scrollIntoView({ block: 'nearest' });
+        } catch (_) {}
+      });
     };
     if (ev.key === 'ArrowDown') { ev.preventDefault(); moveTo(idx < 0 ? 0 : Math.min(flat.length - 1, idx + 1)); }
     else if (ev.key === 'ArrowUp') { ev.preventDefault(); moveTo(idx < 0 ? 0 : Math.max(0, idx - 1)); }
     else if ((ev.key === 'a' || ev.key === 'A') && (ev.metaKey || ev.ctrlKey)) { ev.preventDefault(); setSelSet(new Set(order)); }
     else if (ev.key === 'Enter' && idx >= 0) { ev.preventDefault(); const n = flat[idx]; openNode({ kind: n.kind, id: n.id, label: n.label, meta: n.meta }); }
     else if (ev.key === 'F2' && idx >= 0) { ev.preventDefault(); const n = flat[idx]; if (CAN_RENAME[n.kind]) startRename(n.kind, n); }
-    else if (ev.key === 'Delete' || ev.key === 'Backspace') {
+    else if (ev.key === 'Delete') {
+      // 只认 Delete(文件管理器惯例)。旧实现同时吃 Backspace,在树里随手按退格会弹删除确认。
       ev.preventDefault();
       if (selSet.size > 1) doDeleteSelected(selSet);
       else if (idx >= 0) doDelete(flat[idx].kind, flat[idx]);
@@ -234,7 +260,15 @@ function FileTree({ scriptId, openNode, activeKey, reloadKey, onMutate, onChapte
   // 世界书拖拽重排 → 按落点重排 priority(spaced 重编号,只 PUT 变化项)。
   const onDrop = async (kind, targetIt) => {
     if (kind !== 'worldbook' || !dragK) { setDragK(null); return; }
-    const items = groupItems('worldbook');
+    // 过滤状态下可见的只是子集;按子集重排会把 priority 算成重复/错序(没显示的条目
+    // 仍占着旧值)。要么清空搜索再拖,要么不拖。
+    if (q) {
+      setDragK(null);
+      toast(t('md_editor.toast.reorder_clear_filter', { defaultValue: '请先清空文件树搜索再拖拽排序' }), { kind: 'warn' });
+      return;
+    }
+    // 用全量列表(不是 groupItems 的过滤结果)计算真实顺序。
+    const items = (lists.worldbook?.items || []).slice();
     const from = items.findIndex((x) => nodeKey('worldbook', x.id) === dragK);
     const to = items.findIndex((x) => x.id === targetIt.id);
     setDragK(null);
@@ -245,6 +279,8 @@ function FileTree({ scriptId, openNode, activeKey, reloadKey, onMutate, onChapte
       const A = api(); const n = reordered.length;
       await Promise.all(reordered.map((it, i) => {
         const np = (n - i) * 10; // 自顶向下 priority 递减
+        // meta.priority 现在由 fetchGroupList 带回;仍为 undefined 的旧数据退回写入,
+        // 保证一次拖拽能修正所有缺失 priority 的条目。
         return (it.meta?.priority === np) ? null : A.scripts.worldbookUpdate(scriptId, it.id, { priority: np });
       }).filter(Boolean));
       await loadGroup('worldbook'); onMutate?.('reorder', 'worldbook');
@@ -259,7 +295,7 @@ function FileTree({ scriptId, openNode, activeKey, reloadKey, onMutate, onChapte
         <input className="mde-tree-filter" value={filter} placeholder={t('md_editor.tree.search_placeholder')} onChange={(e) => setFilter(e.target.value)} />
         <NewMenu onPick={startNew} />
         <button className="mde-tree-tbbtn" title={t('md_editor.tree.collapse_all')} onClick={collapseAll}>⊟</button>
-        <button className="mde-tree-tbbtn" title={t('common.refresh')} onClick={() => [...expanded].forEach(loadGroup)}>⟳</button>
+        <button className="mde-tree-tbbtn" title={t('common.refresh')} onClick={() => NODE_GROUPS.forEach((g) => loadGroup(g.kind))}>⟳</button>
       </div>
       <div className="mde-tree-body">
         {NODE_GROUPS.map((g) => {
@@ -303,10 +339,12 @@ function FileTree({ scriptId, openNode, activeKey, reloadKey, onMutate, onChapte
                     return (
                       <div
                         key={k}
+                        data-node-key={k}
                         className={'mde-tree-item' + (activeKey === k ? ' active' : '') + (selSet.has(k) ? ' sel' : '') + (sel === k ? ' cursor' : '') + (dragK === k ? ' dragging' : '')}
                         title={it.label}
                         draggable={!!CAN_DRAG[g.kind]}
                         onDragStart={() => CAN_DRAG[g.kind] && setDragK(k)}
+                        onDragEnd={() => setDragK(null)}
                         onDragOver={(e) => CAN_DRAG[g.kind] && dragK && e.preventDefault()}
                         onDrop={() => onDrop(g.kind, it)}
                         onClick={(e) => onItemClick(g, it, e)}
@@ -352,6 +390,20 @@ function FileTree({ scriptId, openNode, activeKey, reloadKey, onMutate, onChapte
 function NewMenu({ onPick }) {
   const { t } = useTranslation();
   const [open, setOpen] = useState(false);
+  // 点外部/Esc 关闭:旧实现只靠 onMouseLeave,鼠标不移出弹层就一直在。
+  useEffect(() => {
+    if (!open) return undefined;
+    const onDown = (e) => {
+      if (!(e.target && e.target.closest && e.target.closest('.mde-newmenu'))) setOpen(false);
+    };
+    const onKey = (e) => { if (e.key === 'Escape') setOpen(false); };
+    window.addEventListener('mousedown', onDown);
+    window.addEventListener('keydown', onKey);
+    return () => {
+      window.removeEventListener('mousedown', onDown);
+      window.removeEventListener('keydown', onKey);
+    };
+  }, [open]);
   return (
     <div className="mde-newmenu">
       <button className="mde-tree-tbbtn" title={t('md_editor.tree.new')} onClick={() => setOpen((o) => !o)}>＋</button>
@@ -368,4 +420,7 @@ function NewMenu({ onPick }) {
   );
 }
 
-export { FileTree };
+// React.memo:父级每次键入都会 setTabs/光标状态重渲染;文件树可能有几千项。回调已通过
+// ref/useCallback 保持稳定,activeKey/reloadKey 变化时才需要重渲染。
+const FileTreeMemo = React.memo(FileTree);
+export { FileTreeMemo as FileTree };

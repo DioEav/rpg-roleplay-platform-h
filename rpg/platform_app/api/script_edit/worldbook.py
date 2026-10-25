@@ -179,7 +179,7 @@ async def api_worldbook_add(
 
     body: {title, content, priority?, enabled?, tags?, keys?, regex_keys?,
            character_filter?, scene_filter?, token_budget?, sticky_turns?,
-           cooldown_turns?, probability?, insertion_position?}
+           cooldown_turns?, probability?, insertion_position?, first_revealed_chapter?}
     （keys/regex_keys/character_filter/scene_filter 为 jsonb 字符串数组列）
     """
     try:
@@ -218,12 +218,14 @@ async def api_worldbook_add(
             INSERT INTO worldbook_entries
               (book_id, script_id, title, content, priority, enabled, metadata,
                keys, regex_keys, character_filter, scene_filter,
-               token_budget, sticky_turns, cooldown_turns, probability, insertion_position)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+               token_budget, sticky_turns, cooldown_turns, probability, insertion_position,
+               first_revealed_chapter)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             RETURNING id, title, content, priority, enabled, metadata,
                       keys, regex_keys, character_filter, scene_filter,
                       token_budget, sticky_turns, cooldown_turns,
-                      probability::float8 as probability, insertion_position
+                      probability::float8 as probability, insertion_position,
+                      first_revealed_chapter
             """,
             (
                 book_id, script_id, title, content,
@@ -239,6 +241,9 @@ async def api_worldbook_add(
                 int(body.get("cooldown_turns") or 0),
                 float(body["probability"]) if body.get("probability") is not None else 100.0,
                 str(body.get("insertion_position") or "worldbook"),
+                # 复制世界书条目时会带 first_revealed_chapter;此前 INSERT 漏列,
+                # 复制出来的条目防剧透章节被重置成 0。
+                int(body.get("first_revealed_chapter") or 0),
             ),
         ).fetchone()
         after = dict(new_row)

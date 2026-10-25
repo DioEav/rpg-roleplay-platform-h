@@ -34,6 +34,8 @@ import { ModuleStatusCard } from './ModuleStatusCard.jsx';
 import { RebuildEstimateModal } from './RebuildEstimateModal.jsx';
 
 const api = () => (typeof window !== 'undefined' ? window.api : null);
+// 裸 fetch 不经过 api-client 的 BASE:跨域部署时补上 api-base。
+const apiBase = () => (typeof window !== 'undefined' && window.__API_BASE) || '';
 const toast = (msg, opts) => { try { window.__apiToast?.(msg, opts); } catch (_) {} };
 
 /* ── useKbHealthBadge — 轻量健康徽标 hook ──────────────────────────────
@@ -87,7 +89,7 @@ function EmbedStatusRow({ scriptId }) {
     if (!scriptId) return;
     setLoading(true); setErr(null);
     try {
-      const res = await fetch(`/api/scripts/${scriptId}/embed/status`, { credentials: 'include' });
+      const res = await fetch(`${apiBase()}/api/scripts/${scriptId}/embed/status`, { credentials: 'include' });
       const j = await res.json().catch(() => null);
       if (!res.ok || !j || j.ok === false) throw new Error((j && j.error) || `HTTP ${res.status}`);
       setStatus(j.status || null);
@@ -157,7 +159,7 @@ function AuditCardsButton({ scriptId }) {
       if (A?.scripts?.auditCards) {
         r = await A.scripts.auditCards(scriptId, '', '');
       } else {
-        const res = await fetch(`/api/scripts/${scriptId}/audit-cards`, {
+        const res = await fetch(`${apiBase()}/api/scripts/${scriptId}/audit-cards`, {
           method: 'POST',
           credentials: 'include',
           headers: { 'Content-Type': 'application/json' },

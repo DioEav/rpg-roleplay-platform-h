@@ -93,13 +93,27 @@ def _t_update_anchor(user_id: int, script_id: int | None, args: dict, state: Any
                 params.append([str(x) for x in args["keywords"]])
             if not sets:
                 return "失败: 没有要更新的字段"
+            # 确认预览时注入的版本基线:同一条 UPDATE WHERE 原子复核。
+            base_ts = None
+            if args.get("base_updated_at"):
+                try:
+                    from platform_app.api.script_edit._shared import _parse_baseline_ts
+                    base_ts = _parse_baseline_ts(args.get("base_updated_at"))
+                except Exception:
+                    return "失败: base_updated_at 不是合法时间戳"
             sets.append("updated_at=now()")
             params.extend([aid, sid])
-            db.execute(
-                f"update script_timeline_anchors set {', '.join(sets)} "
-                f"where id=%s and script_id=%s",
+            where = "id=%s and script_id=%s"
+            if base_ts is not None:
+                where += " and updated_at=%s"
+                params.append(base_ts)
+            cur = db.execute(
+                f"update script_timeline_anchors set {', '.join(sets)} where {where}",
                 tuple(params),
             )
+            if base_ts is not None and cur.rowcount == 0:
+                return ("失败: 锚点在确认预览后已被修改(可能刚手动保存或另一处写入),"
+                        "已取消本次写入。请用 list_anchors 重新读取后再改。")
             # ③ 审计
             try:
                 _write_commit(
@@ -135,7 +149,8 @@ def _t_create_anchor(user_id: int, script_id: int | None, args: dict, state: Any
     if args.get("chapter_min") is None or args.get("chapter_max") is None:
         return "失败: chapter_min / chapter_max 必填(该事件大致所处章节)"
     try:
-        cmin = int(args["chapter_min"]); cmax = int(args["chapter_max"])
+        cmin = int(args["chapter_min"])
+        cmax = int(args["chapter_max"])
     except (TypeError, ValueError):
         return "失败: chapter_min / chapter_max 必须是整数"
     if cmax < cmin:
@@ -217,7 +232,22 @@ def _t_delete_anchor(user_id: int, script_id: int | None, args: dict, state: Any
             ).fetchone()
             if not row:
                 return f"失败: 锚点 #{aid} 不存在或不属于剧本 #{sid}"
-            db.execute("delete from script_timeline_anchors where id=%s and script_id=%s", (aid, sid))
+            # 删除也是写:确认预览后锚点被改过 → 拒绝删除,避免误删新内容。
+            base_ts = None
+            if args.get("base_updated_at"):
+                try:
+                    from platform_app.api.script_edit._shared import _parse_baseline_ts
+                    base_ts = _parse_baseline_ts(args.get("base_updated_at"))
+                except Exception:
+                    return "失败: base_updated_at 不是合法时间戳"
+            where = "id=%s and script_id=%s"
+            params: list = [aid, sid]
+            if base_ts is not None:
+                where += " and updated_at=%s"
+                params.append(base_ts)
+            cur = db.execute(f"delete from script_timeline_anchors where {where}", tuple(params))
+            if base_ts is not None and cur.rowcount == 0:
+                return ("失败: 锚点在确认预览后已被修改,已取消删除。请用 list_anchors 重新读取后再改。")
             try:
                 from platform_app.api.script_edit import _write_commit
                 _write_commit(db, script_id=sid, user_id=user_id, kind="anchor_delete",

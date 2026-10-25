@@ -46,6 +46,8 @@ Pygments==2.21.0
 pytest==9.1.1
 python-dotenv==1.2.3
 python-multipart==0.0.32
+# 编辑器全书检索的正则执行超时:标准库 re 不支持 timeout,灾难性回溯会卡死 worker。
+regex==2026.6.28
 requests==2.34.2
 ruff==0.16.7
 sniffio==1.3.1

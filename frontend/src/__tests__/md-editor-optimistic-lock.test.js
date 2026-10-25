@@ -8,7 +8,7 @@
  *   · conflictServer/serverBase 能按实体类型取到统一形状的冲突快照。
  */
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { toMd } from '../lib/md-serialize.js';
+import { toMd, fromMd } from '../lib/md-serialize.js';
 import {
   loadNodeContentMeta,
   saveNodeContent,
@@ -29,6 +29,29 @@ const WB_ROW = {
 };
 
 describe('saveNodeContent 乐观锁基线', () => {
+  it('章节:同时发送 base_updated_at 与 base_chapter_id(普通保存/逐块取舍共用)', async () => {
+    const row = {
+      id: 11, chapter_index: 1, title: '开篇', volume_title: '', word_count: 3,
+      content: '旧正文', updated_at: '2026-10-25T01:00:00.123456+00:00',
+    };
+    const updateChapter = vi.fn(async () => ({
+      ok: true, chapter: { ...row, content: '新正文', updated_at: '2026-10-25T02:00:00+00:00' },
+    }));
+    window.api = { scripts: { updateChapter } };
+
+    const original = toMd('chapter', row);
+    const edited = toMd('chapter', { ...row, content: '新正文' });
+    const res = await saveNodeContent(
+      'chapter', 1, 1, edited, original, row.updated_at, null, row.id,
+    );
+
+    const body = updateChapter.mock.calls[0][2];
+    expect(body.content).toBe('新正文');
+    expect(body.base_updated_at).toBe(row.updated_at);
+    expect(body.base_chapter_id).toBe(row.id);
+    expect(res).toEqual({ updatedAt: '2026-10-25T02:00:00+00:00', version: null });
+  });
+
   it('世界书:带 base_updated_at,返回服务端新 updated_at', async () => {
     const worldbookUpdate = vi.fn(async () => ({
       ok: true,
@@ -69,7 +92,7 @@ describe('saveNodeContent 乐观锁基线', () => {
     expect('base_updated_at' in anchorUpdate.mock.calls[1][2]).toBe(false);
   });
 
-  it('canon:PUT 体带 logical_key + base_updated_at', async () => {
+  it('canon:PUT 体不再包含 logical_key(稳定标识只读),仍带 base_updated_at', async () => {
     const canonUpsert = vi.fn(async () => ({
       ok: true, entity: { logical_key: 'k', updated_at: '2026-10-25T04:00:00+00:00' },
     }));
@@ -85,8 +108,27 @@ describe('saveNodeContent 乐观锁基线', () => {
     await saveNodeContent('canon', 1, 'k', edited, original, '2026-10-25T01:00:00+00:00');
 
     const body = canonUpsert.mock.calls[0][1];
+    // logical_key 只作为路由 path id 带上(值仍是打开时的 id),不作为可写字段参与 diff;
+    // fromMd 的 patch 里已经没有它,避免“可编辑但后端忽略”。
     expect(body.logical_key).toBe('k');
+    expect('logical_key' in fromMd('canon', edited)).toBe(false);
     expect(body.base_updated_at).toBe('2026-10-25T01:00:00+00:00');
+  });
+
+  it('canon:修改 logical_key 直接报错,不发请求(不再假装保存成功)', async () => {
+    const canonUpsert = vi.fn();
+    window.api = { scripts: { canonUpsert } };
+    const row = {
+      id: 9, logical_key: 'k', type: 'concept', entity_subtype: '', parent_logical_key: '',
+      name: '设定', full_name: '', identity: '', summary: '旧', aliases: [],
+      first_revealed_chapter: 0, public_knowledge: false, importance: 0, attrs: {},
+    };
+    const original = toMd('canon', row);
+    const renamed = toMd('canon', { ...row, logical_key: 'k2' });
+    await expect(
+      saveNodeContent('canon', 1, 'k', renamed, original, null),
+    ).rejects.toThrow(/logical_key/);
+    expect(canonUpsert).not.toHaveBeenCalled();
   });
 
   it('角色卡:发 base_row_version,返回新 row_version', async () => {
@@ -138,8 +180,10 @@ describe('409 冲突快照解析', () => {
   });
 
   it('兼容章节 server_chapter;无快照时返回 null(调用方降级为标记冲突)', () => {
-    const ch = { chapter_index: 1, content: 'x', updated_at: 't' };
+    const ch = { id: 7, chapter_index: 1, content: 'x', updated_at: 't' };
     expect(conflictServer({ payload: { server_chapter: ch } }, 'chapter')).toBe(ch);
+    // 章节快照额外带稳定 id,供旧标签在合并/强制保存时补身份基线。
+    expect(serverBase('chapter', ch)).toEqual({ updatedAt: 't', version: null, chapterId: 7 });
     expect(conflictServer({ payload: { conflict: true } }, 'canon')).toBeNull();
     expect(serverBase('canon', null)).toEqual({ updatedAt: null, version: null });
   });

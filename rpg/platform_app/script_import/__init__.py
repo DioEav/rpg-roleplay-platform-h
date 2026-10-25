@@ -1,3 +1,4 @@
+# ruff: noqa: F401  — 本模块是薄门面,导入名就是对外 API,不应按未使用变量处理。
 """
 platform_app.script_import — 剧本导入 / 章节编辑编排(包化)。
 
@@ -47,6 +48,7 @@ from ._base import (
 from .chapters import (
     _CHAPTER_STRUCT_LOCK_NS,
     ChapterConflict,
+    ChapterStructureChanged,
     _cursor_index,
     _lock_chapter_struct,
     _renumber_contiguous,
@@ -196,7 +198,6 @@ def resplit_script(
         _validate_custom_pattern(custom_pattern)
 
     text, encoding = chapter_splitter.decode_bytes(raw)
-    cleaned = chapter_splitter.clean_text(text)
     chapters, report = chapter_splitter.split_chapters_with_report(
         text, split_rule=split_rule or "auto",  # 传未清洗文本: with_report 内部清洗并计入 cleaning 报告
         custom_pattern=custom_pattern or "",

@@ -27,6 +27,14 @@ class SetPreferenceValueCap(unittest.TestCase):
         r = _t_set_preference(1, {"key": "k", "value": "ok"})
         self.assertNotIn("value 过大", r)
 
+    def test_sensitive_preference_keys_blocked_before_db(self):
+        # 编辑器写入权限只能由用户 UI 修改:console_assistant 的 set_preference 不得代改,
+        # 否则 LLM 可把 editor.write_mode 改成 full_access 绕过只读/审查。
+        from tools_dsl.command_tools_misc import _t_set_preference
+        for key in ("editor.write_mode", "permission_mode"):
+            r = _t_set_preference(1, {"key": key, "value": "full_access"})
+            self.assertIn("只能由用户", r, (key, r))
+
 
 class SyncScopeLock(unittest.TestCase):
     def test_same_key_returns_same_lock(self):

@@ -28,9 +28,10 @@ async def api_console_assistant_ping() -> JSONResponse:
 
 @router.get("/api/console_assistant/conversations")
 async def api_console_assistant_conversations(
+    script_id: int | None = None,
     api_user: dict[str, Any] | None = Depends(get_current_user),
 ) -> JSONResponse:
-    """task 111: 列当前用户所有对话。"""
+    """task 111: 列当前用户所有对话。script_id 可选:编辑器只列属于当前剧本的对话。"""
     user_id = int((api_user or {}).get("id") or 0)
     if not user_id:
         return json_response({"items": []})
@@ -43,6 +44,10 @@ async def api_console_assistant_conversations(
         if it.get("id") not in seen:
             items.append(it)
             seen.add(it.get("id"))
+    if script_id is not None:
+        # 只保留明确属于当前剧本的对话;未打标的历史对话(旧数据)在编辑器里不再列出,
+        # 避免把游戏/另一个剧本的上下文带进来。游戏控制台不传该参数,行为不变。
+        items = [it for it in items if it.get("script_id") == int(script_id)]
     items.sort(key=lambda r: r.get("last_used", ""), reverse=True)
     return json_response({"items": items})
 
@@ -66,6 +71,10 @@ async def api_console_assistant_conversation_messages(
     from console_assistant.conversations import _get_or_create_conversation
     _cid, conv = _get_or_create_conversation(user_id, cid)
     # 优先用 ui_turns(含每轮工具调用:名/参数/状态/结果)→ 刷新后工具历史不丢、可还原折叠块。
+    # 待确认项也必须随历史返回:它们持久化在 conv 里(Redis/PG),但此前没进消息响应,
+    # 页面一刷新侧栏就只剩一条“pending”工具记录,没有批准/拒绝按钮,待确认永远悬空。
+    pendings = conv.get("pending_confirmations") or {}
+    pending_list = list(pendings.values()) if isinstance(pendings, dict) else []
     ui_turns = conv.get("ui_turns")
     if isinstance(ui_turns, list) and ui_turns:
         out = []
@@ -78,7 +87,9 @@ async def api_console_assistant_conversation_messages(
             if not text.strip() and not tools:
                 continue
             out.append({"role": role, "text": text, "tools": tools})
-        return json_response({"ok": True, "conversation_id": _cid, "messages": out})
+        return json_response({"ok": True, "conversation_id": _cid, "messages": out,
+                              "pending_confirmations": pending_list,
+                              "script_id": conv.get("script_id")})
     # 兜底(旧对话无 ui_turns):仅文本还原。
     out = []
     for m in (conv.get("messages") or []):
@@ -89,7 +100,9 @@ async def api_console_assistant_conversation_messages(
         if not content.strip():
             continue
         out.append({"role": role, "text": content, "tools": []})
-    return json_response({"ok": True, "conversation_id": _cid, "messages": out})
+    return json_response({"ok": True, "conversation_id": _cid, "messages": out,
+                          "pending_confirmations": pending_list,
+                          "script_id": conv.get("script_id")})
 
 
 @router.post("/api/console_assistant/new_conversation", response_model=GenericOkResponse, responses=COMMON_ERROR_RESPONSES)

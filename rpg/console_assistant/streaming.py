@@ -30,6 +30,15 @@ def stream_chat(
 ) -> Iterator[str]:
     """主循环 — yield SSE 文本块。"""
     conv_id, conv = _get_or_create_conversation(user_id, conversation_id)
+    # 给对话打上剧本标记:编辑器历史列表据此过滤,避免把游戏/另一个剧本的对话
+    # 载进当前剧本继续聊(上下文串味)。page_context.script_id 是前端声明,只用于
+    # 归属展示;真正写库仍由各工具的 owner 闸校验。
+    _pc_sid = (page_context or {}).get("script_id")
+    if _pc_sid is not None:
+        try:
+            conv["script_id"] = int(_pc_sid)
+        except (TypeError, ValueError):
+            pass
     trace_id = _new_trace_id()
 
     yield _sse_event("meta", {
