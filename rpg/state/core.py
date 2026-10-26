@@ -644,7 +644,6 @@ class GameState(ApplyOpsMixin, RulesGameplayMixin, PendingMixin):
         # 两次,且这条路随存档变长无限膨胀。归属划分与上限现在收敛在 state.phase_digest_policy。
         try:
             from platform_app.db import connect as _connect
-
             from state.phase_digest_policy import (
                 DIGEST_PREFIX_MAX_CHARS,
                 DIGEST_SUMMARY_MAX_CHARS,
@@ -712,7 +711,18 @@ class GameState(ApplyOpsMixin, RulesGameplayMixin, PendingMixin):
         return list(self.data["history"])
 
     # ── 状态简报（注入 system prompt）────────────────────────────
-    def short_summary(self) -> str:
+    def short_summary(self, *, include_memory: bool = True,
+                      include_worldline: bool = True) -> str:
+        """当前状态简报。
+
+        prompt 专用裁剪（本次记忆修复）:
+          · include_memory=False —— MemoryProvider 已是 facts/pinned/notes/abilities/
+            resources/summaries/主线目标的唯一注入源，状态层不再重复列一遍。
+          · include_worldline=False —— WorldlineProvider 已注入用户变量/约束/位置/权限
+            行为，状态层不再重复。
+        默认 True 保持 UI / /api/state / 既有测试的行为不变；只有 context_engine 的
+        state 层与 GM 动态上下文在确认对应 provider 存在时才传 False。
+        """
         p = self.data["player"]
         w = self.data["world"]
         m = self.data["memory"]
@@ -731,51 +741,57 @@ class GameState(ApplyOpsMixin, RulesGameplayMixin, PendingMixin):
         # 长局后这块线性增长吃光 token。取最近 15 条(时间上最相关)。
         known = "\n".join(f"  · {e}" for e in w["known_events"][-15:])
         memory_lines = []
-        if m["main_quest"]:
-            memory_lines.append(f"主线：{m['main_quest']}")
-        if m["current_objective"]:
-            memory_lines.append(f"当前目标：{m['current_objective']}")
-        memory_lines.extend(f"能力：{x}" for x in m["abilities"][:6])
-        # 各桶写入端是尾部 append(add_memory / apply_ops list 分支),窗口必须取**尾**
-        # (最近 N 条),与上方 relationships[-20:]/下方 known_events[-15:] 同向。
-        # 旧实现取头([:N])→ 桶一旦超过窗口,新增能力/资源/固定记忆/笔记永久不可见
-        # (群反馈同族:「面板一直是很早以前的」)。
-        memory_lines.extend(f"资源：{x}" for x in m["resources"][-6:])
-        memory_lines.extend(f"固定记忆：{x}" for x in m["pinned"][-6:])
-        if m["mode"] == "deep":
-            memory_lines.extend(f"事实：{x}" for x in m["facts"][-10:])
-            memory_lines.extend(f"笔记：{x}" for x in m["notes"][-8:])
-        elif m["mode"] == "normal":
-            memory_lines.extend(f"事实：{x}" for x in m["facts"][-5:])
-            memory_lines.extend(f"笔记：{x}" for x in m["notes"][-3:])
-        memory_text = "\n".join(f"  · {line}" for line in memory_lines) or "  （暂无长期记忆）"
+        if include_memory:
+            if m["main_quest"]:
+                memory_lines.append(f"主线：{m['main_quest']}")
+            if m["current_objective"]:
+                memory_lines.append(f"当前目标：{m['current_objective']}")
+            # 能力取尾：旧实现 [:6] 取头，能力超过 6 条后状态层永远显示最早的能力，
+            # 与 MemoryProvider[-depth:] / 其他桶的取尾方向不一致。
+            memory_lines.extend(f"能力：{x}" for x in m["abilities"][-6:])
+            # 各桶写入端是尾部 append(add_memory / apply_ops list 分支),窗口必须取**尾**
+            # (最近 N 条),与上方 relationships[-20:]/下方 known_events[-15:] 同向。
+            # 旧实现取头([:N])→ 桶一旦超过窗口,新增能力/资源/固定记忆/笔记永久不可见
+            # (群反馈同族:「面板一直是很早以前的」)。
+            memory_lines.extend(f"资源：{x}" for x in m["resources"][-6:])
+            memory_lines.extend(f"固定记忆：{x}" for x in m["pinned"][-6:])
+            if m["mode"] == "deep":
+                memory_lines.extend(f"事实：{x}" for x in m["facts"][-10:])
+                memory_lines.extend(f"笔记：{x}" for x in m["notes"][-8:])
+            elif m["mode"] == "normal":
+                memory_lines.extend(f"事实：{x}" for x in m["facts"][-5:])
+                memory_lines.extend(f"笔记：{x}" for x in m["notes"][-3:])
+        memory_text = ("\n".join(f"  · {line}" for line in memory_lines)
+                       or "  （暂无长期记忆）") if include_memory else ""
         # task 138: user_variables 里的 story_intent 是 player_private 范畴,不再注入 GM prompt。
         # 旧存档迁移函数已把 story_intent 复制到 player_private.story_intent,这里只是把字面
         # 从 system prompt 里抹掉(player_private namespace 整个不进 prompt)。
-        variables = worldline.get("user_variables", {})
-        _public_vars = [
-            (name, info) for name, info in variables.items()
-            if name != "story_intent"
-        ]
-        # 窗口取「最近设定的 12 条」:dict 键序过 jsonb 落库后不保(键按长度/字节重排),
-        # 直接取头 [:12] = 任意子集。变量自带 turn,按它升序后取尾恢复真实时序。
-        def _var_turn(kv):
-            info = kv[1]
-            if isinstance(info, dict):
-                try:
-                    return int(info.get("turn") or 0)
-                except (TypeError, ValueError):
-                    return 0
-            return 0
-        _public_vars.sort(key=_var_turn)
-        if _public_vars:
-            variable_text = "\n".join(
-                f"  · {name}={info.get('value', '')}"
-                if isinstance(info, dict) else f"  · {name}={info}"
-                for name, info in _public_vars[-12:]
-            )
-        else:
-            variable_text = "  （暂无用户变量）"
+        variable_text = ""
+        if include_worldline:
+            variables = worldline.get("user_variables", {})
+            _public_vars = [
+                (name, info) for name, info in variables.items()
+                if name != "story_intent"
+            ]
+            # 窗口取「最近设定的 12 条」:dict 键序过 jsonb 落库后不保(键按长度/字节重排),
+            # 直接取头 [:12] = 任意子集。变量自带 turn,按它升序后取尾恢复真实时序。
+            def _var_turn(kv):
+                info = kv[1]
+                if isinstance(info, dict):
+                    try:
+                        return int(info.get("turn") or 0)
+                    except (TypeError, ValueError):
+                        return 0
+                return 0
+            _public_vars.sort(key=_var_turn)
+            if _public_vars:
+                variable_text = "\n".join(
+                    f"  · {name}={info.get('value', '')}"
+                    if isinstance(info, dict) else f"  · {name}={info}"
+                    for name, info in _public_vars[-12:]
+                )
+            else:
+                variable_text = "  （暂无用户变量）"
         # task 138: 玩家段只注入 NPC 可观察字段。规则:
         #   1. 不注入 player_private.* 整个 namespace(secrets / hidden_traits / flags / story_intent)
         #   2. 不注入 player.secrets(老 task 137 残留;迁移函数会清空但保险起见这里再过一遍)
@@ -808,6 +824,14 @@ class GameState(ApplyOpsMixin, RulesGameplayMixin, PendingMixin):
         _revealed_block = f"\n\n【玩家本轮揭示】\n{_revealed}" if _revealed else ""
         # background 字段同样 strip 秘密段
         _background = _strip_secret_sections(p.get("background") or "")
+        # prompt 专用裁剪:MemoryProvider / WorldlineProvider 已接管对应内容时，
+        # 这里不再重复渲染。默认 True 时保持 UI / /api/state 原输出不变。
+        _memory_block = f"\n\n【长期记忆】\n{memory_text}" if include_memory else ""
+        _worldline_block = (
+            f"\n\n【权限与世界线】\n"
+            f"  · LLM写入权限：{_permission_label(permissions.get('mode', 'full_access'))}\n"
+            f"  · 用户变量：\n{variable_text}"
+        ) if include_worldline else ""
         return f"""【玩家档案】
 姓名：{p['name']}
 定位：{p['role']}
@@ -824,15 +848,7 @@ class GameState(ApplyOpsMixin, RulesGameplayMixin, PendingMixin):
 {known}
 
 【关系状态】
-{rel_text}
-
-【长期记忆】
-{memory_text}
-
-【权限与世界线】
-  · LLM写入权限：{_permission_label(permissions.get('mode', 'full_access'))}
-  · 用户变量：
-{variable_text}
+{rel_text}{_memory_block}{_worldline_block}
 
 【当前回合】第 {self.data['turn']} 回合{_revealed_block}"""
 
@@ -1186,14 +1202,23 @@ class GameState(ApplyOpsMixin, RulesGameplayMixin, PendingMixin):
         if target.get("status") != "active":
             return False
         target["status"] = "superseded"
+        _text = str(target.get("text", "") or "").strip()
+        # 双写 legacy facts: MemoryProvider 注入、面板事实列表、remove_memory 同步都以
+        # legacy bucket 为准。旧实现只写 items，确认后的推测在 fact_groups 12 条窗口之外
+        # 或归档之后就从 GM 上下文彻底消失（只剩摘要里一句），这是「推测确认了但 GM 仍不认」的根因。
         self.add_memory_item(
-            text=target.get("text", ""),
+            text=_text,
             kind="runtime_fact",
             source=source,
             time_label=target.get("time_label"),
             characters=target.get("characters"),
             supersedes=[item_id],
+            legacy_bucket="facts",
         )
+        if _text:
+            _facts = self.data.setdefault("memory", {}).setdefault("facts", [])
+            if _text not in _facts:
+                _facts.append(_text)
         return True
 
     def reject_hypothesis(self, item_id: str) -> bool:

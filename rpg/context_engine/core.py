@@ -119,6 +119,29 @@ def _safe_list(fn, default: list | None = None) -> list:
         return default if default is not None else []
 
 
+def _state_summary_for_prompt(state, manifest: dict | None,
+                              contributions: list | None = None) -> str:
+    """state 层专用简报：MemoryProvider / WorldlineProvider 已接管的内容不再重复。
+
+    - provider 在 manifest 里且**本轮实际 applied** → 对应内容从 summary 里去掉
+    - provider 缺失 / 跳过 / 异常 → 保留 summary 里的对应内容，避免记忆/用户变量
+      在 provider 故障时从 prompt 里彻底消失
+    """
+    providers = set((manifest or {}).get("context_providers") or [])
+    applied = {getattr(c, "provider_id", "") for c in (contributions or [])
+               if getattr(c, "applied", False)}
+    omit_memory = "memory" in providers and "memory" in applied
+    omit_worldline = "worldline" in providers and "worldline" in applied
+    try:
+        return state.short_summary(
+            include_memory=not omit_memory,
+            include_worldline=not omit_worldline,
+        )
+    except TypeError:
+        # 兼容没有新 kwargs 的 state 替身 / 旧调用方
+        return state.short_summary()
+
+
 def build_context_bundle(
     state,
     user_input: str,
@@ -180,8 +203,8 @@ def build_context_bundle(
         # pending_jump 警告是通用 GM 约束，任何 ContentPack 都得遵守
         _layer("timeline_pending", "时间跳跃待确认", _safe(lambda: _pending_jump_warning_text(state)),
                sticky=False, priority=86),
-        _layer("state", "当前状态", _safe(lambda: state.short_summary()), sticky=True, priority=55),
-        _layer("fact_groups", "事实分组（按 kind）", _safe(lambda: _fact_groups_layer(state)), sticky=False, priority=50),
+        _layer("state", "当前状态", _safe(lambda: _state_summary_for_prompt(state, manifest, contributions)), sticky=True, priority=55),
+        _layer("fact_groups", "结构化记忆补充（按 kind）", _safe(lambda: _fact_groups_layer(state)), sticky=False, priority=50),
         _layer("state_schema", "状态字段 schema",
                _safe(lambda: _state_schema_layer(state, _safe_load_chars(script_id, book_id, manifest))),
                sticky=True, priority=45),

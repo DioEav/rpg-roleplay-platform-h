@@ -19,6 +19,22 @@ GM_KB_WRITE_TOOLS = ("kb_upsert_entity", "kb_record_event", "kb_set_relationship
 GM_ANCHOR_TOOLS = ("list_pending_anchors", "mark_anchor_satisfied", "mark_anchor_superseded")
 GM_ALL_KB_TOOLS = GM_KB_QUERY_TOOLS + GM_KB_WRITE_TOOLS + GM_ANCHOR_TOOLS
 
+# 本次记忆修复：文宗精简档的完整保留清单。
+#
+# 旧实现只保留 GM_ALL_KB_TOOLS + ask_player_choice，但 _SYSTEM_BASE 仍然要求 GM:
+#   · 每轮开始前调 list_recent_history
+#   · importance≥60 时调 record_history_anchor
+#   · 偶尔用 summarize_anchors 看收束状态
+# 这些工具不在 GM_ALL_KB_TOOLS 里 → 精简档下 GM 根本看不到 schema，玩家创造的
+# 历史时间线只剩 mark_anchor_satisfied 的级联和 phase digest 的 system anchor。
+# 这里把「提示词明确要求、且主回合闭环真的会用」的历史锚点/收束读工具补回保留集；
+# GM_ALL_KB_TOOLS 本身保持不变（test_tool_window_tiering 仍以它为派生源）。
+GM_HISTORY_TOOLS = ("list_recent_history", "record_history_anchor")
+GM_ANCHOR_READ_TOOLS = ("summarize_anchors",)
+GM_SLIM_KEEP_TOOLS = (
+    GM_ALL_KB_TOOLS + GM_ANCHOR_READ_TOOLS + GM_HISTORY_TOOLS + ("ask_player_choice",)
+)
+
 
 def assemble_gm_context(db, *, save_id: int, user_id: int, user_input: str = "",
                         scene_summary: str = "") -> dict:

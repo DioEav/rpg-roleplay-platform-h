@@ -376,6 +376,88 @@ def dedupe_json_ops(json_ops: list[dict]) -> list[dict]:
     return result
 
 
+def _op_kind(op: dict) -> str:
+    return str((op or {}).get("op") or "set").strip().lower()
+
+
+def _op_fingerprint(op: dict) -> str:
+    try:
+        return json.dumps(op, sort_keys=True, ensure_ascii=False)
+    except Exception:
+        return repr(op)
+
+
+def _op_conflict_key(op: dict) -> tuple:
+    """同一语义槽位的冲突键。
+
+    set/overwrite 只看 path（谁写同一个字段谁就冲突，GM 显式优先）；
+    append 把 value 也算进去 —— 同一路径的不同追加条目都该保留；
+    question/hypothesis/consequence/agenda 按业务主键判重，避免同一件事换措辞登记两次。
+    """
+    kind = _op_kind(op)
+    path = str(op.get("path") or "")
+    if kind in ("set", "overwrite"):
+        return ("write", path)
+    if kind == "append":
+        return ("append", path, _op_fingerprint({"v": op.get("value")}))
+    if kind == "question":
+        return ("question", str(op.get("question") or op.get("text") or "").strip())
+    if kind == "hypothesis":
+        return ("hypothesis", str(op.get("text") or "").strip())
+    if kind in ("confirm_hypothesis", "reject_hypothesis"):
+        return (kind, str(op.get("id") or ""))
+    if kind == "consequence":
+        return ("consequence", str(op.get("text") or "").strip())
+    if kind == "agenda":
+        return ("agenda", str(op.get("name") or "").strip())
+    return (kind, _op_fingerprint(op))
+
+
+def merge_state_ops(gm_ops: list[dict], recorder_ops: list[dict]) -> list[dict]:
+    """合并 GM 自己写的 JSON fence 与史官 ops（本次记忆修复）。
+
+    背景：旧 chat_pipeline 只要史官产出任意 op，就把 GM 的整个 fence strip 掉，
+    只 apply 史官 ops。史官是从正文重新推断，不保证覆盖 GM 显式写的每一条；漏一条
+    就是一条状态永久丢失。
+
+    策略（用户拍板）：**GM 显式优先，史官补漏**。
+      · GM 已有的完全相同的 op → 不再追加。
+      · GM 已经写过某个 path 的 set/overwrite → 史官的同 path set/overwrite 跳过
+        （守护 GM 的显式值；也避免史官的 set 把 GM 刚 append 的列表整体覆盖掉）。
+      · 同一 question / hypothesis / consequence / agenda 主键 → GM 版本胜出。
+      · append 按 path+value 去重；不同 value 都保留（两条都是真实追加）。
+    这样 GM 的显式写入不会被史官的部分产出挤掉，史官仍能补上 GM 忘了写的变化。
+    """
+    gm_list = dedupe_json_ops([op for op in (gm_ops or []) if isinstance(op, dict)])
+    seen: set[str] = {_op_fingerprint(op) for op in gm_list}
+    conflicts: set[tuple] = {_op_conflict_key(op) for op in gm_list}
+    touched_paths: set[str] = {
+        str(op.get("path") or "") for op in gm_list if op.get("path")
+    }
+    merged: list[dict] = list(gm_list)
+    for op in recorder_ops or []:
+        if not isinstance(op, dict):
+            continue
+        fp = _op_fingerprint(op)
+        if fp in seen:
+            continue
+        kind = _op_kind(op)
+        path = str(op.get("path") or "")
+        # 史官的 set/overwrite 是破坏性覆盖：GM 显式碰过这个 path（包括 append）时，
+        # 不拿史官的推断去覆盖 GM 的显式写入。
+        if kind in ("set", "overwrite") and path and path in touched_paths:
+            continue
+        key = _op_conflict_key(op)
+        if key in conflicts:
+            continue
+        merged.append(op)
+        seen.add(fp)
+        conflicts.add(key)
+        if path:
+            touched_paths.add(path)
+    return merged
+
+
 class StreamFenceGuard:
     """流式 ops 围栏抑制器 —— 修「玩家看着 ```json ops 逐字打出来、生成完又消失」。
 

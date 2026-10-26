@@ -14,11 +14,12 @@ function MemorySection() {
   const save = useAutoSave(t('settings.nav.memory'), "memory");
 
   // ── 召回行为字段 ──
-  // 初始值 = MemorySettings schema 默认(rpg/schemas/memory.py),未保存过偏好时
-  // 界面显示与后端实际生效值一致(修复前 UI 显示 6/8、后端实际用 5/10)。
-  const [recallDepth, setRecallDepth] = useStatePL(5);
+  // 初始值 = MemorySettings schema 默认(rpg/schemas/memory.py)。本次记忆修复起
+  // recall_depth 5→8、token_budget 800→1600：旧默认装不下 2-3 条 600 字归档摘要，
+  // facts/notes 会被摘要挤掉。未保存过偏好时，界面显示必须与后端实际生效值一致。
+  const [recallDepth, setRecallDepth] = useStatePL(8);
   const [summaryWindow, setSummaryWindow] = useStatePL(10);
-  const [tokenBudget, setTokenBudget] = useStatePL(800);
+  const [tokenBudget, setTokenBudget] = useStatePL(1600);
   const [autoArchiveAfter, setAutoArchiveAfter] = useStatePL(50);
 
   // ── 记忆桶配置字段 ──

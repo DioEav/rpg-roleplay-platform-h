@@ -147,14 +147,19 @@ pending_questions 选项把剧情引到完全脱离原著的世界线,玩家觉�
 - 玩家做的事改变了 NPC 关系/势力立场/原著走向 (importance≥60) → **`record_history_anchor`** (写存档独立历史时间线,下次 retrieve 注入【过去段】)
   · 同时改写了某 pending 锚点?→ 填 linked_pending_anchors,系统自动级联 mark_anchor_satisfied
 - 改的是 NPC↔NPC 关系(永久持续):`kb_set_relationship`(写 KB 永久层,后续 graph_neighbors 能查)
-- 玩家自己"我记得 X"(角色私人记忆) → `add_memory_fact(text)`(memory.facts)
-- 玩家假设/推测(还没确认) → `add_hypothesis(text, characters)` — 后续可 `confirm_hypothesis` / `reject_hypothesis`
-- 临时世界级流水账(巡逻兵换班这种小事) → `set_world_known_event` (流水账,弱)
+- 玩家自己"我记得 X"(角色私人记忆) → JSON op `{"op":"append","path":"memory.facts","value":"..."}`
+- 玩家假设/推测(还没确认) → JSON op `{"op":"hypothesis","text":"...","characters":[...]}` — 后续可 `confirm_hypothesis` / `reject_hypothesis`
+- 临时世界级流水账(巡逻兵换班这种小事) → JSON op `{"op":"append","path":"world.known_events","value":"..."}`(流水账,弱)
 - 原著锚点已被触发 → **`mark_anchor_satisfied(anchor_key, how_it_happened, drift_score)`**
   · drift_score 0.0 = 完全按原著, 0.3-0.6 = 中度变体, 0.8+ = 高度变体
   · mark_anchor_satisfied / mark_anchor_superseded 成功后**系统会自动**往存档独立历史时间线补一条(反向级联),
     所以锚点类事件**不用再单独调 record_history_anchor**;要补细节就把它写进 how_it_happened / reason。
-- 严禁:同一事件同时调 record_history_anchor + set_world_known_event + add_memory_fact(三重 audit)
+- 严禁:同一事件同时写 record_history_anchor + world.known_events + memory.facts(三重 audit)
+
+**默认精简档的工具边界**:默认开启文宗精简档时，常驻直发工具只有存档级 KB 维护 + 收束锚点 +
+`record_history_anchor` / `list_recent_history` + `ask_player_choice`。记忆事实/推测/流水账
+**用上面的 JSON ops 写**，不要假装调用 `add_memory_fact` / `add_hypothesis` / `set_world_known_event`
+—— 那些工具在精简档里可能没有 schema。JSON ops 是唯一稳定的写入协议。
 
 【规则模组族 if-then 决策树】(玩家行动需要判定)
 - 玩家明确要求"我用 XX 检定" → `skill_check(skill, dc, save_id)`
@@ -177,7 +182,7 @@ pending_questions 选项把剧情引到完全脱离原著的世界线,玩家觉�
 - **candidate_actions** 是子代理列出的本轮候选动作,**优先参考、不强制**:候选明显不合适、或未覆盖玩家本轮意图时,以玩家意图为准自行判断(与候选层「可优先从中选;不强制」口径一致)。
 - **hard_constraints** 是本轮硬约束,**违反等于直接失败**,无 retry 余地。
 - **confidence 低**时子代理对玩家意图不确定:你仍要**先用判断力做最合理的解读、把这一轮剧情推进**(可在 JSON op 里 note 你的解读),正常以场景节拍收尾。**只有当你的解读涉及两条互斥走向、确实需要玩家定夺时**,才用 question op 弹窗;否则按最合理解读推进即可,不要反问。**绝不跳过叙事直接反问。**
-- 玩家本轮最后一条消息可能包含【当前剧情状态】与【本轮上下文包】；这不是玩家台词而是系统整理的动态上下文，必须优先遵守。
+- 玩家本轮最后一条消息可能包含【当前状态】/【当前剧情状态】与【本轮上下文包】；这不是玩家台词而是系统整理的动态上下文，必须优先遵守。
 - 玩家使用 `/set` 开头时是显式改写设定，作为最高优先级硬约束；可据此修改时间线/地点/世界观/人设和支持写回的变量，不要用旧的 locked 时间线拒绝。
 - **`/set` 是回溯性改写,不是剧情里新发生的事件**:玩家用 `/set` 纠正既有设定(时间/地点/人物状态/关系等)时,当作"本来就如此"无缝生效——直接按纠正后的设定叙述当前情景。**绝对不要把这次纠正演成突然发生的变化去圆场**(严禁「忽然天色暗了下来」「不知何时已是深夜」「空气里的什么东西变了」这类把设定纠正写成剧情转折/过场的措辞),也不要让 NPC 因此困惑、惊讶、改口或临时找借口自圆其说。玩家纠正的是场景的底色,不是触发了一个新桥段;就当之前那一版从一开始就是按纠正后的设定写的,平滑续写即可。
 - **绝不复读铁律:`/set` 指令、【用户硬约束变量】、【玩家高优先级引导指令】都是给你的幕后元指令,不是剧情。收到后【静默遵守】并直接在叙事里体现,**绝对不要把这些指令的文字复述、罗列、确认给玩家**(严禁「好的我会…」「根据你的设定…」「(已设定:…)」这类话),更不要每轮重复提它。玩家下了 /set 后,你这一轮就正常推进剧情(让该设定在场景里自然生效即可),不要把回合变成对指令的复述/应答。连续复读用户命令 = 严重失败。**
@@ -240,7 +245,7 @@ pending_questions 选项把剧情引到完全脱离原著的世界线,玩家觉�
 
 1. **玩家硬设定**（`/set` 指令、玩家显式确认过的设定、`worldline.user_variables.*`）—— 最高权威，覆盖一切。
 2. **【玩家给 GM 的高优先级引导指令】层** —— 玩家在新建存档时填入的导演意图,GM 必须在剧本框架内遵守(执行级,不是事实级:它告诉你"如何演",不是"发生了什么")。
-3. **当前存档状态**（【当前剧情状态】里的 player/world/memory/relationships/timeline）—— 本局已发生事实。
+3. **当前存档状态**（【当前状态】/【当前剧情状态】里的 player/world/memory/relationships/timeline）—— 本局已发生事实。
 4. **原著/剧本事实**（角色卡、世界书、ChapterFact）—— 设定边界与人物逻辑的权威依据。
 5. **检索参考**（【检索参考】层的 RAG 召回片段）—— **仅是候选材料，不是当前已发生事实**。可以作为人物口吻、地点描写、氛围基线参考，但不要直接当事实写入状态或叙事。
 6. **推测/计划/草稿**（子代理的 `hypothesis`、GM 自己的猜想、未确认的 pending_change）—— **永远不能当事实叙事**。需要确认时用 `question` op 让玩家拍板，不要替玩家定调。
@@ -340,7 +345,7 @@ _SYSTEM_TAVERN = """\
 该用哪个工具、怎么传参，以各工具自身的说明为准；工具调用是后台动作，不在正文里复述。若上下文有【角色卡高优先级指令】，在平台安全边界内照其塑造角色。
 
 # 空间/位置状态记录（必须遵守）
-上下文中的【当前剧情状态】里 `player.current_location` 是当前已记录的场景位置，**每轮必须以此为准**，不得自行跳回其他地点。
+上下文中的【当前状态】/【当前剧情状态】里 `player.current_location` 是当前已记录的场景位置，**每轮必须以此为准**，不得自行跳回其他地点。
 当且仅当玩家行动/剧情确实导致场景/所在位置改变时，在本轮正文末尾的 ```json fence 里追加：
 
 ```json
@@ -400,10 +405,7 @@ def _content_text(content: Any) -> str:
 
 
 _DYNAMIC_CONTEXT = """\
-【当前剧情状态】
-{player_summary}
-
-【本轮上下文包】
+{state_block}【本轮上下文包】
 {retrieved_context}
 {transmigrator_note}"""
 
@@ -769,8 +771,37 @@ class GameMaster:
             origin = "soul" if "穿越者" in player_summary else ""
         return origin, identity_known
 
-    def _dynamic_context(self, player_summary: str, retrieved_context: str) -> str:
-        origin, identity_known = self._resolve_player_origin(player_summary)
+    def _prompt_state_summary_for_context(self, state, context_text: str) -> str | None:
+        """动态块要不要再塞一份状态简报。
+
+        本次记忆修复去重: bundle prompt / tier C 已经包含【当前状态】层时，动态块不再重复
+        short_summary；如果上下文里已有 MemoryProvider（【长期记忆】）或 Worldline
+        provider（【世界线 / 用户变量】），对应内容也不再从 short_summary 里重复取。
+        返回 None 表示动态块只保留上下文包 + 出身提示，不再重复状态。
+        """
+        ctx = context_text or ""
+        # 用「标题 + 换行」精确匹配 bundle 的层格式，避免玩家正文里恰好出现
+        # 【当前状态】/【长期记忆】字样时误判为已有对应层。
+        if "【当前状态】\n" in ctx:
+            return None
+        has_memory = "【长期记忆】\n" in ctx
+        has_worldline = "【世界线 / 用户变量】\n" in ctx
+        try:
+            return state.short_summary(
+                include_memory=not has_memory,
+                include_worldline=not has_worldline,
+            )
+        except TypeError:
+            # state 替身 / 旧调用方没有新 kwargs 时保持原行为
+            return state.short_summary()
+
+    @staticmethod
+    def _input_already_in_context(context_text: str, user_input: str) -> bool:
+        """bundle 的 user_input 层已经含本轮输入时，动态块不再追加第二份。"""
+        return bool(user_input) and f"【玩家本轮输入】\n{user_input}" in (context_text or "")
+
+    def _dynamic_context(self, player_summary: str | None, retrieved_context: str) -> str:
+        origin, identity_known = self._resolve_player_origin(player_summary or "")
         note = self._ORIGIN_NOTES.get(origin, "")
         # "是否知道身份" = 与 4 档正交的修饰(肉穿无身份卡 → 不加此段)
         if note and origin != "body" and identity_known is not None:
@@ -789,17 +820,23 @@ class GameMaster:
                      "姓名/视角/经历/能力/剧情位置与他们混为一谈,也不要让玩家顶替原著主角的位置或自动获得其际遇——"
                      "玩家的命运由自己的行动决定,原著剧情只是这个世界的背景与惯性。")
         transmigrator_note = ("\n" + note) if note else ""
+        # player_summary=None 表示上下文包已有【当前状态】层，动态块不再重复状态；
+        # 出身/身份提示仍然保留（它不在 bundle 的 state 层里）。
+        state_block = f"【当前剧情状态】\n{player_summary}\n\n" if player_summary else ""
         return _DYNAMIC_CONTEXT.format(
-            player_summary=player_summary,
+            state_block=state_block,
             retrieved_context=retrieved_context or "（本轮无额外召回）",
             transmigrator_note=transmigrator_note,
         )
 
     def _turn_message(self, user_input: str, state, retrieved_context: str) -> str:
-        return (
-            f"{self._dynamic_context(state.short_summary(), retrieved_context)}\n\n"
-            f"【玩家本轮输入】\n{user_input}"
-        )
+        ctx = retrieved_context or ""
+        summary = self._prompt_state_summary_for_context(state, ctx)
+        # bundle prompt / C 段已带【玩家本轮输入】层时不再追加第二份；开场路径的
+        # retrieved_context 是 query（不是 opening prompt），因此这里不会误吞开场指令。
+        input_block = ("" if self._input_already_in_context(ctx, user_input)
+                       else f"\n\n【玩家本轮输入】\n{user_input}")
+        return f"{self._dynamic_context(summary, ctx)}{input_block}"
 
     def _tiered_enabled(self) -> bool:
         """Q 分层缓存总开关(每用户特性,默认开)。off 时整条回退现状单串路径。"""
@@ -824,11 +861,14 @@ class GameMaster:
         seg = {s.get("tier"): (s.get("text") or "").strip() for s in prompt_segments}
         A, B, C = seg.get("A", ""), seg.get("B", ""), seg.get("C", "")
         # 动态块 = [回合动态前置] + 【当前剧情状态】+【本轮上下文包=C 段】+ 玩家输入
+        # 本次记忆修复: C 段已含【当前状态】/【玩家本轮输入】时不再重复；否则动态块补一份。
         dyn_parts: list[str] = []
         if dynamic_prefix.strip():
             dyn_parts.append(dynamic_prefix.strip())
-        dyn_parts.append(self._dynamic_context(state.short_summary(), C))
-        dyn_parts.append(f"【玩家本轮输入】\n{user_input}")
+        dyn_parts.append(self._dynamic_context(
+            self._prompt_state_summary_for_context(state, C), C))
+        if not self._input_already_in_context(C, user_input):
+            dyn_parts.append(f"【玩家本轮输入】\n{user_input}")
         dyn = "\n\n".join(dyn_parts)
         if isinstance(self._backend, _AnthropicBackend):
             blocks: list[dict[str, Any]] = []

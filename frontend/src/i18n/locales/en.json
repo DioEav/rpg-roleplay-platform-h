@@ -477,7 +477,7 @@
       "title_recall": "Memory · Recall Behavior",
       "title_buckets": "Memory · Bucket Configuration",
       "recall_depth": "Default Recall Depth",
-      "recall_depth_desc": "Max recent entries injected per memory bucket (2–20). Higher = GM remembers more, more tokens.",
+      "recall_depth_desc": "Max recent entries injected per non-pinned memory bucket (2–20). Pinned entries use pinned_max as the candidate cap, then the token budget. Higher = GM remembers more, more tokens.",
       "summary_window": "Archive Scan Interval",
       "summary_window_desc": "Runs an old-memory archive scan every N turns (3–20).",
       "token_budget": "Memory Token Budget per Turn",
@@ -5213,7 +5213,7 @@
       "memory": {
         "recall_behavior": "Recall Behavior",
         "recall_depth_label": "Recall Depth · {{n}}",
-        "recall_depth_desc": "Max recent entries injected per memory bucket (2–20)",
+        "recall_depth_desc": "Max recent entries injected per non-pinned memory bucket (2–20); pinned uses pinned_max",
         "summary_window_label": "Archive Scan Interval · {{n}}",
         "summary_window_desc": "Runs an old-memory archive scan every N turns (3–20)",
         "token_budget_label": "Token Budget · {{n}}",

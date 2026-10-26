@@ -38,10 +38,14 @@ class MemorySettings(BaseModel):
     """
 
     token_budget: int = Field(
-        default=800,
+        default=1600,
         ge=200,
         le=5000,
-        description="每轮注入记忆 token 上限（字符数 // 2 估算）",
+        description=(
+            "每轮注入记忆 token 上限（字符数 // 2 估算）。"
+            "本次记忆修复起默认 800→1600：旧默认装不下 2-3 条 600 字归档摘要，"
+            "facts/notes 会被摘要挤掉。"
+        ),
     )
     auto_archive_after_turns: int = Field(
         default=50,
@@ -53,7 +57,10 @@ class MemorySettings(BaseModel):
         default=20,
         ge=5,
         le=100,
-        description="固定记忆桶（pinned）条目上限",
+        description=(
+            "固定记忆桶（pinned）条目上限；同时是每轮注入的候选上限。"
+            "注入仍受 token_budget 截断，但不再被 recall_depth 二次砍到 5 条。"
+        ),
     )
     bucket_pinned_enabled: bool = Field(
         default=True,
@@ -68,10 +75,13 @@ class MemorySettings(BaseModel):
         description="是否在上下文中注入 character memory（abilities / resources）",
     )
     recall_depth: int = Field(
-        default=5,
+        default=8,
         ge=1,
         le=20,
-        description="每个桶最多召回条目数（影响 MemoryProvider 的每桶 slice 上限）",
+        description=(
+            "每个非 pinned 记忆桶最多注入最近 N 条。"
+            "pinned 不看这个值，按 pinned_max 全量候选（再由 token_budget 裁剪）。"
+        ),
     )
     summary_window: int = Field(
         default=10,

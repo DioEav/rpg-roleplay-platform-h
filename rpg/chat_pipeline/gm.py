@@ -321,16 +321,18 @@ async def run_gm_phase(
     # 故 tavern_gm 不走精简(保留其完整工具集);酒馆仍享 ctx_tiered 前缀缓存。
     if _narrator_slim(api_user) and _recorder_unified(api_user) and _gm_mode != "tavern_gm":
         try:
-            from gm_serving.serve import GM_ALL_KB_TOOLS
-            # ask_player_choice 必须保留:否则 slim 档 GM 无法弹玩家选择(用户报"选项有时不弹"
-            # 的根因之一)。它是面向玩家的交互工具,不属 KB 维护但不可少。
-            _keep = set(GM_ALL_KB_TOOLS) | {"ask_player_choice"}
+            from gm_serving.serve import GM_SLIM_KEEP_TOOLS
+            # 本次记忆修复: 保留集 = KB 维护 + 历史锚点(list_recent_history/record_history_anchor)
+            # + summarize_anchors + ask_player_choice。旧实现只有 GM_ALL_KB_TOOLS +
+            # ask_player_choice，而 _SYSTEM_BASE 明确要求 GM 每轮调 list_recent_history、
+            # importance≥60 调 record_history_anchor —— 提示词要求的工具在精简档里不可见。
+            _keep = set(GM_SLIM_KEEP_TOOLS)
             _kb_only = [t for t in (unified_tools or []) if t.get("name") in _keep]
         except Exception:
             _kb_only = []
-        _gm_tools = _kb_only or None  # 极端无 KB 工具时退回 None(纯叙事,史官兜 state)
+        _gm_tools = _kb_only or None  # 极端无保留工具时退回 None(纯叙事,史官兜 state)
         yield ("agent", {"phase": "main_gm",
-                         "message": f"文宗精简档:仅保留 {len(_kb_only)} 个存档级 KB 维护工具,state ops 由史官统一落库。",
+                         "message": f"文宗精简档:保留 {len(_kb_only)} 个存档级 KB/历史锚点工具,state ops 由史官统一落库。",
                          "status": "running", "elapsed_ms": 0})
 
     # 流式 ops 围栏抑制:GM 按提示词在正文末尾追加 ```json ops fence,落库前清洗只处理
@@ -830,16 +832,24 @@ async def run_gm_phase(
                     log.warning(f"[chat] 史官三合一失败,退回原 async 后处理: {_ru_err}")
                     _ru = None
                 if _ru is not None:
-                    # recorder(史官)给出的 ops 作为权威提取,拼回 response 走 JSON op 确定性 apply;
-                    # 空 ops 也只是本回合无结构化写入(GM 本就没标),不再有「正文关键词 regex 兜底」。
+                    # recorder(史官)给出的 ops 与本回合 GM 自带 fence 合并后统一 apply。
+                    # 本次记忆修复:旧实现只要史官产出任意 op 就 strip 掉 GM 的整个 fence,
+                    # 只信史官；史官从正文重新推断，漏一条 GM 显式写的 op 就永久丢失。
+                    # 现在 GM 显式 op 优先、史官补漏（merge_state_ops 见 state/json_ops.py）。
                     _ru_ops = _ru.get("ops") or []
-                    # 双源头修复:GM 正文可能已自带 json fence(提示词要求它写),史官 ops 再
-                    # 追加一份 → 同 op 双 apply(updates 双报;set 幂等暂无害,add 类是真损坏)。
-                    # 史官有产出时它是唯一权威 → 剥掉 GM 自带 fence 只留正文;史官空产出时
-                    # 保留 GM fence 作为唯一兜底来源(行为不变)。
-                    _resp_ops = (
-                        strip_json_state_ops(response) + "\n\n```json\n" + json.dumps(_ru_ops, ensure_ascii=False) + "\n```"
-                    ) if _ru_ops else response
+                    if _ru_ops:
+                        from state.json_ops import _extract_json_state_ops, merge_state_ops
+                        _gm_ops, _gm_narrative = _extract_json_state_ops(response)
+                        _merged_ops = merge_state_ops(_gm_ops, _ru_ops)
+                        _resp_ops = (
+                            _gm_narrative.rstrip()
+                            + "\n\n```json\n"
+                            + json.dumps(_merged_ops, ensure_ascii=False)
+                            + "\n```"
+                        ) if _merged_ops else response
+                    else:
+                        # 史官本回合无产出：GM fence 原样保留，行为不变。
+                        _resp_ops = response
                     try:
                         ctx._updates = _apply_gm_json_ops(
                             state=state, response_with_ops=_resp_ops, api_user=api_user,

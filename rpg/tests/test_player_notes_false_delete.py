@@ -31,9 +31,22 @@ def _active_item_texts(state, bucket="notes"):
 
 
 def _gm_memory_context(state):
-    """渲染 GM 实际看到的记忆上下文(复活的真正来源)。"""
+    """渲染 GM 实际看到的记忆上下文（复活的真正来源）。
+
+    本次记忆修复起记忆桶的注入归属收敛到 MemoryProvider：_fact_groups_layer 只保留
+    非 legacy_bucket 的结构化补充项，不再列 notes/pinned。这里把两条路径拼起来，
+    仍是「GM 实际能看到什么」的等价视图。
+    """
     from context_engine.layers import _fact_groups_layer
-    return _fact_groups_layer(state)
+    from context_providers.memory import MemoryProvider
+
+    class _Svc:
+        user_id = None
+
+    mem_layer = MemoryProvider().collect(
+        state, manifest=None, demand=None, services=_Svc()
+    ).layers[0]["content"]
+    return mem_layer + "\n" + _fact_groups_layer(state)
 
 
 def test_remove_note_purges_structured_items_and_gm_context():

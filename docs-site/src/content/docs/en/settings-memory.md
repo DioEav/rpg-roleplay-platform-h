@@ -19,11 +19,11 @@ Each turn, the system retrieves the passages most relevant to the current scene 
 
 Memories are organized into three typed buckets:
 
-- **Pinned bucket**: Important facts pinned manually by you or the GM. Highest priority — injected every turn without exception.
-- **World bucket**: Background information about the setting, locations, factions, and rules. Retrieved and injected by relevance.
-- **Character bucket**: Character relationships, personality traits, NPC state, and similar data. Retrieved and injected by relevance.
+- **Pinned bucket**: Important facts pinned manually by you or the GM. Highest priority — all pinned entries up to the pinned cap are candidates, then trimmed by the token budget.
+- **World bucket**: Main quest/objective, narrative facts, player notes, and archived summaries. Injected by recency window, not dumped in full.
+- **Character bucket**: Persistent character state such as abilities and resources. Injected by recency window.
 
-Each bucket can be enabled or disabled independently. Disabling a bucket excludes its contents from retrieval and injection for subsequent turns.
+Each bucket can be enabled or disabled independently. Disabling a bucket removes its contents from every prompt path (MemoryProvider is the single injection source).
 
 ### Fact Store
 
@@ -37,18 +37,18 @@ When memories are archived, they move into the fact store. Their content is not 
 
 | Parameter | Description | Default | Range |
 |---|---|---|---|
-| Default retrieval depth | Maximum number of source passages retrieved per turn | 6 | 2–20 |
-| History summary window | The most recent N turns compressed into a summary and fed to the model | 8 | 3–20 |
-| Memory token budget per turn | Maximum tokens of memory content injected into context per request | 800 | 200–2000 (step 50) |
+| Default retrieval depth | Number of most recent entries injected per non-pinned bucket | 8 | 2–20 |
+| History summary window | The most recent N turns compressed into a summary and fed to the model | 10 | 3–20 |
+| Memory token budget per turn | Maximum tokens of memory content injected into context per request | 1600 | 200–5000 (step 50) |
 | Auto-archive after N turns | Memory entries older than this turn count are automatically moved to the fact store | 50 | 10–200 (step 5) |
 
-Retrieval depth and the token budget both constrain the final injected volume — retrieved passages are included only up to the token budget, regardless of how many were retrieved.
+Retrieval depth and the token budget both constrain the final injected volume. Pinned memory ignores retrieval depth: all pinned entries up to the pinned cap are candidates, then trimmed by the token budget.
 
 ### Memory: Bucket Configuration
 
 | Parameter | Description | Default |
 |---|---|---|
-| Pinned bucket capacity | Maximum number of pinned entries (5–100). Entries beyond the limit move to the fact store | 20 |
+| Pinned bucket capacity | Maximum number of pinned entries (5–100); also the per-turn injection candidate cap, trimmed by the token budget | 20 |
 | Enable pinned bucket | When disabled, the pinned bucket is not maintained; retrieval uses only the world and character buckets | On |
 | Enable world bucket | When disabled, world-book memories are skipped during retrieval | On |
 | Enable character bucket | When disabled, character-relationship memories are skipped during retrieval | On |

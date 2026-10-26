@@ -17,7 +17,7 @@ The top of the panel shows two lines of text: the **main quest** from the script
 
 ### Pinned Memory
 
-A list of entries marked with a pin icon. Pinned memory is **always injected into context** when the GM generates a response — it will never be forgotten due to being too far back in the conversation. Use it for character settings, key agreements, or important item clues that must never be omitted.
+A list of entries marked with a pin icon. Each turn, all pinned entries up to `pinned_max` (default 20) are candidates for injection, then trimmed by the per-turn token budget. They will not be forgotten merely because they are far back in the conversation. Use it for character settings, key agreements, or important item clues that must never be omitted.
 
 You can manually add and delete pinned memory entries.
 
@@ -62,10 +62,10 @@ Check the "Last Turn Retrieval" block at the bottom of the panel. It contains ex
 ## FAQ
 
 **What is the difference between pinned memory and player notes?**
-Pinned memory is injected into the GM's context every turn (subject to a token budget — avoid piling in irrelevant content). Player notes are for your reference only; the GM is not guaranteed to read them every turn.
+Pinned memory is injected as candidates up to `pinned_max` each turn, then trimmed by the token budget. Player notes are for your reference only; the GM is not guaranteed to read them every turn.
 
 **How many pinned memory entries should I add?**
-There is no hard limit, but each turn's injection has a token budget. When pinned memory is very large, lower-priority entries may be compressed under high-pressure turns. Keep only truly critical settings pinned; put the rest in player notes.
+There is a hard bucket cap, `pinned_max` (20 by default), plus a per-turn token budget. When pinned memory is very large, entries beyond the budget are trimmed. Keep only truly critical settings pinned; put the rest in player notes.
 
 **Can I delete or edit fact library entries?**
 No. The fact library is maintained automatically by the system in the background. The panel displays it as read-only; manual editing and deletion are not supported.

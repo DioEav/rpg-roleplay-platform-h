@@ -9,10 +9,11 @@ import { SetGroup, MSlider, Toggle, usePrefSave } from './shared.jsx';
 function MemorySection() {
   const { t } = useTranslation();
   const save = usePrefSave('memory');
-  // 初始值 = MemorySettings schema 默认(rpg/schemas/memory.py),与后端实际生效值一致
-  const [recallDepth, setRecallDepth] = useState(5);
+  // 初始值 = MemorySettings schema 默认(rpg/schemas/memory.py),与后端实际生效值一致。
+  // 本次记忆修复: recall_depth 5→8、token_budget 800→1600（旧预算装不下 2-3 条归档摘要）。
+  const [recallDepth, setRecallDepth] = useState(8);
   const [summaryWindow, setSummaryWindow] = useState(10);
-  const [tokenBudget, setTokenBudget] = useState(800);
+  const [tokenBudget, setTokenBudget] = useState(1600);
   const [autoArchive, setAutoArchive] = useState(50);
   const [pinnedMax, setPinnedMax] = useState(20);
   const [bucketPinned, setBucketPinned] = useState(true);

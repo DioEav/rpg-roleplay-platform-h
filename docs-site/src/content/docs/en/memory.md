@@ -15,19 +15,19 @@ Access: In-game right panel → Memory tab; or Platform Settings → Memory.
 
 Memory is organized into three buckets by type:
 
-- **Pinned bucket**: Facts you or the GM have manually pinned. Highest priority — always injected every turn. Use this for facts that must never be forgotten, such as "the protagonist has lost their left hand."
-- **World bucket**: Background tied to the world, locations, factions, and rules. The GM retrieves from this bucket by relevance — it is not fully injected every turn.
-- **Character bucket**: Relationships, NPC states, and character personalities. Also retrieved by relevance.
+- **Pinned bucket**: Facts you or the GM have manually pinned. Highest priority — injected as candidates up to the pinned cap (still trimmed by the token budget). Use this for facts that must never be forgotten, such as "the protagonist has lost their left hand."
+- **World bucket**: Main quest/objective, narrative facts, player notes, and archived summaries. Injected by recency window, not dumped in full.
+- **Character bucket**: Persistent character state such as abilities and resources. Injected by recency window.
 
-Each bucket can be toggled independently under Settings → Memory.
+Each bucket can be toggled independently under Settings → Memory. Disabling a bucket removes its contents from every prompt path.
 
 ### Retrieval and Injection
 
-Before the GM generates a reply each turn, the system retrieves the most relevant memory fragments for the current scene (retrieval) and injects them into the prompt (injection). Injected content is bounded by the per-turn memory token limit; content beyond that limit is truncated.
+Before the GM generates a reply each turn, the system takes the most recent N entries from each memory bucket (bounded by the token budget) and injects them into the prompt. True query-relevance recall is handled by the separate "relevant past" layer (`episodic_recall`, disabled by default); the buckets themselves are not semantic search.
 
 ### Facts Library
 
-After each GM turn, the Extractor automatically pulls important facts from the conversation and writes them to the facts library. The facts library requires no manual upkeep and participates in retrieval by relevance.
+After each GM turn, the Extractor automatically pulls important facts from the conversation and writes them to the facts library. The facts library requires no manual upkeep; injection takes the most recent N entries, and older facts are archived into compressed summaries.
 
 ### Relationship to the World Book
 
@@ -70,7 +70,7 @@ Platform Settings → Memory. You can tune retrieval depth, history summary wind
 Pinned memory is injected into the GM's context every turn (subject to the token quota — do not overfill it). Player notes are private; the GM is not guaranteed to read them each turn.
 
 **What happens when the pinned memory bucket is full?**
-The bucket has a cap (20 entries by default, adjustable in settings). When the cap is exceeded, the oldest pinned memory is moved to the facts library; it is no longer force-injected but can still be recalled when relevant.
+The bucket has a cap (20 entries by default, adjustable in settings). Once the cap is reached, new entries are rejected; delete an old entry first. They are not moved to the facts library automatically.
 
 **The GM keeps forgetting something. What should I do?**
 Pin that fact in the in-game memory panel. Once in the pinned bucket it is injected every turn. If it is still being forgotten, check whether the per-turn injection token limit is set too low, causing content to be truncated.

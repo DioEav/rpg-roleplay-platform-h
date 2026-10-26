@@ -66,29 +66,45 @@ def _state_schema_layer(state, chars: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
-def _fact_groups_layer(state) -> str:
-    """task 76：把记忆按 kind 分组渲染，让 LLM 视觉上明确区分
-    "原著事实" vs "本局已发生" vs "玩家硬约束"——codex §1+2 强调。
+_LEGACY_MEMORY_BUCKETS = frozenset({
+    "facts", "pinned", "notes", "abilities", "resources",
+})
 
-    数据源：state.memory.items（task 74 引入的结构化数组）。
-    回退：如果 items 为空（旧存档没积累新写入）就读 legacy memory.facts
-    作为 runtime_fact 显示，保证向后兼容。
+
+def _fact_groups_layer(state) -> str:
+    """task 76：结构化记忆补充层（本次记忆修复：单一归属）。
+
+    本次记忆修复之前本层把 memory.items 里所有 runtime_fact 都列一遍（最近 12 条、每条 80 字），
+    而 MemoryProvider 又从 legacy 桶列一遍、short_summary 再列一遍 —— 同一批 facts/pinned/
+    notes/abilities 在一个 prompt 里出现 2-3 次，既费 token 又让同一个字段以不同窗口/截断
+    出现在 GM 面前。
+
+    现在 MemoryProvider 是 legacy 桶（facts/pinned/notes/abilities/resources）的唯一注入源；
+    本层只保留**没有 legacy_bucket 的结构化条目**：
+      · canon_fact / user_constraint（当前由剧本/未来写入方使用）
+      · 其它直接 add_memory_item 写入、未挂 legacy 桶的 runtime_fact
+    以及排除 archived / 非 active 条目。legacy 桶条目直接跳过，避免重复与桶语义混淆。
     """
     memory = state.data.get("memory", {}) or {}
     items = memory.get("items", []) or []
-    # 按 kind 分桶（只取 active 状态）
     groups: dict[str, list[dict]] = {
         "canon_fact": [],
         "runtime_fact": [],
         "user_constraint": [],
     }
     for it in items:
+        if not isinstance(it, dict):
+            continue
         if it.get("status") and it.get("status") != "active":
             continue
         # 自动归档的旧条目排除出 GM 上下文(与 MemoryProvider 读 bucket 同口径),减少
         # 「事实库过时数据」漏进上下文。notes/pinned 已豁免自动归档(见 context_providers.
         # memory._maybe_auto_archive),玩家手记不会因此被滤掉。
         if it.get("archived"):
+            continue
+        # legacy 桶由 MemoryProvider 全权注入；本层列一遍只会造成重复与
+        # 「pinned/notes/abilities 被当成 runtime 事实」的语义混淆。
+        if str(it.get("legacy_bucket") or "") in _LEGACY_MEMORY_BUCKETS:
             continue
         k = it.get("kind")
         if k in groups:
@@ -99,11 +115,6 @@ def _fact_groups_layer(state) -> str:
     canon = groups["canon_fact"][:8]
     runtime = groups["runtime_fact"][:12]
     constraints = groups["user_constraint"][:6]
-    # 回退：items 没积累 runtime_fact，但旧 memory.facts 有 → 显示 facts
-    legacy_facts = []
-    if not runtime:
-        # facts 尾部 append → 「最近 10 条」取尾(与上方 items 分组按 turn 倒序同向)
-        legacy_facts = [f for f in (memory.get("facts") or []) if f][-10:]
 
     lines = []
     if canon:
@@ -112,7 +123,7 @@ def _fact_groups_layer(state) -> str:
             lines.append(f"- {it.get('text', '?')[:80]}")
         lines.append("")
     if runtime:
-        lines.append("## 本局已发生 (runtime) —— 玩家亲历，可叙事复述")
+        lines.append("## 本局已发生 (structured) —— 玩家亲历，可叙事复述")
         for it in runtime:
             meta = []
             if it.get("time_label"):
@@ -121,11 +132,6 @@ def _fact_groups_layer(state) -> str:
                 meta.append("、".join(it["characters"][:3]))
             meta_str = f"（{' · '.join(meta)}）" if meta else ""
             lines.append(f"- {it.get('text', '?')[:80]} {meta_str}")
-        lines.append("")
-    elif legacy_facts:
-        lines.append("## 本局已发生 (runtime, legacy) —— 旧存档迁移前数据")
-        for f in legacy_facts:
-            lines.append(f"- {f[:80]}")
         lines.append("")
     if constraints:
         lines.append("## 玩家硬约束 (user_constraint) —— 最高优先级，覆盖一切")

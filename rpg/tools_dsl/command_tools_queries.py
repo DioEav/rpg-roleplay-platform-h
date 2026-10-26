@@ -60,10 +60,19 @@ def _t_query_memory(state: Any, args: dict) -> str:
     kind = (args.get("kind") or "").strip() or None
     characters = args.get("characters") or []
     time_label = (args.get("time_label") or "").strip() or None
-    limit = int(args.get("limit") or 20)
+    limit = max(1, min(int(args.get("limit") or 20), 100))
     items = (state.data.get("memory") or {}).get("items") or []
     out = []
     for it in items[-200:]:
+        if not isinstance(it, dict):
+            continue
+        # 本次记忆修复: 只返回 active 且未归档的记忆。旧实现不过滤 status/archived，
+        # GM 查 hypothesis 时会拿到已 superseded/rejected 的旧推测；查 runtime_fact
+        # 时会拿到已归档事实，容易把废案重新当事实使用。
+        if it.get("archived"):
+            continue
+        if (it.get("status") or "active") != "active":
+            continue
         if kind and it.get("kind") != kind:
             continue
         if characters:
@@ -79,6 +88,10 @@ def _t_query_memory(state: Any, args: dict) -> str:
             "turn": it.get("turn"),
             "time_label": it.get("time_label"),
             "characters": it.get("characters"),
+            # legacy_bucket 让 GM 知道这条属于 facts/pinned/notes/abilities/resources
+            # 哪个桶；source 用于区分 GM 写入 / 迁移 / 确认推测。
+            "legacy_bucket": it.get("legacy_bucket"),
+            "source": it.get("source"),
         })
         if len(out) >= limit:
             break

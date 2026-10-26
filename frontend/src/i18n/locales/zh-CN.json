@@ -581,7 +581,7 @@
       "title_recall": "记忆 · 召回行为",
       "title_buckets": "记忆 · 记忆桶配置",
       "recall_depth": "默认召回深度",
-      "recall_depth_desc": "每个记忆桶最多注入最近 N 条(2–20)。调大 GM 记得更全，token 消耗更高。",
+      "recall_depth_desc": "每个非固定记忆桶最多注入最近 N 条(2–20)；固定记忆按 pinned_max 候选、再由 token 上限裁剪。调大 GM 记得更全，token 消耗更高。",
       "summary_window": "归档扫描周期",
       "summary_window_desc": "每 N 个回合触发一次旧记忆归档清查(3–20)。",
       "token_budget": "每轮注入记忆 token 上限",
@@ -5210,7 +5210,7 @@
       "memory": {
         "recall_behavior": "召回行为",
         "recall_depth_label": "召回深度 · {{n}}",
-        "recall_depth_desc": "每个记忆桶最多注入最近 N 条（2–20）",
+        "recall_depth_desc": "每个非固定记忆桶最多注入最近 N 条（2–20）；固定记忆另按 pinned_max 候选",
         "summary_window_label": "归档扫描周期 · {{n}}",
         "summary_window_desc": "每 N 个回合触发一次旧记忆归档清查（3–20）",
         "token_budget_label": "token 预算 · {{n}}",

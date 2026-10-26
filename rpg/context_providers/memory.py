@@ -11,9 +11,23 @@ A6 新增：消费 MemorySettings 配置
   - auto_archive_after_turns / summary_window: 由 _maybe_auto_archive() 触发归档
 
 注入顺序（预算装填即优先级，靠前者先占预算）：
-  优先级提示 → 固定记忆(pinned) → 主线/目标 → 历史概要(summaries) → 事实 → 笔记
-  → 能力 → 资源 → 未确认推测。pinned 置顶：玩家显式固定的权威记忆不允许被
-  高频累积的叙事事实挤出预算（此前 pinned 排在事实之后，事实一多就被截没）。
+  优先级提示 → 固定记忆(pinned) → 主线/目标 → 笔记(notes) → 事实(facts)
+  → 历史概要(summaries) → 能力 → 资源。
+
+本次记忆修复：记忆归属收敛:
+  · MemoryProvider 是 facts / pinned / notes / abilities / resources / summaries /
+    main_quest / current_objective 的**唯一注入源**。state.short_summary() 在 prompt
+    路径用 include_memory=False 让位；_fact_groups_layer 只保留没有 legacy_bucket 的
+    结构化补充项（canon_fact / user_constraint / 未挂桶的 runtime_fact），不再把
+    同一批记忆列第三遍。
+  · pinned 不再受 recall_depth 限制: 固定记忆是玩家显式钉的权威输入，候选上限用
+    pinned_max（默认 20），由 token_budget 做最终裁剪。旧实现 pinned[-recall_depth:]
+    让第 6 条以后的固定记忆永远进不了上下文（面板却显示 20 条）。
+  · 每个桶用 continue 而不是 break: 一条装不下的长摘要只跳过它自己，不能把后面的
+    facts / notes / abilities 全部饿死。旧默认 800 token 下，2 条 600 字摘要就能触发
+    这个饿死链。
+  · 未确认推测从本层移除: context_engine.layers._active_hypotheses_layer 已是唯一
+    注入源（带 id 和 confirm/reject 指引），这里不再重复一份。
 """
 from __future__ import annotations
 
@@ -97,7 +111,14 @@ def _maybe_auto_archive(state, ms) -> None:
             # 只有 facts(叙事流水,高频累积、有上下文预算压力)才自动归档。
             if item.get("legacy_bucket") in ("notes", "pinned", "abilities", "resources"):
                 continue
-            item_turn = int(item.get("turn", 0))
+            # 旧存档 backfill 的 items 没有可信 turn（统一 turn=0，见
+            # GameState._migrate）。若让它们参与 cutoff 比较，第一次归档扫描会把
+            # 全部旧 facts 一次性清出 bucket，只换来一条 ≤600 字摘要，细节直接丢失。
+            # 这里跳过无可信时间的条目：它们继续留在 facts/items 与 KB 里，
+            # MemoryProvider 的最近窗口不会注入它们，但 query_memory / 面板仍可查。
+            item_turn = int(item.get("turn") or 0)
+            if item_turn <= 0:
+                continue
             if item_turn < cutoff_turn and item.get("status") != "archived":
                 item["archived"] = True
                 changed = True
@@ -252,53 +273,49 @@ class MemoryProvider(ContextProvider):
 
         # ── bucket_pinned_enabled: pinned ─────────────────────────────────────
         # 固定记忆置顶注入:预算装填即优先级,玩家显式固定的权威记忆必须先于高频累积的
-        # 叙事事实占预算 —— 旧顺序 pinned 排在事实之后,事实一多就被截断挤没。
-        # 各桶取尾 [-depth:]:写入端是尾部 append(state.add_memory / apply_ops list 分支),
-        # 「最近 depth 条」必须取尾 —— 旧实现取头导致桶超深后新增条目永久不可见(已修)。
+        # 叙事事实占预算。候选取 [-pinned_max:]，不再跟 recall_depth 走：
+        # 旧实现 pinned[-recall_depth:]（默认 5）让第 6 条以后的固定记忆永远不可见，
+        # 与 UI 的 pinned_max=20 直接矛盾。最终体积由 token_budget 裁剪。
         if ms.bucket_pinned_enabled:
-            for item in (m.get("pinned") or [])[-depth:]:
+            pinned_cap = max(0, int(getattr(ms, "pinned_max", 0) or 0))
+            for item in (m.get("pinned") or [])[-pinned_cap:] if pinned_cap else ():
                 if not _add_line(f"固定记忆：{item}"):
-                    break
+                    # continue 而非 break:本条装不下只跳过它，不要让后面较短的
+                    # pinned / facts / notes 全部被饿死（旧 break 的连锁截断）。
+                    continue
 
-        # ── bucket_world_enabled: main_quest / current_objective / summaries / facts / notes ─
+        # ── bucket_world_enabled: main_quest / current_objective / notes / facts / summaries ─
         if ms.bucket_world_enabled:
             if m.get("main_quest"):
                 _add_line(f"主线：{m['main_quest']}")
             if m.get("current_objective"):
                 _add_line(f"当前目标：{m['current_objective']}")
-            # 历史概要:归档事实的压缩版(_maybe_auto_archive 生成)。排在原始事实之前 ——
-            # 它代表「更早但已压缩」的历史,比最近的原始事实更稀缺,丢了无法从别处找回。
-            for item in (m.get("summaries") or [])[-depth:]:
-                if not _add_line(f"概要：{item}"):
-                    break
-            for item in (m.get("facts") or [])[-depth:]:
-                if not _add_line(f"事实：{item}"):
-                    break
+            # notes 提到 facts 之前:记忆优先级提示声称「笔记/固定记忆是玩家手写、权威且最新」,
+            # 但旧顺序把 notes 放在 facts 之后；预算一满，提示还在、笔记已经进不来。
             for item in (m.get("notes") or [])[-depth:]:
                 if not _add_line(f"笔记：{item}"):
-                    break
+                    continue
+            # 最近 facts 先于压缩 summaries:facts 是 GM 此刻最需要的近期事实；
+            # summaries 是更早的压缩历史，预算有余才继续装（不再让它先吃光预算）。
+            for item in (m.get("facts") or [])[-depth:]:
+                if not _add_line(f"事实：{item}"):
+                    continue
+            for item in (m.get("summaries") or [])[-depth:]:
+                if not _add_line(f"概要：{item}"):
+                    continue
 
         # ── bucket_character_enabled: abilities / resources ───────────────────
         if ms.bucket_character_enabled:
             for item in (m.get("abilities") or [])[-depth:]:
                 if not _add_line(f"能力：{item}"):
-                    break
+                    continue
             for item in (m.get("resources") or [])[-depth:]:
                 if not _add_line(f"资源：{item}"):
-                    break
+                    continue
 
-        # ── hypotheses（归属 world 类，随 bucket_world_enabled 开关）────────────
-        if ms.bucket_world_enabled:
-            active_hypos = [
-                it for it in (m.get("items") or [])
-                if isinstance(it, dict)
-                and it.get("kind") == "hypothesis"
-                and it.get("status") == "active"
-                and not it.get("archived")
-            ]
-            for h in active_hypos[:depth]:
-                if not _add_line(f"未确认推测：{h.get('text', '')}"):
-                    break
+        # 未确认推测不在这里注入：context_engine.layers._active_hypotheses_layer 是唯一
+        # 注入源（带 id + confirm/reject 指令）。旧实现两份都发，同一批推测在一个 prompt
+        # 里出现两次，且这里的版本没有 id，GM 想确认也无法引用。
 
         text = "\n".join(lines) or "（暂无长期记忆）"
         # 面板观测专用:把本轮记忆层实际注入的原文单独落字段(memory.last_memory_injection,
@@ -325,6 +342,7 @@ class MemoryProvider(ContextProvider):
                 "token_used": token_used,
                 "token_budget": budget,
                 "recall_depth": depth,
+                "pinned_max": ms.pinned_max,
                 "bucket_pinned": ms.bucket_pinned_enabled,
                 "bucket_world": ms.bucket_world_enabled,
                 "bucket_character": ms.bucket_character_enabled,
