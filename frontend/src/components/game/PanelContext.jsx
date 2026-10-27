@@ -230,7 +230,9 @@ function PanelContext({ state }) {
   // "Cannot read properties of undefined (reading 'map')"，右侧"上下文"tab 整 panel 崩。
   // 全部兜底到安全默认值。
   const memory = (state && state.memory) || {};
-  const lastCtx = memory.last_context || {};
+  const lastCtxRaw = memory.last_context || {};
+  // 兼容两种落法：直接是 debug，或 {debug: {...}}（与 PanelDebug 同口径）。
+  const lastCtx = lastCtxRaw.debug || lastCtxRaw;
   // tokens_used / retrieval_chunks 是后端从不写入的死字段(恒 0)。改读真实值:
   // estimated_tokens 由 context_engine 每轮写入;层数取 layers 数组长度。
   const tokensUsed = lastCtx.estimated_tokens || 0;
@@ -244,6 +246,23 @@ function PanelContext({ state }) {
     {};
   const auditLog = (state && state.permissions && Array.isArray(state.permissions.audit_log))
     ? state.permissions.audit_log : [];
+  // 本次展示增强：memory.last_memory_injection 是记忆层真正注入的文本；
+  // last_retrieval 是小说检索层，两者不能混。这里把记忆注入做成“摘要 + 可展开”。
+  const lastMemInjection = String(memory.last_memory_injection || "");
+  const _memPrefixes = [
+    "固定记忆：", "主线：", "当前目标：", "笔记：", "事实：",
+    "相关记忆：", "相关笔记：", "概要：", "篇章：", "能力：", "资源：",
+    "【记忆优先级",
+  ];
+  const memLines = lastMemInjection
+    ? lastMemInjection.split("\n").filter((l) => _memPrefixes.some((p) => l.startsWith(p)))
+    : [];
+  const contributions = Array.isArray(lastCtx.contributions) ? lastCtx.contributions : [];
+  const memoryContrib = contributions.find((c) => c && c.provider_id === "memory") || {};
+  const memDebug = (memoryContrib && memoryContrib.debug) || {};
+  const memSections = Array.isArray(memDebug.sections) ? memDebug.sections : [];
+  const memTokenUsed = memDebug.token_used || Math.ceil(lastMemInjection.length / 2);
+  const memTokenBudget = memDebug.token_budget || 0;
   return (
     <div className="gp-stack">
       <div className="gp-section">
@@ -262,6 +281,63 @@ function PanelContext({ state }) {
             <span className="muted-2 mono" style={{fontSize: 11}}>—</span>
           </li>
         </ul>
+      </div>
+      {/* 本次展示增强：记忆层实际注入（摘要 + 展开全文 + 分桶条形图）。
+          注意这不是 last_retrieval（小说检索层），而是 MemoryProvider 真正写进
+          prompt 的「长期记忆」层文本。 */}
+      <div className="gp-section">
+        <div className="section-head">
+          <h3>{t('game.context.memory_injection', { defaultValue: '记忆层注入' })}</h3>
+          <span className="pill mono">
+            {t('game.context.memory_injection_meta', {
+              defaultValue: '{{lines}} 行 · 约 {{tokens}} token',
+              lines: memLines.length,
+              tokens: memTokenUsed,
+            })}
+          </span>
+        </div>
+        {memTokenBudget > 0 && (
+          <div className="gp-row">
+            <span className="gp-label">{t('game.context.memory_budget', { defaultValue: 'token 预算' })}</span>
+            <span className="mono">{memTokenUsed} / {memTokenBudget}
+              {memDebug.token_estimate_factor != null && memDebug.token_estimate_factor !== 1
+                ? ` ×${memDebug.token_estimate_factor}` : ""}
+            </span>
+          </div>
+        )}
+        {memSections.length > 0 && (
+          <div style={{margin: "6px 0"}}>
+            {memSections.map((s) => {
+              const pct = s.available > 0 ? Math.round(100 * (s.selected || 0) / s.available) : 0;
+              return (
+                <div key={s.id} style={{marginBottom: 4}}>
+                  <div style={{display: "flex", justifyContent: "space-between", fontSize: 11}}>
+                    <span className="mono">{s.id}</span>
+                    <span className="muted-2">
+                      {s.selected}/{s.available} · {s.tokens || 0}t
+                      {s.dropped ? ` · ↓${s.dropped}` : ""}
+                    </span>
+                  </div>
+                  <div style={{height: 4, background: "var(--line, #333)", borderRadius: 2, overflow: "hidden"}}>
+                    <div style={{width: `${pct}%`, height: "100%", background: "var(--accent, #6a9)"}} />
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+        {lastMemInjection ? (
+          <details>
+            <summary className="muted-2" style={{cursor: "pointer", fontSize: 12}}>
+              {t('game.context.memory_injection_expand', { defaultValue: '展开完整注入文本' })}
+            </summary>
+            <pre className="gp-quote mono" style={{maxHeight: 280, overflow: "auto", whiteSpace: "pre-wrap", marginTop: 6}}>
+              {lastMemInjection}
+            </pre>
+          </details>
+        ) : (
+          <div className="empty-line">{t('game.context.memory_injection_empty', { defaultValue: '本轮尚无记忆层注入记录' })}</div>
+        )}
       </div>
       {/* task 86：本轮 Curator 决策（DemandLedger 可视化） */}
       <DemandLedgerPanel curator_plan={curatorPlan} audit_log={auditLog} />

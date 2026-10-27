@@ -246,6 +246,44 @@ async def api_memory_history(
     })
 
 
+@router.get("/api/memory/known-events/history")
+async def api_memory_known_events_history(
+    query: str = "",
+    offset: int = Query(0, ge=0),
+    limit: int = Query(50, ge=1, le=200),
+    api_user: dict[str, Any] | None = Depends(get_current_user),
+) -> JSONResponse:
+    """世界事件完整历史（本次展示增强）：state 只留最近 100 条，这里查 KB kevtc。"""
+    from app import _ensure_loaded
+
+    state = _ensure_loaded(api_user)
+    sid = int((state.data or {}).get("_active_save_id") or 0)
+    items: list[str] = []
+    total = 0
+    if sid:
+        try:
+            from kb.save_kb import count_known_events_history, search_known_events_history
+            from platform_app.db import connect
+            with connect() as db:
+                row = db.execute(
+                    "select active_commit_id from game_saves where id=%s", (sid,)
+                ).fetchone()
+            commit = int((row or {}).get("active_commit_id") or 0)
+            items = search_known_events_history(
+                sid, commit, query, limit=int(limit), offset=int(offset))
+            total = count_known_events_history(sid, commit, query)
+        except Exception:
+            items, total = [], 0
+    return json_response({
+        "ok": True,
+        "items": items,
+        "offset": int(offset),
+        "limit": int(limit),
+        "total": total,
+        "has_more": int(offset) + len(items) < total,
+    })
+
+
 @router.get("/api/memory/settings")
 async def api_memory_settings_get(
     api_user: dict[str, Any] | None = Depends(get_current_user),

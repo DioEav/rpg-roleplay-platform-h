@@ -481,6 +481,13 @@ function NovelStatusProfile({ state }) {
         <ol className="gp-events">
           {knownEvents.map((e, i) => (<li key={i}>{e}</li>))}
         </ol>
+        {knownEvents.length >= 100 && (
+          <p className="muted-2" style={{fontSize: 11, margin: "6px 0 0"}}>
+            {t('game.status.known_events_capped', {
+              defaultValue: '状态只保留最近 100 条；更早事件见世界书面板完整历史。',
+            })}
+          </p>
+        )}
       </div>
     </div>
   );

@@ -221,6 +221,8 @@ def test_kb_materialize_splits_archived_facts(monkeypatch):
                  "metadata": {"source": "memory.archived_facts_cold"}, "seq": 4, "born_commit": 1},
                 {"logical_key": "kevt:0", "summary": "已知事件",
                  "metadata": {"source": "world.known_events"}, "seq": 3, "born_commit": 1},
+                {"logical_key": "kevtc:h1", "summary": "更早的冷事件",
+                 "metadata": {"source": "world.known_events_cold"}, "seq": 5, "born_commit": 1},
             ]
         return []
 
@@ -241,6 +243,7 @@ def test_kb_materialize_splits_archived_facts(monkeypatch):
     # afactc 是冷存储，不应投影回 state，也不应污染 known_events。
     assert "更早的冷归档事实" not in state["memory"]["archived_facts"]
     assert state["world"]["known_events"] == ["已知事件"]
+    assert "更早的冷事件" not in state["world"]["known_events"]
 
 
 def test_hashed_cold_import_does_not_retire_orphans(monkeypatch):
@@ -304,6 +307,23 @@ def test_cold_filter_respects_deleted_hashes():
     rows = [{"logical_key": f"afactc:h:{h}", "summary": text,
              "metadata": {"source": "memory.archived_facts_cold"}, "seq": 1}]
     assert _filter_cold_rows(rows, "", set(), 10, {h}) == []
+
+
+def test_known_events_history_filter_matches_and_dedupes():
+    from kb.save_kb import _filter_kevt_rows
+
+    rows = [
+        {"logical_key": "kevtc:h1", "summary": "旧港码头发生火灾",
+         "metadata": {"source": "world.known_events_cold"}, "seq": 1},
+        {"logical_key": "kevtc:h2", "summary": "旧港码头发生火灾",
+         "metadata": {"source": "world.known_events_cold"}, "seq": 2},
+        {"logical_key": "kevtc:h3", "summary": "王城举行庆典",
+         "metadata": {"source": "world.known_events_cold"}, "seq": 3},
+        {"logical_key": "kevt:0", "summary": "热事件不应走冷过滤",
+         "metadata": {"source": "world.known_events"}, "seq": 4},
+    ]
+    out = _filter_kevt_rows(rows, "码头 火灾", 10)
+    assert out == ["旧港码头发生火灾"]
 
 
 def test_cold_archived_filter_matches_query_and_dedupes():

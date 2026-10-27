@@ -71,6 +71,24 @@ function PanelDebug({ state }) {
                     </span>
                   </div>
                 )}
+                {memSections.length > 0 && (
+                  <div style={{padding: "2px 0 6px"}}>
+                    {memSections.map((s) => {
+                      const pct = s.available > 0 ? Math.round(100 * (s.selected || 0) / s.available) : 0;
+                      return (
+                        <div key={`bar-${s.id}`} style={{marginBottom: 3}}>
+                          <div style={{display: "flex", justifyContent: "space-between", fontSize: 10}}>
+                            <span className="mono">{s.id}</span>
+                            <span className="muted-2">{pct}% · {s.tokens || 0}t</span>
+                          </div>
+                          <div style={{height: 4, background: "var(--line, #333)", borderRadius: 2, overflow: "hidden"}}>
+                            <div style={{width: `${pct}%`, height: "100%", background: "var(--accent, #6a9)"}} />
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
                 {memDebug.token_budget != null && (
                   <div className="gp-row">
                     <span className="gp-label">{t('game.debug.memory_budget', { defaultValue: '记忆 token' })}</span>

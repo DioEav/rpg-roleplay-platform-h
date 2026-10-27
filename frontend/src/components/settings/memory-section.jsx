@@ -21,6 +21,9 @@ function MemorySection() {
   const [summaryWindow, setSummaryWindow] = useStatePL(10);
   const [tokenBudget, setTokenBudget] = useStatePL(1600);
   const [autoArchiveAfter, setAutoArchiveAfter] = useStatePL(50);
+  // 本次修复：新增两个全局参数，和 per-save 面板保持一致。
+  const [tokenEstimateFactor, setTokenEstimateFactor] = useStatePL(1.0);
+  const [factsSoftLimit, setFactsSoftLimit] = useStatePL(80);
 
   // ── 记忆桶配置字段 ──
   const [pinnedMax, setPinnedMax] = useStatePL(20);
@@ -54,6 +57,9 @@ function MemorySection() {
         // 新字段 — 无旧 key
         if (p["memory.token_budget"] !== undefined) setTokenBudget(Number(p["memory.token_budget"]));
         if (p["memory.auto_archive_after_turns"] !== undefined) setAutoArchiveAfter(Number(p["memory.auto_archive_after_turns"]));
+        // 本次修复：全局也读取/保存两个新参数。
+        if (p["memory.token_estimate_factor"] !== undefined) setTokenEstimateFactor(Number(p["memory.token_estimate_factor"]));
+        if (p["memory.facts_soft_limit"] !== undefined) setFactsSoftLimit(Number(p["memory.facts_soft_limit"]));
         if (typeof p["memory.bucket_pinned_enabled"] === "boolean") setBucketPinnedEnabled(p["memory.bucket_pinned_enabled"]);
         if (typeof p["memory.bucket_world_enabled"] === "boolean") setBucketWorldEnabled(p["memory.bucket_world_enabled"]);
         if (typeof p["memory.bucket_character_enabled"] === "boolean") setBucketCharacterEnabled(p["memory.bucket_character_enabled"]);
@@ -69,27 +75,27 @@ function MemorySection() {
       <SetGroup title={t('settings.memory.title_recall')}>
         <SetRow label={t('settings.memory.recall_depth')} description={t('settings.memory.recall_depth_desc')}>
           <div style={{display: "flex", alignItems: "center", gap: 8}}>
-            <input type="range" min={2} max={20} step={1} value={recallDepth}
+            <input type="range" min={1} max={20} step={1} value={recallDepth}
               onChange={(e) => setRecallDepth(Number(e.target.value))}
-              onMouseUp={(e) => { const n = Number(e.target.value); if (n >= 2 && n <= 20) save("recall_depth", n); }}
-              onTouchEnd={(e) => { const n = Number(e.target.value); if (n >= 2 && n <= 20) save("recall_depth", n); }}
+              onMouseUp={(e) => { const n = Number(e.target.value); if (n >= 1 && n <= 20) save("recall_depth", n); }}
+              onTouchEnd={(e) => { const n = Number(e.target.value); if (n >= 1 && n <= 20) save("recall_depth", n); }}
               style={{flex: 1, minWidth: 120}} />
-            <input type="number" min={2} max={20} step={1} value={recallDepth}
+            <input type="number" min={1} max={20} step={1} value={recallDepth}
               onChange={(e) => setRecallDepth(Number(e.target.value))}
-              onBlur={(e) => { const n = Number(e.target.value); if (n >= 2 && n <= 20) save("recall_depth", n); }}
+              onBlur={(e) => { const n = Number(e.target.value); if (n >= 1 && n <= 20) save("recall_depth", n); }}
               className="mono" style={{width: 70, textAlign: "right"}} />
           </div>
         </SetRow>
         <SetRow label={t('settings.memory.summary_window')} description={t('settings.memory.summary_window_desc')}>
           <div style={{display: "flex", alignItems: "center", gap: 8}}>
-            <input type="range" min={3} max={20} step={1} value={summaryWindow}
+            <input type="range" min={1} max={50} step={1} value={summaryWindow}
               onChange={(e) => setSummaryWindow(Number(e.target.value))}
-              onMouseUp={(e) => { const n = Number(e.target.value); if (n >= 3 && n <= 20) save("summary_window", n); }}
-              onTouchEnd={(e) => { const n = Number(e.target.value); if (n >= 3 && n <= 20) save("summary_window", n); }}
+              onMouseUp={(e) => { const n = Number(e.target.value); if (n >= 1 && n <= 50) save("summary_window", n); }}
+              onTouchEnd={(e) => { const n = Number(e.target.value); if (n >= 1 && n <= 50) save("summary_window", n); }}
               style={{flex: 1, minWidth: 120}} />
-            <input type="number" min={3} max={20} step={1} value={summaryWindow}
+            <input type="number" min={1} max={50} step={1} value={summaryWindow}
               onChange={(e) => setSummaryWindow(Number(e.target.value))}
-              onBlur={(e) => { const n = Number(e.target.value); if (n >= 3 && n <= 20) save("summary_window", n); }}
+              onBlur={(e) => { const n = Number(e.target.value); if (n >= 1 && n <= 50) save("summary_window", n); }}
               className="mono" style={{width: 70, textAlign: "right"}} />
           </div>
         </SetRow>
@@ -116,6 +122,34 @@ function MemorySection() {
             <input type="number" min={10} max={200} step={5} value={autoArchiveAfter}
               onChange={(e) => setAutoArchiveAfter(Number(e.target.value))}
               onBlur={(e) => { const n = Number(e.target.value); if (n >= 10 && n <= 200) save("auto_archive_after_turns", n); }}
+              className="mono" style={{width: 70, textAlign: "right"}} />
+          </div>
+        </SetRow>
+        {/* 本次修复：记忆相关层 token 估算系数；默认 1.0 = 旧 chars//2 行为。 */}
+        <SetRow label={t('settings.memory.token_estimate_factor')} description={t('settings.memory.token_estimate_factor_desc')}>
+          <div style={{display: "flex", alignItems: "center", gap: 8}}>
+            <input type="range" min={0.5} max={3} step={0.1} value={tokenEstimateFactor}
+              onChange={(e) => setTokenEstimateFactor(Number(e.target.value))}
+              onMouseUp={(e) => { const n = Number(e.target.value); if (n >= 0.5 && n <= 3) save("token_estimate_factor", n); }}
+              onTouchEnd={(e) => { const n = Number(e.target.value); if (n >= 0.5 && n <= 3) save("token_estimate_factor", n); }}
+              style={{flex: 1, minWidth: 120}} />
+            <input type="number" min={0.5} max={3} step={0.1} value={tokenEstimateFactor}
+              onChange={(e) => setTokenEstimateFactor(Number(e.target.value))}
+              onBlur={(e) => { const n = Number(e.target.value); if (n >= 0.5 && n <= 3) save("token_estimate_factor", n); }}
+              className="mono" style={{width: 70, textAlign: "right"}} />
+          </div>
+        </SetRow>
+        {/* 本次修复：active facts 压力归档软上限。 */}
+        <SetRow label={t('settings.memory.facts_soft_limit')} description={t('settings.memory.facts_soft_limit_desc')}>
+          <div style={{display: "flex", alignItems: "center", gap: 8}}>
+            <input type="range" min={20} max={500} step={10} value={factsSoftLimit}
+              onChange={(e) => setFactsSoftLimit(Number(e.target.value))}
+              onMouseUp={(e) => { const n = Number(e.target.value); if (n >= 20 && n <= 500) save("facts_soft_limit", n); }}
+              onTouchEnd={(e) => { const n = Number(e.target.value); if (n >= 20 && n <= 500) save("facts_soft_limit", n); }}
+              style={{flex: 1, minWidth: 120}} />
+            <input type="number" min={20} max={500} step={10} value={factsSoftLimit}
+              onChange={(e) => setFactsSoftLimit(Number(e.target.value))}
+              onBlur={(e) => { const n = Number(e.target.value); if (n >= 20 && n <= 500) save("facts_soft_limit", n); }}
               className="mono" style={{width: 70, textAlign: "right"}} />
           </div>
         </SetRow>

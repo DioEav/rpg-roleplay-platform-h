@@ -115,6 +115,11 @@ def import_state(db, save_id: int, commit_id: int, state_data: dict) -> dict[str
                                        keep_orphans=True)
         n_evt += _import_events_hashed(db, save_id, commit_id, "kevt", _kevts,
                                        "world.known_events", _story_time, cur_evt)
+        # 世界事件完整历史（本次展示增强）：state 只保留最近 100 条，kevtc 永久保留，
+        # 供世界书面板“查更早事件”使用；不因 state 裁剪退役。
+        n_evt += _import_events_hashed(db, save_id, commit_id, "kevtc", _kevts,
+                                       "world.known_events_cold", _story_time, cur_evt,
+                                       keep_orphans=True)
     else:
         # legacy(位置键):去重保序(同一文本绝不占多个 fact:{i})。桶收缩/重排后高 index 的
         # 旧 fact:{i} 会变孤儿,不退役就被 materialize 重复读出 → 「事实库重复条目」累积根因。
@@ -147,6 +152,9 @@ def import_state(db, save_id: int, commit_id: int, state_data: dict) -> dict[str
             live_repo.record_event(db, save_id, commit_id, lk, summary=summ,
                                    story_time=_story_time, metadata={"source": "world.known_events"})
             n_evt += 1
+        n_evt += _import_events_hashed(db, save_id, commit_id, "kevtc", _kevts,
+                                       "world.known_events_cold", _story_time, cur_evt,
+                                       keep_orphans=True)
         # 退役孤儿 index(桶变短/去重后 index 超界的旧 fact:/kevt: 行)。哈希键行(flag 曾开后
         # 关=回滚)也一并退役:legacy 位置键此刻已重建全量,不清会被 materialize 按文本去重
         # 掩盖但行残留 → 回滚自愈,flag 语义才是真逃生阀。
@@ -309,6 +317,9 @@ def materialize(db, save_id: int, commit_id: int) -> dict[str, Any]:
         elif src == "memory.archived_facts_cold" or e["logical_key"].startswith("afactc:"):
             # 冷存储只供 query_memory 回退检索，不投影回 state（否则 state 会重新
             # 无界增长，等于把刚裁掉的历史又装回来）。
+            continue
+        elif src == "world.known_events_cold" or e["logical_key"].startswith("kevtc:"):
+            # 世界事件完整历史同理：只供世界书面板按需查询，不投影回 state。
             continue
         elif summ not in _seen_k:
             _seen_k.add(summ)
@@ -538,6 +549,116 @@ def count_archived_cold(save_id: int, commit_id: int) -> int:
                 """,
                 {"commit": int(commit_id), "save": int(save_id)},
             ).fetchone()
+        return int((row or {}).get("n") or 0)
+    except Exception:
+        return 0
+
+
+def _filter_kevt_rows(rows: list[dict], query: str, limit: int) -> list[str]:
+    """纯函数：从 kevtc 行里筛出匹配的世界事件（新→旧，按文本去重）。"""
+    out: list[str] = []
+    seen: set[str] = set()
+    for r in sorted(rows or [], key=lambda x: int(x.get("seq") or 0), reverse=True):
+        lk = str((r or {}).get("logical_key") or "")
+        src = ((r or {}).get("metadata") or {}).get("source")
+        if not (lk.startswith("kevtc:") or src == "world.known_events_cold"):
+            continue
+        text = str((r or {}).get("summary") or "").strip()
+        if not text or text in seen:
+            continue
+        if not _cold_text_match(text, query):
+            continue
+        seen.add(text)
+        out.append(text)
+        if len(out) >= max(1, int(limit)):
+            break
+    return out
+
+
+def search_known_events_history(save_id: int, commit_id: int, query: str = "", *,
+                                limit: int = 50, offset: int = 0) -> list[str]:
+    """检索世界事件完整历史（本次展示增强）。
+
+    state 的 world.known_events 只保留最近 100 条；kevtc 永久保存所有曾进入
+    state 的事件，供世界书面板分页查看。SQL 按 save+谱系+kevtc 前缀下推；
+    不支持时回退 _newest_visible。
+    """
+    if not save_id or not commit_id:
+        return []
+    tokens = [t for t in str(query or "").split() if t][:4]
+    params: dict[str, Any] = {
+        "commit": int(commit_id), "save": int(save_id),
+        "limit": max(1, min(int(limit), 200)),
+        "offset": max(0, int(offset)),
+    }
+    extra = ""
+    for i, tok in enumerate(tokens):
+        params[f"q{i}"] = f"%{tok}%"
+        extra += f" and summary ilike %(q{i})s"
+    try:
+        from kb.live_repo import _ANCESTRY
+        from platform_app.db import connect, init_db
+        init_db()
+        with connect() as db:
+            rows = db.execute(_ANCESTRY + f"""
+                , live as (
+                    select distinct on (summary) logical_key, summary, metadata, seq
+                    from kb_events
+                    where save_id = %(save)s
+                      and born_commit in (select cid from ancestry)
+                      and retired_at_commit is null
+                      and logical_key like 'kevtc:%%'
+                      and coalesce(summary, '') <> ''
+                      {extra}
+                    order by summary, seq desc
+                )
+                select logical_key, summary, metadata, seq
+                from live
+                order by seq desc
+                limit %(limit)s offset %(offset)s
+            """, params).fetchall() or []
+        return _filter_kevt_rows([dict(r) for r in rows], query, limit)
+    except Exception:
+        try:
+            from kb import live_repo
+            from platform_app.db import connect, init_db
+            init_db()
+            with connect() as db:
+                rows = live_repo._newest_visible(
+                    db, "kb_events", int(save_id), int(commit_id),
+                    ("logical_key", "summary", "metadata", "seq"),
+                )
+            all_hits = _filter_kevt_rows(list(rows or []), query, 10000)
+            return all_hits[offset: offset + max(1, int(limit))]
+        except Exception:
+            return []
+
+
+def count_known_events_history(save_id: int, commit_id: int, query: str = "") -> int:
+    """世界事件完整历史条数（按 summary 去重）。"""
+    if not save_id or not commit_id:
+        return 0
+    tokens = [t for t in str(query or "").split() if t][:4]
+    params: dict[str, Any] = {"commit": int(commit_id), "save": int(save_id)}
+    extra = ""
+    for i, tok in enumerate(tokens):
+        params[f"q{i}"] = f"%{tok}%"
+        extra += f" and summary ilike %(q{i})s"
+    try:
+        from kb.live_repo import _ANCESTRY
+        from platform_app.db import connect, init_db
+        init_db()
+        with connect() as db:
+            row = db.execute(_ANCESTRY + f"""
+                select count(distinct summary) as n
+                from kb_events
+                where save_id = %(save)s
+                  and born_commit in (select cid from ancestry)
+                  and retired_at_commit is null
+                  and logical_key like 'kevtc:%%'
+                  and coalesce(summary, '') <> ''
+                  {extra}
+            """, params).fetchone()
         return int((row or {}).get("n") or 0)
     except Exception:
         return 0

@@ -584,24 +584,28 @@
     "memory": {
       "title_recall": "记忆 · 召回行为",
       "title_buckets": "记忆 · 记忆桶配置",
-      "recall_depth": "默认召回深度",
-      "recall_depth_desc": "每个非固定记忆桶最多注入最近 N 条(2–20)；固定记忆按 pinned_max 候选、再由 token 上限裁剪。调大 GM 记得更全，token 消耗更高。",
-      "summary_window": "归档扫描周期",
-      "summary_window_desc": "每 N 个回合触发一次旧记忆归档清查(3–20)。",
+      "recall_depth": "默认召回窗口",
+      "recall_depth_desc": "候选窗口基准（1–20）：facts=max(24, N×8) 上限 64；摘要=max(12, N×4) 上限 50；笔记/能力/资源=max(40, N×12) 上限 100。最终注入量仍由 token 上限裁剪。",
+      "summary_window": "摘要批量周期",
+      "summary_window_desc": "每 N 回合或摘要 buffer 满 20 条时批量生成归档摘要（1–50）。归档检查本身每回合都会做，不再依赖此周期。",
       "token_budget": "每轮注入记忆 token 上限",
-      "token_budget_desc": "每次请求注入到上下文的记忆内容最大 token 数(200–5000)，超预算的条目不注入。",
+      "token_budget_desc": "每次请求注入到上下文的记忆内容最大 token 数（200–5000）；实际估算=字符数//2 × token 估算系数。",
       "auto_archive": "N 轮后自动归档老记忆",
-      "auto_archive_desc": "超过此回合数的叙事事实自动归档、不再注入(10–200)。笔记/固定记忆/能力/资源豁免。",
+      "auto_archive_desc": "超过此回合数的叙事事实自动归档（10–200）；active facts 超过「事实软上限」时会更早按最旧优先归档。笔记/固定记忆/能力/资源豁免。",
       "pinned_max": "固定记忆桶上限",
       "pinned_max_desc": "固定记忆桶最多保存的条目数(5–100)。达到上限后需先删除旧条目才能新增。",
       "bucket_pinned": "启用固定记忆桶",
       "bucket_pinned_desc": "关闭后固定记忆不再注入 GM 上下文(数据仍保留)。",
       "bucket_world": "启用世界记忆桶",
-      "bucket_world_desc": "关闭后主线/当前目标/事实/笔记不再注入(数据仍保留)。",
+      "bucket_world_desc": "关闭后主线/当前目标/事实/笔记/摘要/篇章/相关回忆不再注入，并暂停 facts 自动归档（数据仍保留）。",
       "bucket_character": "启用角色记忆桶",
       "bucket_character_desc": "关闭后能力/资源不再注入 GM 上下文(数据仍保留)。",
       "summary_llm": "LLM 精修归档摘要",
-      "summary_llm_desc": "归档旧事实时，在回合结束后由模型生成连贯精细摘要覆盖机械压缩版(偶尔一次，成本很低)。关闭或失败时保留机械压缩版。"
+      "summary_llm_desc": "归档旧事实时，在回合结束后由模型生成连贯精细摘要覆盖机械压缩版(偶尔一次，成本很低)。关闭或失败时保留机械压缩版。",
+      "token_estimate_factor": "token 估算系数",
+      "token_estimate_factor_desc": "记忆层与相关往事层共用的估算系数（0.5–3.0）。默认 1.0=字符数//2；中文 token 密度高的模型可调到 1.5–2.0。",
+      "facts_soft_limit": "事实软上限",
+      "facts_soft_limit_desc": "active facts 超过此数量时按最旧优先压力归档（20–500）。用于防止高密度长局出现中程记忆断层。"
     },
     "permissions": {
       "title": "写入权限",
@@ -3227,7 +3231,8 @@
       "origin_native": "原作",
       "origin_native_title": "彻底扮演：玩家就是原住民本人，无外来灵魂，GM 守世界观",
       "tap_to_set": "点击设置",
-      "profile_saved": "已保存,已锁定防自动改写"
+      "profile_saved": "已保存,已锁定防自动改写",
+      "known_events_capped": "状态只保留最近 100 条；更早事件见世界书面板完整历史。"
     },
     "memory": {
       "current_objective": "当前目标",
@@ -3344,7 +3349,12 @@
       "overlay_updated": "已保存修改",
       "overlay_update_failed": "保存失败",
       "overlay_delete_confirm": "删除该世界书条目？",
-      "overlay_empty": "暂无自定义世界书条目。点右上「+」添加。"
+      "overlay_empty": "暂无自定义世界书条目。点右上「+」添加。",
+      "known_events_capped": "状态只保留最近 100 条；更早事件可查完整历史。",
+      "event_search": "搜索世界事件",
+      "event_search_btn": "查更早事件",
+      "event_history_count": "完整历史（{{count}} 条）",
+      "history_failed": "历史事件加载失败"
     },
     "characters": {
       "on_stage": "当前在场",
@@ -3466,7 +3476,12 @@
       "acceptance_unmet": "未通过",
       "acceptance_passed": "通过",
       "acceptance_unmet_mark": "[未]",
-      "acceptance_passed_mark": "[过]"
+      "acceptance_passed_mark": "[过]",
+      "memory_injection": "记忆层注入",
+      "memory_injection_meta": "{{lines}} 行 · 约 {{tokens}} token",
+      "memory_budget": "token 预算",
+      "memory_injection_expand": "展开完整注入文本",
+      "memory_injection_empty": "本轮尚无记忆层注入记录"
     },
     "debug": {
       "agent_steps": "子代理步骤",

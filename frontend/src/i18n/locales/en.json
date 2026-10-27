@@ -480,24 +480,28 @@
     "memory": {
       "title_recall": "Memory · Recall Behavior",
       "title_buckets": "Memory · Bucket Configuration",
-      "recall_depth": "Default Recall Depth",
-      "recall_depth_desc": "Max recent entries injected per non-pinned memory bucket (2–20). Pinned entries use pinned_max as the candidate cap, then the token budget. Higher = GM remembers more, more tokens.",
-      "summary_window": "Archive Scan Interval",
-      "summary_window_desc": "Runs an old-memory archive scan every N turns (3–20).",
+      "recall_depth": "Default Recall Window",
+      "recall_depth_desc": "Candidate window base (1–20): facts=max(24, N×8) cap 64; summaries=max(12, N×4) cap 50; notes/abilities/resources=max(40, N×12) cap 100. Final injection is still trimmed by the token budget.",
+      "summary_window": "Summary Batch Interval",
+      "summary_window_desc": "Batch-generate archive summaries every N turns or when the buffer reaches 20 entries (1–50). Archive checks themselves run every turn.",
       "token_budget": "Memory Token Budget per Turn",
-      "token_budget_desc": "Max tokens of memory content injected into context per request (200–5000); entries over budget are skipped.",
+      "token_budget_desc": "Max estimated memory tokens injected per request (200–5000); estimate = chars//2 × token-estimate factor.",
       "auto_archive": "Auto-archive Old Memories After N Turns",
-      "auto_archive_desc": "Narrative facts older than this many turns are archived and no longer injected (10–200). Notes/pinned/abilities/resources are exempt.",
+      "auto_archive_desc": "Narrative facts older than this many turns are archived (10–200); active facts above the facts soft limit are archived earlier, oldest first. Notes/pinned/abilities/resources are exempt.",
       "pinned_max": "Pinned Memory Bucket Limit",
       "pinned_max_desc": "Max entries in the pinned bucket (5–100). Delete old entries to add new ones once the limit is reached.",
       "bucket_pinned": "Enable Pinned Bucket",
       "bucket_pinned_desc": "When disabled, pinned memories are no longer injected into GM context (data is kept).",
       "bucket_world": "Enable World Bucket",
-      "bucket_world_desc": "When disabled, main quest / objective / facts / notes are no longer injected (data is kept).",
+      "bucket_world_desc": "When disabled, main quest / objective / facts / notes / summaries / arc / query recall are not injected, and automatic fact archiving is paused (data is kept).",
       "bucket_character": "Enable Character Bucket",
       "bucket_character_desc": "When disabled, abilities / resources are no longer injected into GM context (data is kept).",
       "summary_llm": "LLM-Refined Archive Summaries",
-      "summary_llm_desc": "When facts are archived, a model generates a coherent refined summary after the turn ends (rare, very cheap). Falls back to mechanical compression when off or on failure."
+      "summary_llm_desc": "When facts are archived, a model generates a coherent refined summary after the turn ends (rare, very cheap). Falls back to mechanical compression when off or on failure.",
+      "token_estimate_factor": "Token Estimate Factor",
+      "token_estimate_factor_desc": "Shared by memory and episodic layers (0.5–3.0). Default 1.0 = chars//2; raise to 1.5–2.0 for Chinese-heavy tokenizers.",
+      "facts_soft_limit": "Facts Soft Limit",
+      "facts_soft_limit_desc": "When active facts exceed this count, the oldest are pressure-archived (20–500), preventing the mid-range gap in dense long games."
     },
     "permissions": {
       "title": "Write Permissions",
@@ -3123,7 +3127,8 @@
       "origin_native": "Native",
       "origin_native_title": "Pure Roleplay: you are the native character, no foreign soul, GM enforces world-canon",
       "tap_to_set": "Tap to set",
-      "profile_saved": "Saved and locked against auto-rewrite"
+      "profile_saved": "Saved and locked against auto-rewrite",
+      "known_events_capped": "Only the latest 100 events are kept in status; see the worldbook panel for full history."
     },
     "memory": {
       "current_objective": "Current Objective",
@@ -3240,7 +3245,12 @@
       "overlay_updated": "Changes saved",
       "overlay_update_failed": "Failed to save",
       "overlay_delete_confirm": "Delete this worldbook entry?",
-      "overlay_empty": "No custom worldbook entries yet. Use the “+” at the top right to add one."
+      "overlay_empty": "No custom worldbook entries yet. Use the “+” at the top right to add one.",
+      "known_events_capped": "Only the latest 100 events are kept in state; search the full history for older ones.",
+      "event_search": "Search world events",
+      "event_search_btn": "Search older events",
+      "event_history_count": "Full history ({{count}})",
+      "history_failed": "Failed to load event history"
     },
     "characters": {
       "on_stage": "On Stage",
@@ -3362,7 +3372,12 @@
       "acceptance_unmet": "Unmet",
       "acceptance_passed": "Passed",
       "acceptance_unmet_mark": "[✗]",
-      "acceptance_passed_mark": "[✓]"
+      "acceptance_passed_mark": "[✓]",
+      "memory_injection": "Memory layer injection",
+      "memory_injection_meta": "{{lines}} lines · ~{{tokens}} tokens",
+      "memory_budget": "Token budget",
+      "memory_injection_expand": "Expand full injected text",
+      "memory_injection_empty": "No memory-layer injection recorded this turn"
     },
     "debug": {
       "agent_steps": "Sub-agent Steps",

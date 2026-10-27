@@ -114,7 +114,13 @@ def test_hash_keys_lifecycle():
                 save_kb.import_state(db, save_id, c4, _state(facts3, kevts))
                 from kb import live_repo as L
                 vis = {r["logical_key"] for r in L.read_events(db, save_id, c4)}
-                assert not any(":h:" in lk for lk in vis), f"哈希行应全部退役: {vis}"
+                # kevtc 是本次新增的冷历史键：故意在哈希开关关闭时也用内容哈希
+                # 永久保留，不受 legacy 回滚影响。这里只断言热状态键已退役。
+                hot_vis = {
+                    lk for lk in vis
+                    if not lk.startswith(("kevtc:", "afactc:"))
+                }
+                assert not any(":h:" in lk for lk in hot_vis), f"热状态哈希行应全部退役: {hot_vis}"
                 assert save_kb.materialize(db, save_id, c4)["memory"]["facts"] == facts3
 
                 # d) 再开 flag(=legacy 档首次转换):一次性转换后,次回合零事件写
