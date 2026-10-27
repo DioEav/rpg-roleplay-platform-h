@@ -1298,6 +1298,217 @@
 }
 .gp-section .section-head h3 { margin: 0; min-width: 0; flex: 1; }
 
+/* ── 记忆设置控件（游戏记忆面板 / 设置页 · 记忆 · 召回行为 共用）──────────
+   设计目标：预设是“一键选择”的主要操作，必须比普通 .btn 更显眼；全部颜色走
+   tokens.css 的主题令牌（--accent / --accent-soft / --accent-edge / --panel-* /
+   --line-*），暗色、亮色、绿色主题自动跟随，不写死色值。 */
+.mem-preset-bar {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(88px, 1fr));
+  gap: 8px;
+  width: 100%;
+  /* 设置页的控件区可能很宽；限制最大宽度，避免三张卡片被拉成很空的大块。 */
+  max-width: 480px;
+}
+.mem-preset {
+  position: relative;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  grid-template-areas:
+    "dot name"
+    "desc desc";
+  align-items: center;
+  gap: 2px 7px;
+  min-height: 58px;
+  padding: 9px 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-3);
+  background: var(--panel);
+  color: var(--text-quiet);
+  text-align: left;
+  white-space: normal;
+  transition: border-color 0.16s ease, background 0.16s ease,
+              box-shadow 0.16s ease, transform 0.16s ease, color 0.16s ease;
+}
+.mem-preset:hover:not(:disabled) {
+  border-color: var(--line-strong);
+  background: var(--panel-2);
+  color: var(--text);
+  transform: translateY(-1px);
+}
+.mem-preset.is-active {
+  border-color: var(--accent-edge);
+  background: linear-gradient(180deg, var(--accent-soft), var(--panel-2) 88%);
+  color: var(--text);
+  box-shadow: 0 0 0 1px var(--accent-edge) inset, var(--shadow-1);
+}
+.mem-preset:disabled { opacity: 0.48; cursor: not-allowed; transform: none; }
+.mem-preset-dot {
+  grid-area: dot;
+  display: inline-grid;
+  place-items: center;
+  width: 17px;
+  height: 17px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: var(--bg-deep);
+  color: var(--accent);
+}
+.mem-preset.is-active .mem-preset-dot {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: #fff8f3;
+}
+.mem-preset-name {
+  grid-area: name;
+  min-width: 0;
+  font-size: 12.5px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.mem-preset-desc {
+  grid-area: desc;
+  font-size: 10.5px;
+  line-height: 1.35;
+  color: var(--muted);
+  word-break: keep-all;
+}
+.mem-preset.is-active .mem-preset-desc { color: var(--text-quiet); }
+.mem-preset-custom {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 7px;
+  font-size: 11px;
+  color: var(--muted);
+}
+.mem-preset-custom::before {
+  content: "";
+  width: 5px;
+  height: 5px;
+  border-radius: 999px;
+  background: var(--warn);
+  box-shadow: 0 0 0 3px var(--warn-soft);
+}
+
+/* 高级参数折叠：从一行小字改成可点击的面板行，open 时高亮边框与箭头。 */
+.mem-advanced {
+  margin-top: 10px;
+  border: 1px solid var(--line-soft);
+  border-radius: var(--r-3);
+  background: var(--panel);
+  overflow: hidden;
+}
+.mem-advanced > summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 11px;
+  cursor: pointer;
+  list-style: none;
+  user-select: none;
+  color: var(--text-quiet);
+  font-size: 12px;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+.mem-advanced > summary::-webkit-details-marker { display: none; }
+.mem-advanced > summary::marker { content: ""; }
+.mem-advanced > summary:hover { background: var(--panel-2); color: var(--text); }
+.mem-advanced[open] > summary {
+  background: var(--panel-2);
+  border-bottom: 1px solid var(--line-soft);
+  color: var(--text);
+}
+.mem-advanced-title { font-weight: 600; letter-spacing: 0.02em; }
+.mem-advanced-hint {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--muted-2);
+  font-size: 10.5px;
+}
+.mem-advanced-chevron {
+  margin-left: auto;
+  display: inline-flex;
+  color: var(--muted);
+  transition: transform 0.18s ease;
+}
+.mem-advanced[open] .mem-advanced-chevron { transform: rotate(180deg); }
+.mem-advanced-body {
+  display: grid;
+  gap: 12px;
+  padding: 12px;
+}
+
+/* 本存档设置操作区：主按钮用 accent 实心，恢复全局用虚线 ghost，避免误触。 */
+.mem-settings-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px dashed var(--line-soft);
+}
+.mem-action {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 34px;
+  padding: 0 14px;
+  border-radius: var(--r-2);
+  font-size: 12.5px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+  transition: background 0.15s ease, border-color 0.15s ease,
+              color 0.15s ease, transform 0.15s ease, opacity 0.15s ease;
+}
+.mem-action-primary {
+  border: 1px solid var(--accent);
+  background: var(--accent);
+  color: #fff8f3;
+  box-shadow: var(--shadow-1);
+}
+.mem-action-primary:hover:not(:disabled) {
+  border-color: var(--accent-hover);
+  background: var(--accent-hover);
+  transform: translateY(-1px);
+}
+.mem-action-ghost {
+  border: 1px dashed var(--line);
+  background: transparent;
+  color: var(--muted);
+}
+.mem-action-ghost:hover:not(:disabled) {
+  border-color: var(--line-strong);
+  background: var(--panel-2);
+  color: var(--text);
+}
+.mem-action:disabled { opacity: 0.42; cursor: not-allowed; }
+.mem-action-badge {
+  display: inline-grid;
+  place-items: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: rgba(255, 248, 243, 0.22);
+  color: #fff8f3;
+  font-size: 10.5px;
+  font-weight: 600;
+}
+/* 窄面板（游戏右侧栏 <280px）允许两列，避免文字被挤成竖排。 */
+.gp-panel-body.narrow .mem-preset-bar { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+@media (max-width: 360px) {
+  .mem-preset-bar { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+
 .gp-kv { display: grid; gap: 6px; }
 .gp-row { display: grid; grid-template-columns: 64px 1fr; gap: 8px; font-size: 12.5px; align-items: baseline; }
 .gp-label { font-size: 11px; color: var(--muted-2); text-transform: uppercase; letter-spacing: 0.12em; }

@@ -612,7 +612,11 @@
       "preset_standard": "标准",
       "preset_long": "长局",
       "preset_custom": "自定义",
-      "advanced": "高级参数"
+      "advanced": "高级参数",
+      "preset_relaxed_desc": "小预算",
+      "preset_standard_desc": "默认均衡",
+      "preset_long_desc": "大预算",
+      "advanced_hint": "预算 / 归档 / 召回窗口"
     },
     "permissions": {
       "title": "写入权限",

@@ -508,7 +508,11 @@
       "preset_standard": "Standard",
       "preset_long": "Long game",
       "preset_custom": "Custom",
-      "advanced": "Advanced settings"
+      "advanced": "Advanced settings",
+      "preset_relaxed_desc": "Small budget",
+      "preset_standard_desc": "Balanced defaults",
+      "preset_long_desc": "Large budget",
+      "advanced_hint": "Budget / archive / recall window"
     },
     "permissions": {
       "title": "Write Permissions",

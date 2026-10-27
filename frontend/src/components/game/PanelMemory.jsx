@@ -320,92 +320,112 @@ function PanelMemory({ state, density }) {
               <span className="pill mono">{Object.keys(saveSettings.overrides || {}).length}</span>
             )}
           </div>
-          <div style={{display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 8}}>
+          <div className="mem-preset-bar">
             {Object.keys(MEMORY_PRESETS).map((key) => (
               <button key={key} type="button"
-                className={`btn ${currentPreset === key ? "" : "ghost"}`}
-                style={{fontSize: 12, padding: "4px 10px"}}
+                className={`mem-preset${currentPreset === key ? " is-active" : ""}`}
                 disabled={settingsSaving}
+                aria-pressed={currentPreset === key}
                 onClick={() => applyPresetToSave(key)}>
-                {t(`settings.memory.preset_${key}`)}
+                <span className="mem-preset-dot" aria-hidden>
+                  {currentPreset === key && <Icon name="check" size={11} />}
+                </span>
+                <span className="mem-preset-name">{t(`settings.memory.preset_${key}`)}</span>
+                <span className="mem-preset-desc">{t(`settings.memory.preset_${key}_desc`)}</span>
               </button>
             ))}
-            {currentPreset === "custom" && (
-              <span className="muted-2" style={{fontSize: 12, alignSelf: "center"}}>
-                {t('settings.memory.preset_custom')}
+          </div>
+          {currentPreset === "custom" && (
+            <div className="mem-preset-custom">
+              {t('settings.memory.preset_custom')}
+            </div>
+          )}
+          <details className="mem-advanced">
+            <summary>
+              <Icon name="settings" size={13} />
+              <span className="mem-advanced-title">
+                {t('settings.memory.advanced', { defaultValue: '高级参数' })}
               </span>
-            )}
-          </div>
-          <details style={{marginTop: 4}}>
-            <summary className="muted-2" style={{cursor: "pointer", fontSize: 12, padding: "4px 0"}}>
-              {t('settings.memory.advanced', { defaultValue: '高级参数' })}
+              <span className="mem-advanced-hint">
+                {t('settings.memory.advanced_hint', { defaultValue: '预算 / 归档 / 召回窗口' })}
+              </span>
+              <span className="mem-advanced-chevron" aria-hidden>
+                <Icon name="chevron_down" size={13} />
+              </span>
             </summary>
-          <div style={{display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8}}>
-            {[
-              ["recall_depth", t('game.memory.settings_recall_depth', { defaultValue: '召回深度' }), 1, 20],
-              ["token_budget", t('game.memory.settings_token_budget', { defaultValue: '每轮 token' }), 200, 5000],
-              ["token_estimate_factor", t('game.memory.settings_token_factor', { defaultValue: 'token 估算系数' }), 0.5, 3, 0.1],
-              ["pinned_max", t('game.memory.settings_pinned_max', { defaultValue: '固定记忆上限' }), 5, 100],
-              ["summary_window", t('game.memory.settings_summary_window', { defaultValue: '摘要批量周期' }), 1, 50],
-              ["auto_archive_after_turns", t('game.memory.settings_auto_archive', { defaultValue: '自动归档轮数' }), 10, 200],
-              ["facts_soft_limit", t('game.memory.settings_facts_soft_limit', { defaultValue: '事实软上限' }), 20, 500],
-            ].map(([key, label, min, max, step]) => (
-              <label key={key} style={{fontSize: 12, display: "flex", flexDirection: "column", gap: 4}}>
-                <span className="muted-2" style={{display: "flex", alignItems: "center", gap: 4}}>
-                  {label}
-                  {saveSettings?.overrides && saveSettings.overrides[key] !== undefined && (
-                    <button type="button" className="iconbtn"
-                      data-tip={t('game.memory.settings_follow_global', { defaultValue: '跟随全局' })}
-                      aria-label={t('game.memory.settings_follow_global', { defaultValue: '跟随全局' })}
-                      disabled={settingsSaving}
-                      onClick={() => resetField(key)}>↺</button>
-                  )}
-                </span>
-                <input type="number" className="mono" min={min} max={max} step={step || 1}
-                  value={settingsForm[key] ?? ""}
-                  onChange={(e) => updateSetting(key, e.target.value === "" ? "" : Number(e.target.value))}
-                  style={{width: "100%", padding: "4px 6px"}} />
-                {settingsErrors[key] && (
-                  <span style={{color: "var(--danger, #c66)", fontSize: 11}}>{settingsErrors[key]}</span>
-                )}
-              </label>
-            ))}
-          </div>
-          <div style={{display: "flex", flexWrap: "wrap", gap: 12, marginTop: 8, fontSize: 12}}>
-            {[
-              ["bucket_pinned_enabled", t('game.memory.settings_bucket_pinned', { defaultValue: '固定记忆桶' })],
-              ["bucket_world_enabled", t('game.memory.settings_bucket_world', { defaultValue: '世界记忆桶' })],
-              ["bucket_character_enabled", t('game.memory.settings_bucket_character', { defaultValue: '角色记忆桶' })],
-              ["summary_llm_enabled", t('game.memory.settings_summary_llm', { defaultValue: 'LLM 精修摘要' })],
-            ].map(([key, label]) => (
-              <label key={key} style={{display: "flex", alignItems: "center", gap: 4}}>
-                <input type="checkbox" checked={!!settingsForm[key]}
-                  onChange={(e) => updateSetting(key, e.target.checked)} />
-                <span>{label}</span>
-                {saveSettings?.overrides && saveSettings.overrides[key] !== undefined && (
-                  <button type="button" className="iconbtn"
-                    data-tip={t('game.memory.settings_follow_global', { defaultValue: '跟随全局' })}
-                    aria-label={t('game.memory.settings_follow_global', { defaultValue: '跟随全局' })}
-                    disabled={settingsSaving}
-                    onClick={() => resetField(key)}>↺</button>
-                )}
-                {settingsErrors[key] && (
-                  <span style={{color: "var(--danger, #c66)", fontSize: 11}}>{settingsErrors[key]}</span>
-                )}
-              </label>
-            ))}
-          </div>
+            <div className="mem-advanced-body">
+              <div style={{display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8}}>
+                {[
+                  ["recall_depth", t('game.memory.settings_recall_depth', { defaultValue: '召回深度' }), 1, 20],
+                  ["token_budget", t('game.memory.settings_token_budget', { defaultValue: '每轮 token' }), 200, 5000],
+                  ["token_estimate_factor", t('game.memory.settings_token_factor', { defaultValue: 'token 估算系数' }), 0.5, 3, 0.1],
+                  ["pinned_max", t('game.memory.settings_pinned_max', { defaultValue: '固定记忆上限' }), 5, 100],
+                  ["summary_window", t('game.memory.settings_summary_window', { defaultValue: '摘要批量周期' }), 1, 50],
+                  ["auto_archive_after_turns", t('game.memory.settings_auto_archive', { defaultValue: '自动归档轮数' }), 10, 200],
+                  ["facts_soft_limit", t('game.memory.settings_facts_soft_limit', { defaultValue: '事实软上限' }), 20, 500],
+                ].map(([key, label, min, max, step]) => (
+                  <label key={key} style={{fontSize: 12, display: "flex", flexDirection: "column", gap: 4}}>
+                    <span className="muted-2" style={{display: "flex", alignItems: "center", gap: 4}}>
+                      {label}
+                      {saveSettings?.overrides && saveSettings.overrides[key] !== undefined && (
+                        <button type="button" className="iconbtn"
+                          data-tip={t('game.memory.settings_follow_global', { defaultValue: '跟随全局' })}
+                          aria-label={t('game.memory.settings_follow_global', { defaultValue: '跟随全局' })}
+                          disabled={settingsSaving}
+                          onClick={() => resetField(key)}>↺</button>
+                      )}
+                    </span>
+                    <input type="number" className="mono" min={min} max={max} step={step || 1}
+                      value={settingsForm[key] ?? ""}
+                      onChange={(e) => updateSetting(key, e.target.value === "" ? "" : Number(e.target.value))}
+                      style={{width: "100%", padding: "4px 6px"}} />
+                    {settingsErrors[key] && (
+                      <span style={{color: "var(--danger, #c66)", fontSize: 11}}>{settingsErrors[key]}</span>
+                    )}
+                  </label>
+                ))}
+              </div>
+              <div style={{display: "flex", flexWrap: "wrap", gap: 12, marginTop: 8, fontSize: 12}}>
+                {[
+                  ["bucket_pinned_enabled", t('game.memory.settings_bucket_pinned', { defaultValue: '固定记忆桶' })],
+                  ["bucket_world_enabled", t('game.memory.settings_bucket_world', { defaultValue: '世界记忆桶' })],
+                  ["bucket_character_enabled", t('game.memory.settings_bucket_character', { defaultValue: '角色记忆桶' })],
+                  ["summary_llm_enabled", t('game.memory.settings_summary_llm', { defaultValue: 'LLM 精修摘要' })],
+                ].map(([key, label]) => (
+                  <label key={key} style={{display: "flex", alignItems: "center", gap: 4}}>
+                    <input type="checkbox" checked={!!settingsForm[key]}
+                      onChange={(e) => updateSetting(key, e.target.checked)} />
+                    <span>{label}</span>
+                    {saveSettings?.overrides && saveSettings.overrides[key] !== undefined && (
+                      <button type="button" className="iconbtn"
+                        data-tip={t('game.memory.settings_follow_global', { defaultValue: '跟随全局' })}
+                        aria-label={t('game.memory.settings_follow_global', { defaultValue: '跟随全局' })}
+                        disabled={settingsSaving}
+                        onClick={() => resetField(key)}>↺</button>
+                    )}
+                    {settingsErrors[key] && (
+                      <span style={{color: "var(--danger, #c66)", fontSize: 11}}>{settingsErrors[key]}</span>
+                    )}
+                  </label>
+                ))}
+              </div>
+            </div>
           </details>
-          <div style={{display: "flex", gap: 8, marginTop: 8}}>
-            <button className="btn ghost" style={{fontSize: 12, padding: "4px 10px"}}
+          <div className="mem-settings-actions">
+            <button type="button" className="mem-action mem-action-primary"
               disabled={settingsSaving || !Object.keys(settingsDirty).length}
               onClick={saveSettingsPatch}>
-              {t('game.memory.settings_save', { defaultValue: '保存到本存档' })}
+              <Icon name="save" size={14} />
+              <span>{t('game.memory.settings_save', { defaultValue: '保存到本存档' })}</span>
+              {Object.keys(settingsDirty).length > 0 && (
+                <span className="mem-action-badge">{Object.keys(settingsDirty).length}</span>
+              )}
             </button>
-            <button className="btn ghost" style={{fontSize: 12, padding: "4px 10px"}}
+            <button type="button" className="mem-action mem-action-ghost"
               disabled={settingsSaving || !Object.keys(saveSettings.overrides || {}).length}
               onClick={resetSettings}>
-              {t('game.memory.settings_reset', { defaultValue: '恢复跟随全局' })}
+              <Icon name="refresh" size={14} />
+              <span>{t('game.memory.settings_reset', { defaultValue: '恢复跟随全局' })}</span>
             </button>
           </div>
         </div>
