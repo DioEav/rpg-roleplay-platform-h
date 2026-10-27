@@ -91,8 +91,9 @@ class MemorySettings(BaseModel):
         ge=20,
         le=500,
         description=(
-            "active facts 软上限（本次记忆修复）：超过时在归档扫描回合按“最旧优先”"
-            "归档到上限。高密度长局用它防止最近候选窗口与归档阈值之间出现记忆断层。"
+            "active facts 软上限（本次记忆修复）：超过时在归档扫描回合触发压力归档，"
+            "先压重要性最低的、同分再压最旧，直到回到上限。高密度长局用它防止最近"
+            "候选窗口与归档阈值之间出现记忆断层。"
         ),
     )
     pinned_max: int = Field(
@@ -130,7 +131,11 @@ class MemorySettings(BaseModel):
         default=10,
         ge=1,
         le=50,
-        description="归档检查窗口大小（每隔 summary_window 轮触发一次归档扫描）",
+        description=(
+            "机械摘要的批量窗口：每 N 回合或 buffer 满 20 条时 flush 一次。"
+            "归档检查本身每回合都会做（年龄/压力），不受此值控制；"
+            "已归档但尚未成摘要的原文会暂以「概要：」行注入，避免空窗。"
+        ),
     )
     summary_llm_enabled: bool = Field(
         default=True,

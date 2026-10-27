@@ -263,6 +263,9 @@ def _t_query_memory(state: Any, args: dict) -> str:
                 "phase_label": it.get("phase_label"),
                 "legacy_bucket": it.get("legacy_bucket"),
                 "source": it.get("source"),
+                # 本轮优化：把写入时算好的确定性重要性一并返回，方便 GM/调试面板
+                # 判断“这条为什么留到最后才归档”。
+                "importance": it.get("importance"),
                 "archived": bool(it.get("archived")),
                 "status": it.get("status") or "active",
             })

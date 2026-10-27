@@ -3,13 +3,16 @@ MemoryProvider — 通用记忆层。所有 manifest 都应该启用。
 不区分小说/模组：facts / pinned / abilities / resources / notes 等等都是会话级数据。
 
 A6 新增：消费 MemorySettings 配置
-  - token_budget          : 截断注入总 token（字符 // 2 估算）
+  - token_budget          : 每轮注入记忆的 token 预算（用 token_estimate_factor 估算）
+  - token_estimate_factor : 估算系数（估算 token = 字符数//2 × 系数）
   - bucket_pinned_enabled : 跳过 pinned 桶
   - bucket_world_enabled  : 跳过 world 类（main_quest / objective / summaries / facts / notes）
   - bucket_character_enabled: 跳过 character 类（abilities / resources）
-  - recall_depth          : 每桶最多召回条目数
-  - auto_archive_after_turns / summary_window: 由 chat_pipeline.memory_maintenance
+  - recall_depth          : 候选窗口基准（facts/摘要/persistent 按倍数扩大，最终由预算裁剪；
+                            pinned 用 pinned_max 作为候选上限）
+  - auto_archive_after_turns / facts_soft_limit: 由 chat_pipeline.memory_maintenance
     在回合结束后调用 _maybe_auto_archive() 触发归档（本次记忆修复：归档已移出读路径）。
+  - summary_window        : 机械摘要的批量 flush 窗口（不再控制归档检查频率）。
 
 注入顺序（预算装填即优先级，靠前者先占预算；实际由 MemoryAssembler 按 section 权重装填）：
   优先级提示 → 固定记忆(pinned) → 主线/目标 → 笔记(notes) → 事实(facts)
@@ -75,12 +78,29 @@ def _condense_fact(text: str) -> str:
     return t
 
 
+def _importance_of(item: dict) -> int:
+    """读取条目重要性（本轮优化），缺失/非法值按默认 40 处理。
+
+    注意不能用 `value or 40`：0 是合法的最低分（最该被压掉），用 or 会把它
+    错误抬成 40，导致压力归档排序把最不重要的条目留下来。
+    """
+    try:
+        value = item.get("importance")
+        return int(value) if value is not None else 40
+    except (TypeError, ValueError, AttributeError):
+        return 40
+
+
 def _maybe_auto_archive(state, ms) -> None:
     """检查是否需要触发自动归档。
 
-    规则：当前 turn 数能被 summary_window 整除，且 turn >= auto_archive_after_turns，
-    则把 memory.items 中 turn < (current_turn - auto_archive_after_turns) 的条目
-    标记为 archived=True（不删除，只排除出上下文注入）。
+    规则（本轮审查修正文档）：归档检查由 maintenance **每回合**执行一次，命中任一
+    条件就归档：
+      · 年龄：事实年龄 >= auto_archive_after_turns；
+      · 压力：active facts 数量 > facts_soft_limit，按「重要性最低 → 最旧」归档到上限。
+    summary_window 只控制**机械摘要的批量 flush 粒度**（每 N 回合或 buffer 满 20 条），
+    不再控制归档检查本身；已归档但尚未 flush 的原文由 MemoryAssembler 暂以
+    「概要：」行注入，避免归档与摘要之间的注入空窗。
 
     真摘要压缩（两步式）：本扫描归档掉的 facts 不是一扔了之 —— 同步路径先压缩成
     一条「第X-Y轮：…」机械保底摘要追加进 memory.summaries（每条 ≤600 字符），
@@ -139,10 +159,19 @@ def _maybe_auto_archive(state, ms) -> None:
 
         selected: list[dict] = []
         if pressure:
-            # 从最旧开始归档到软上限；turn=0 的迁移/开场事实也参与，避免永久占位。
+            # 从低重要性开始归档，同分再从最旧开始；turn=0 的迁移/开场事实也参与，
+            # 避免永久占位。
+            # 本轮优化：旧实现只按 turn 排序，会把「第 10 回合的结盟誓言」和
+            # 「第 9 回合的天气旁白」一起压掉。现在普通旁白（45~55）先出局，
+            # 带人物+事件关键词的剧情事实（65~80）留到最后一档，长局里关键状态
+            # 更不容易被摘要压缩掉。
             ordered = sorted(
                 enumerate(active_facts),
-                key=lambda pair: (int(pair[1].get("turn") or 0), pair[0]),
+                key=lambda pair: (
+                    _importance_of(pair[1]),
+                    int(pair[1].get("turn") or 0),
+                    pair[0],
+                ),
             )
             selected = [it for _, it in ordered[: max(0, len(active_facts) - soft_limit)]]
         elif age_due:
@@ -152,6 +181,14 @@ def _maybe_auto_archive(state, ms) -> None:
                 if int(it.get("turn") or 0) > 0
                 and int(it.get("turn") or 0) <= cutoff_turn
             ]
+
+        # 摘要/保底文本按时间序叙述（本轮优化）：「选谁归档」按重要性排序，但一旦
+        # 选中，写进 summary_archive_buffer 的顺序必须回到回合顺序。否则压力归档
+        # 会把「第 40 轮」的低分事实排在「第 5 轮」前面，GM 读概要时会误判事件先后。
+        # 归档集合不变，只调整叙述顺序。
+        if len(selected) > 1:
+            selected.sort(key=lambda it: (
+                int(it.get("turn") or 0), str(it.get("text") or "")))
 
         changed = False
         newly_archived: list[dict] = []
@@ -506,6 +543,11 @@ class MemoryProvider(ContextProvider):
                 # 供上下文用量面板/调试定位「哪条被预算丢了」。
                 "sections": asm_debug.get("sections", []),
                 "recalled_count": asm_debug.get("recalled_count", 0),
+                # 跨 section 去重计数（本轮优化）：本轮因「同一句话已在更高优先级
+                # section 出现」而被丢弃的行数。面板据此解释实际注入数为何小于各桶之和。
+                "deduped_across_sections": asm_debug.get("deduped_across_sections", 0),
+                # 已归档但摘要尚未批量生成的条目数（本轮优化）：以「概要：」暂注入。
+                "summary_buffer_count": asm_debug.get("summary_buffer_count", 0),
                 "memory_query": asm_debug.get("query", ""),
                 # 生命周期计数（本次记忆修复）：只读展示，不参与注入。
                 "stats": dict(m.get("stats") or {}),

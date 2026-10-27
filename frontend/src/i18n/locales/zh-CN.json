@@ -591,7 +591,7 @@
       "token_budget": "每轮注入记忆 token 上限",
       "token_budget_desc": "每次请求注入到上下文的记忆内容最大 token 数（200–5000）；实际估算=字符数//2 × token 估算系数。",
       "auto_archive": "N 轮后自动归档老记忆",
-      "auto_archive_desc": "超过此回合数的叙事事实自动归档（10–200）；active facts 超过「事实软上限」时会更早按最旧优先归档。笔记/固定记忆/能力/资源豁免。",
+      "auto_archive_desc": "超过此回合数的叙事事实自动归档（10–200）；active facts 超过「事实软上限」时先按重要性最低、同分最旧归档。笔记/固定记忆/能力/资源豁免。",
       "pinned_max": "固定记忆桶上限",
       "pinned_max_desc": "固定记忆桶最多保存的条目数(5–100)。达到上限后需先删除旧条目才能新增。",
       "bucket_pinned": "启用固定记忆桶",
@@ -605,7 +605,14 @@
       "token_estimate_factor": "token 估算系数",
       "token_estimate_factor_desc": "记忆层与相关往事层共用的估算系数（0.5–3.0）。默认 1.0=字符数//2；中文 token 密度高的模型可调到 1.5–2.0。",
       "facts_soft_limit": "事实软上限",
-      "facts_soft_limit_desc": "active facts 超过此数量时按最旧优先压力归档（20–500）。用于防止高密度长局出现中程记忆断层。"
+      "facts_soft_limit_desc": "active facts 超过此数量时触发压力归档（20–500）：先压重要性最低的，同分再压最旧的。用于防止高密度长局出现中程记忆断层。",
+      "preset": "记忆预设",
+      "preset_desc": "选一个档位即可；需要细调时再改下面的高级参数。",
+      "preset_relaxed": "省心",
+      "preset_standard": "标准",
+      "preset_long": "长局",
+      "preset_custom": "自定义",
+      "advanced": "高级参数"
     },
     "permissions": {
       "title": "写入权限",
@@ -3266,7 +3273,7 @@
       "settings_token_budget": "每轮 token",
       "settings_token_factor": "token 估算系数",
       "settings_pinned_max": "固定记忆上限",
-      "settings_summary_window": "归档扫描周期",
+      "settings_summary_window": "摘要批量周期",
       "settings_auto_archive": "自动归档轮数",
       "settings_facts_soft_limit": "事实软上限",
       "settings_bucket_pinned": "固定记忆桶",
@@ -3314,7 +3321,8 @@
       "retrieval": "召回",
       "retrieval_subtitle": "上一轮实际注入给 GM 的记忆原文",
       "retrieval_chunks": "注入 {{count}} 条",
-      "retrieval_empty": "（暂无召回。发送一轮消息后，这里会显示本轮实际注入给 GM 的记忆。）"
+      "retrieval_empty": "（暂无召回。发送一轮消息后，这里会显示本轮实际注入给 GM 的记忆。）",
+      "settings_preset_applied": "已应用预设到本存档"
     },
     "worldbook": {
       "location_time": "地点 · 时刻",
@@ -3480,6 +3488,8 @@
       "memory_injection": "记忆层注入",
       "memory_injection_meta": "{{lines}} 行 · 约 {{tokens}} token",
       "memory_budget": "token 预算",
+      "memory_deduped": "跨 section 去重",
+      "memory_deduped_tip": "同一句话已在更高优先级 section（笔记/事实/摘要）出现时跳过，这里是被省掉的行数。",
       "memory_injection_expand": "展开完整注入文本",
       "memory_injection_empty": "本轮尚无记忆层注入记录"
     },
@@ -5277,12 +5287,12 @@
         "recall_behavior": "召回行为",
         "recall_depth_label": "召回深度 · {{n}}",
         "recall_depth_desc": "每个非固定记忆桶最多注入最近 N 条（2–20）；固定记忆另按 pinned_max 候选",
-        "summary_window_label": "归档扫描周期 · {{n}}",
-        "summary_window_desc": "每 N 个回合触发一次旧记忆归档清查（3–20）",
+        "summary_window_label": "摘要批量周期 · {{n}}",
+        "summary_window_desc": "每 N 回合或摘要 buffer 满 20 条时批量生成归档摘要（3–20）。归档检查本身每回合都会做。",
         "token_budget_label": "token 预算 · {{n}}",
         "token_budget_desc": "注入记忆的 token 上限（200–5000）",
         "auto_archive_label": "自动归档 · {{n}} 轮后",
-        "auto_archive_desc": "超过此轮数的叙事事实自动归档、不再注入（10–200）",
+        "auto_archive_desc": "超过此轮数的叙事事实自动归档、不再注入（10–200）；active facts 超过软上限时先按重要性最低、同分最旧归档。",
         "buckets": "记忆桶配置",
         "pinned_max": "固定记忆上限",
         "pinned_max_desc": "每局最多保存的固定记忆条数，达上限后需先删旧再加",

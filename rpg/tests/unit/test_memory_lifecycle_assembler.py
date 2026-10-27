@@ -1258,3 +1258,299 @@ def test_items_prune_keeps_active_and_drops_oldest_history():
     archived = [i for i in items if i.get("archived")]
     assert len(active) == 400, "active 条目不能被数量上限砍掉"
     assert len(archived) == 100, "只应保留最新的 100 条非 active 历史"
+
+
+# ── 本轮优化：跨 section 去重 / 确定性 importance ──────────────────────────
+
+def test_assembler_dedupes_same_text_across_sections():
+    """同一句记忆同时出现在 notes/facts/summaries 时，只注入优先级最高的一处。
+
+    优先级 = section 顺序：notes > facts > summaries。标点/空白差异视为同文
+    （归一化后比较），避免 GM 在同一段上下文里读到三遍同一句话。
+    """
+    s = GameState({"turn": 10, "memory": {
+        "notes": ["钥匙在书房抽屉里。"],
+        "facts": ["钥匙在书房抽屉里", "书房在二楼"],
+        "summaries": ["钥匙在书房抽屉里！"],
+    }})
+    text, lines, dbg = MemoryAssembler(s, MemorySettings()).build()
+    assert text.count("钥匙在书房抽屉里") == 1, text
+    assert "书房在二楼" in text, "不同文本不能被误去重"
+    assert dbg["deduped_across_sections"] == 2
+
+
+def test_memory_importance_scoring_is_deterministic_and_ranks_events():
+    """规则评分可复现；有后果的事件/持久桶分数应高于普通旁白事实。"""
+    from state.core import memory_importance_for
+
+    plain = memory_importance_for("厨房里飘着面包的香味。", legacy_bucket="facts")
+    plain_again = memory_importance_for("厨房里飘着面包的香味。", legacy_bucket="facts")
+    event = memory_importance_for(
+        "主角杀死守卫并夺走钥匙。", legacy_bucket="facts",
+        characters=["主角", "守卫"], location="地牢")
+    note = memory_importance_for("玩家备注", legacy_bucket="notes")
+    pinned = memory_importance_for("玩家备注", legacy_bucket="pinned")
+    assert plain == plain_again, "同一输入必须得到同一分数"
+    assert 45 <= plain < event <= 100
+    assert note > plain and pinned > note
+    assert 0 <= memory_importance_for("", legacy_bucket="unknown") <= 100
+
+
+def test_add_memory_item_stores_importance_and_reconcile_backfills_old_items():
+    """新写入马上带 importance；旧档缺字段由 reconcile 补，已有分数不被覆盖。"""
+    from state.core import memory_importance_for
+
+    s = GameState.new()
+    iid = s.add_memory_item(
+        "主角与守卫结盟并交出钥匙。", kind="runtime_fact",
+        characters=["主角", "守卫"], legacy_bucket="facts")
+    created = next(i for i in s.data["memory"]["items"] if i["id"] == iid)
+    assert created["importance"] >= 60
+
+    old = {"id": "old", "kind": "runtime_fact", "text": "旧事实",
+           "turn": 1, "status": "active", "legacy_bucket": "facts"}
+    kept = {"id": "kept", "kind": "runtime_fact", "text": "已有分数",
+            "turn": 1, "status": "active", "legacy_bucket": "facts",
+            "importance": 7}
+    s.data["memory"]["items"].extend([old, kept])
+    s.data["memory"]["facts"] = ["旧事实", "已有分数"]
+    s.reconcile_memory_items()
+    assert old["importance"] == memory_importance_for("旧事实", legacy_bucket="facts")
+    assert kept["importance"] == 7, "已有分数不能被回填覆盖"
+
+
+def test_pressure_archive_prefers_low_importance_then_older():
+    """压力归档先压不重要的，再压旧的：高分关键事实不会被新旁白挤掉。"""
+    facts = [f"事实{i}" for i in range(25)]
+    items = [
+        {"id": f"f{i}", "kind": "runtime_fact", "text": f"事实{i}",
+         "turn": i + 1, "status": "active", "legacy_bucket": "facts",
+         "importance": 90 if i == 0 else 40}
+        for i in range(25)
+    ]
+    s = GameState({"turn": 30, "memory": {"facts": facts, "items": items}})
+    _maybe_auto_archive(s, MemorySettings(
+        summary_window=10, auto_archive_after_turns=200, facts_soft_limit=20))
+    archived_ids = {i["id"] for i in s.data["memory"]["items"] if i.get("archived")}
+    assert len(archived_ids) == 5
+    assert "f0" not in archived_ids, "高重要性事实不应先于普通旁白被归档"
+    assert archived_ids == {"f1", "f2", "f3", "f4", "f5"}
+
+
+def test_recall_tiebreak_uses_importance_then_recency():
+    """相关度同分时，高分事实排在更旧的位置也能优先召回。"""
+    facts = ["钥匙在保险箱A"] + ["钥匙在保险箱B"] + [
+        f"无关流水账{i}" for i in range(70)]
+    items = [
+        {"id": "a", "kind": "runtime_fact", "text": "钥匙在保险箱A",
+         "turn": 1, "status": "active", "legacy_bucket": "facts",
+         "importance": 90},
+        {"id": "b", "kind": "runtime_fact", "text": "钥匙在保险箱B",
+         "turn": 2, "status": "active", "legacy_bucket": "facts",
+         "importance": 40},
+    ] + [
+        {"id": f"x{i}", "kind": "runtime_fact", "text": f"无关流水账{i}",
+         "turn": 3 + i, "status": "active", "legacy_bucket": "facts"}
+        for i in range(70)
+    ]
+    s = GameState({"turn": 100, "memory": {"facts": facts, "items": items}})
+    demand = Demand(retrieval_query="钥匙在哪")
+    _, _, dbg = MemoryAssembler(s, MemorySettings(recall_depth=8), demand=demand).build()
+    recalled = dbg["recalled_texts"]
+    assert "钥匙在保险箱A" in recalled and "钥匙在保险箱B" in recalled
+    assert recalled[0] == "钥匙在保险箱A", f"同分时未按重要性排序: {recalled}"
+
+
+def test_player_origin_writes_get_importance_bonus():
+    """玩家亲手写入（dispatcher 用户意图 origin）应比 GM 自动写入的同文事实分高。"""
+    s = GameState.new()
+    text = "玩家与商人约定交易。"
+    p_id = s.add_memory_item(
+        text, source="ui_button", legacy_bucket="facts")
+    g_id = s.add_memory_item(text, source="gm", legacy_bucket="facts")
+    items = {i["id"]: i for i in s.data["memory"]["items"]}
+    assert items[p_id]["importance"] > items[g_id]["importance"]
+
+
+def test_pressure_archive_buffer_stays_chronological():
+    """按重要性挑中归档后，摘要 buffer 必须恢复时间序，避免概要里事件前后颠倒。"""
+    items = [
+        {"id": f"f{i}", "kind": "runtime_fact", "text": f"事实{i}",
+         "turn": 25 - i, "status": "active", "legacy_bucket": "facts",
+         "importance": i + 1}
+        for i in range(25)
+    ]
+    facts = [i["text"] for i in items]
+    s = GameState({"turn": 31, "memory": {"facts": facts, "items": items}})
+    _maybe_auto_archive(s, MemorySettings(
+        summary_window=10, auto_archive_after_turns=200, facts_soft_limit=20))
+    buffer = s.data["memory"]["summary_archive_buffer"]
+    assert len(buffer) == 5
+    assert [x["turn"] for x in buffer] == [21, 22, 23, 24, 25], (
+        "buffer 应按回合升序，实际: %s" % [x["turn"] for x in buffer])
+
+
+def test_importance_accepts_player_slash_set_source_and_invalid_value():
+    """玩家 /set 的 user:* 来源同样享受加分；非法 importance 值不能中断写入。"""
+    s = GameState.new()
+    text = "玩家与商人约定交易。"
+    g_id = s.add_memory_item(text, source="gm", legacy_bucket="facts")
+    u_id = s.add_memory_item(text, source="user:/set", legacy_bucket="facts")
+    bad_id = s.add_memory_item("一条普通事实", source="gm",
+                               legacy_bucket="facts", importance="oops")
+    items = {i["id"]: i for i in s.data["memory"]["items"]}
+    assert items[u_id]["importance"] > items[g_id]["importance"]
+    assert 0 <= items[bad_id]["importance"] <= 100
+
+
+def test_legacy_migration_seeds_importance():
+    """旧档迁移补建 item 时也要落 importance，避免 maintenance 前出现空分数窗口。"""
+    s = GameState({"memory": {"items": [], "notes": ["玩家手记"]}})
+    item = s.data["memory"]["items"][0]
+    assert item["legacy_bucket"] == "notes"
+    assert item["importance"] >= 85
+
+
+def test_bucket_replace_records_tombstones_for_removed_facts():
+    """set memory.facts 删除的旧事实也要落 text+hash tombstone。
+
+    否则 KB 冷归档（afactc）里的旧版本仍会被 query_memory(archived) /
+    episodic 召回，表现为「删掉的事实又回来了」。重新添加时应清除 tombstone。
+    """
+    import hashlib
+
+    old = "张三把钥匙藏在码头"
+    keep = "李四在酒馆等你"
+    s = GameState({"turn": 20, "memory": {
+        "facts": [old, keep],
+        "archived_facts": [old],
+        "items": [
+            {"id": "a", "kind": "runtime_fact", "text": old, "turn": 1,
+             "status": "active", "legacy_bucket": "facts"},
+            {"id": "b", "kind": "runtime_fact", "text": keep, "turn": 2,
+             "status": "active", "legacy_bucket": "facts"},
+        ],
+    }})
+    ok, _ = s.replace_memory_bucket("facts", [keep])
+    assert ok
+    mem = s.data["memory"]
+    assert old in mem["facts_deleted"]
+    assert hashlib.sha1(old.encode("utf-8")).hexdigest()[:16] in mem["facts_deleted_hashes"]
+    assert keep not in mem["facts_deleted"]
+
+    # 玩家重新添加 → 清 tombstone，冷查询不再永久排除。
+    s.add_memory("facts", old, origin="ui_button")
+    mem = s.data["memory"]
+    assert old not in mem["facts_deleted"]
+    assert hashlib.sha1(old.encode("utf-8")).hexdigest()[:16] not in mem["facts_deleted_hashes"]
+
+
+def test_archived_unflushed_facts_are_injected_as_pending_summary():
+    """归档已发生、摘要尚未批量 flush 时，原文不能出现注入空窗。
+
+    turn=101 / window=10 → 年龄归档命中但本轮不是 flush 回合；MemoryAssembler
+    应把 summary_archive_buffer 里的原文暂以「概要：」注入。
+    """
+    s = GameState({"turn": 101, "memory": {
+        "facts": ["旧誓言：守卫欠主角一条命"],
+        "items": [{"id": "f1", "kind": "runtime_fact",
+                   "text": "旧誓言：守卫欠主角一条命", "turn": 1,
+                   "status": "active", "legacy_bucket": "facts"}],
+    }})
+    _maybe_auto_archive(s, MemorySettings(
+        summary_window=10, auto_archive_after_turns=50, facts_soft_limit=80))
+    assert s.data["memory"]["items"][0].get("archived") is True
+    assert len(s.data["memory"]["summary_archive_buffer"]) == 1
+    assert not (s.data["memory"].get("summaries") or [])
+    text, _, dbg = MemoryAssembler(s, MemorySettings()).build()
+    assert "概要：旧誓言：守卫欠主角一条命" in text
+    assert dbg["summary_buffer_count"] == 1
+
+
+def test_edit_and_remove_fact_keep_cold_archive_and_index_consistent():
+    """编辑/删除事实时：旧文本落 tombstone + 从 archived_facts 索引移除；重加清除。"""
+    old = "张三把钥匙藏在码头"
+    new = "张三把钥匙藏在酒馆"
+    s = GameState({"turn": 5, "memory": {
+        "facts": [old],
+        "archived_facts": [old],
+        "items": [{"id": "a", "kind": "runtime_fact", "text": old, "turn": 1,
+                   "status": "active", "legacy_bucket": "facts"}],
+    }})
+    assert s.edit_memory("facts", 0, new)
+    mem = s.data["memory"]
+    assert old in mem["facts_deleted"], "编辑后旧版本必须从冷归档排除"
+    assert old not in mem["archived_facts"], "旧文本不应继续挂在归档索引"
+
+    # 重新添加旧文本 → 清 tombstone（它重新成为当前事实）。
+    assert s.add_memory("facts", old, origin="ui_button")
+    mem = s.data["memory"]
+    assert old not in mem["facts_deleted"]
+    assert old not in mem["archived_facts"]
+
+    # 显式删除当前事实 → tombstone + 归档索引清理。
+    s.remove_memory("facts", mem["facts"].index(old))
+    mem = s.data["memory"]
+    assert old in mem["facts_deleted"]
+    assert old not in mem["archived_facts"]
+
+
+def test_bucket_replace_clears_archive_index_for_readded_index_only_fact():
+    """archived_facts 里只剩索引、item 已被裁掉的旧文本，重新写回 facts 后索引也要清。"""
+    s = GameState({"turn": 3, "memory": {
+        "facts": [],
+        "archived_facts": ["索引里的旧事实"],
+        "items": [],
+    }})
+    ok, _ = s.replace_memory_bucket("facts", ["索引里的旧事实"])
+    assert ok
+    assert s.data["memory"]["facts"] == ["索引里的旧事实"]
+    assert "索引里的旧事实" not in s.data["memory"]["archived_facts"]
+
+
+def test_flood_blocked_readd_must_not_clear_tombstone(monkeypatch):
+    """被洪泛闸拒绝的重新添加不能顺手清掉删除 tombstone。"""
+    import state.memory_budget as budget
+
+    text = "张三把钥匙藏在码头"
+    s = GameState({"turn": 5, "memory": {
+        "facts": [], "facts_deleted": [text],
+        "facts_deleted_hashes": [],
+    }})
+    monkeypatch.setattr(budget, "check_append", lambda *a, **k: "洪泛闸测试拦截")
+    ok, why = s.add_memory_ex("facts", text, origin="gm")
+    assert not ok and "洪泛" in why
+    assert text in s.data["memory"]["facts_deleted"], "被拒写入不能恢复冷召回资格"
+
+
+def test_duplicate_fact_repairs_stale_tombstone():
+    """桶里已存在同文但旧档残留 tombstone 时，重复写入应顺手修复。"""
+    text = "张三把钥匙藏在码头"
+    s = GameState({"turn": 5, "memory": {
+        "facts": [text], "facts_deleted": [text], "facts_deleted_hashes": [],
+    }})
+    ok, _ = s.add_memory_ex("facts", text, origin="gm")
+    assert not ok  # 去重，不重复 append
+    assert text not in s.data["memory"]["facts_deleted"]
+
+
+def test_bucket_replace_rolls_back_on_error(monkeypatch):
+    """replace_memory_bucket 中途异常必须整体回滚，不能“返回失败但已半写”。"""
+    old = "旧事实"
+    s = GameState({"turn": 5, "memory": {
+        "facts": [old],
+        "facts_deleted": [old],
+        "items": [{"id": "a", "kind": "runtime_fact", "text": old, "turn": 1,
+                   "status": "active", "legacy_bucket": "facts"}],
+    }})
+
+    def _boom(_text):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(s, "_memory_characters_for", _boom)
+    ok, msg = s.replace_memory_bucket("facts", ["新事实"])
+    assert not ok and "boom" in msg
+    mem = s.data["memory"]
+    assert mem["facts"] == [old]
+    assert old in mem["facts_deleted"]
+    assert mem["items"][0]["status"] == "active"

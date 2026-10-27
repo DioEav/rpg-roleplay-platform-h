@@ -54,7 +54,9 @@ function StatusPanel({ s }) {
         <KV k={t('mobile.game_panels.status.kv_time')} v={w.time} />
         <KV k={t('mobile.game_panels.status.kv_weather')} v={w.weather} />
         {Array.isArray(w.known_events) && w.known_events.length ? (
-          <div className="mp-list">{w.known_events.slice(0, 8).map((e, i) => <div key={i} className="mp-li">· {typeof e === 'string' ? e : (e.text || e.title || JSON.stringify(e))}</div>)}</div>
+          // known_events 是尾部 append：取最近 8 条（slice(-8)），不能用 slice(0,8)
+          // 否则长局永远只显示开局事件。
+          <div className="mp-list">{w.known_events.slice(-8).map((e, i) => <div key={i} className="mp-li">· {typeof e === 'string' ? e : (e.text || e.title || JSON.stringify(e))}</div>)}</div>
         ) : null}
       </Sec>
       {varEntries.length > 0 && (
@@ -98,12 +100,15 @@ function MemoryPanel({ s }) {
   const { t } = useTranslation();
   const m = s.memory || {};
   const facts = Array.isArray(m.facts) ? m.facts : [];
+  // facts 桶是尾部 append；取 slice(0,30) 会永远显示最旧的 30 条。移动端窗口
+  // 只展示“最近 30 条”，并倒序（最新在上），与桌面面板/注入窗口方向一致。
+  const recentFacts = facts.slice(-30).reverse();
   const updates = Array.isArray(m.last_structured_updates) ? m.last_structured_updates : [];
   return (
     <>
       <Sec title={t('mobile.game_panels.memory.section_mode')}><KV k="mode" v={m.mode || 'normal'} />{m.current_objective ? <KV k={t('mobile.game_panels.memory.kv_objective')} v={m.current_objective} /> : null}</Sec>
       <Sec title={t('mobile.game_panels.memory.section_facts')} count={facts.length}>
-        {facts.length ? facts.slice(0, 30).map((f, i) => <div key={i} className="mp-li">· {typeof f === 'string' ? f : (f.text || f.content || JSON.stringify(f))}</div>) : <Empty>{t('mobile.game_panels.memory.empty_facts')}</Empty>}
+        {recentFacts.length ? recentFacts.map((f, i) => <div key={i} className="mp-li">· {typeof f === 'string' ? f : (f.text || f.content || JSON.stringify(f))}</div>) : <Empty>{t('mobile.game_panels.memory.empty_facts')}</Empty>}
       </Sec>
       {updates.length > 0 && (
         <Sec title={t('mobile.game_panels.memory.section_updates')} count={updates.length}>
@@ -147,7 +152,7 @@ function WorldbookPanel({ s }) {
       )}
       {knownEvents.length > 0 && (
         <Sec title={t('game.worldbook.known_events')} count={knownEvents.length}>
-          {knownEvents.slice(0, 20).map((e, i) => (
+          {knownEvents.slice(-20).map((e, i) => (
             <div key={i} className="mp-li">· {typeof e === 'string' ? e : (e && (e.text || e.title)) || JSON.stringify(e)}</div>
           ))}
         </Sec>
@@ -278,7 +283,7 @@ function TimelinePanel({ s }) {
       </Sec>
       {knownEvents.length > 0 && (
         <Sec title={t('mobile.game_panels.status.section_world')} count={knownEvents.length}>
-          {knownEvents.slice(0, 8).map((e, i) => (
+          {knownEvents.slice(-8).map((e, i) => (
             <div key={i} className="mp-li">· {typeof e === 'string' ? e : (e.text || e.title || JSON.stringify(e))}</div>
           ))}
         </Sec>

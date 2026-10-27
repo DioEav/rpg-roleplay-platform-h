@@ -4,6 +4,7 @@ import { useState as useStatePL, useEffect as useEffectPL } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useAutoSave } from '../../platform-app.jsx';
 import { SetGroup, SetRow } from './shared.jsx';
+import { MEMORY_PRESETS, MEMORY_PRESET_FIELDS, matchMemoryPreset } from '../../lib/memory-presets.js';
 import CSSpaceBetween from '@cloudscape-design/components/space-between';
 import CSInput from '@cloudscape-design/components/input';
 import CSToggle from '@cloudscape-design/components/toggle';
@@ -69,10 +70,51 @@ function MemorySection() {
     return () => { cancelled = true; };
   }, []);
 
+  const currentPreset = matchMemoryPreset({
+    token_budget: tokenBudget,
+    token_estimate_factor: tokenEstimateFactor,
+    facts_soft_limit: factsSoftLimit,
+    summary_window: summaryWindow,
+    auto_archive_after_turns: autoArchiveAfter,
+    recall_depth: recallDepth,
+  });
+  const applyPreset = (key) => {
+    const p = MEMORY_PRESETS[key];
+    if (!p) return;
+    setRecallDepth(p.recall_depth);
+    setSummaryWindow(p.summary_window);
+    setTokenBudget(p.token_budget);
+    setAutoArchiveAfter(p.auto_archive_after_turns);
+    setTokenEstimateFactor(p.token_estimate_factor);
+    setFactsSoftLimit(p.facts_soft_limit);
+    MEMORY_PRESET_FIELDS.forEach((field) => save(field, p[field]));
+  };
+
   return (
     <CSSpaceBetween size="l">
       {/* A6.3 — 组 1: 召回行为 */}
       <SetGroup title={t('settings.memory.title_recall')}>
+        <SetRow label={t('settings.memory.preset')} description={t('settings.memory.preset_desc')}>
+          <div style={{display: "flex", flexWrap: "wrap", gap: 6}}>
+            {Object.keys(MEMORY_PRESETS).map((key) => (
+              <button key={key} type="button"
+                className={`btn ${currentPreset === key ? "" : "ghost"}`}
+                style={{fontSize: 12, padding: "4px 10px"}}
+                onClick={() => applyPreset(key)}>
+                {t(`settings.memory.preset_${key}`)}
+              </button>
+            ))}
+            {currentPreset === "custom" && (
+              <span className="muted-2" style={{fontSize: 12, alignSelf: "center"}}>
+                {t('settings.memory.preset_custom')}
+              </span>
+            )}
+          </div>
+        </SetRow>
+        <details style={{marginTop: 6}}>
+          <summary className="muted-2" style={{cursor: "pointer", fontSize: 12, padding: "4px 0"}}>
+            {t('settings.memory.advanced', { defaultValue: '高级参数' })}
+          </summary>
         <SetRow label={t('settings.memory.recall_depth')} description={t('settings.memory.recall_depth_desc')}>
           <div style={{display: "flex", alignItems: "center", gap: 8}}>
             <input type="range" min={1} max={20} step={1} value={recallDepth}
@@ -153,6 +195,7 @@ function MemorySection() {
               className="mono" style={{width: 70, textAlign: "right"}} />
           </div>
         </SetRow>
+        </details>
       </SetGroup>
 
       {/* A6.3 — 组 2: 记忆桶配置 */}

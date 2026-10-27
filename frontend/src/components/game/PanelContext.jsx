@@ -305,6 +305,16 @@ function PanelContext({ state }) {
             </span>
           </div>
         )}
+        {memDebug.deduped_across_sections > 0 && (
+          <div className="gp-row">
+            <span className="gp-label">{t('game.context.memory_deduped', { defaultValue: '跨 section 去重' })}</span>
+            <span className="mono" data-tip={t('game.context.memory_deduped_tip', {
+              defaultValue: '同一句话同时出现在笔记/事实/摘要等 section 时只注入一次，这里是被省掉的行数',
+            })}>
+              ↓{memDebug.deduped_across_sections}
+            </span>
+          </div>
+        )}
         {memSections.length > 0 && (
           <div style={{margin: "6px 0"}}>
             {memSections.map((s) => {

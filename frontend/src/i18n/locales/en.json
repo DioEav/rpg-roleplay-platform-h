@@ -487,7 +487,7 @@
       "token_budget": "Memory Token Budget per Turn",
       "token_budget_desc": "Max estimated memory tokens injected per request (200–5000); estimate = chars//2 × token-estimate factor.",
       "auto_archive": "Auto-archive Old Memories After N Turns",
-      "auto_archive_desc": "Narrative facts older than this many turns are archived (10–200); active facts above the facts soft limit are archived earlier, oldest first. Notes/pinned/abilities/resources are exempt.",
+      "auto_archive_desc": "Narrative facts older than this many turns are archived (10–200); when active facts exceed the soft limit, lowest importance (then oldest) is archived first. Notes/pinned/abilities/resources are exempt.",
       "pinned_max": "Pinned Memory Bucket Limit",
       "pinned_max_desc": "Max entries in the pinned bucket (5–100). Delete old entries to add new ones once the limit is reached.",
       "bucket_pinned": "Enable Pinned Bucket",
@@ -501,7 +501,14 @@
       "token_estimate_factor": "Token Estimate Factor",
       "token_estimate_factor_desc": "Shared by memory and episodic layers (0.5–3.0). Default 1.0 = chars//2; raise to 1.5–2.0 for Chinese-heavy tokenizers.",
       "facts_soft_limit": "Facts Soft Limit",
-      "facts_soft_limit_desc": "When active facts exceed this count, the oldest are pressure-archived (20–500), preventing the mid-range gap in dense long games."
+      "facts_soft_limit_desc": "When active facts exceed this count, pressure archiving starts (20–500): lowest importance first, then oldest. Prevents the mid-range gap in dense long games.",
+      "preset": "Memory preset",
+      "preset_desc": "Pick a profile; adjust the advanced settings below only when needed.",
+      "preset_relaxed": "Relaxed",
+      "preset_standard": "Standard",
+      "preset_long": "Long game",
+      "preset_custom": "Custom",
+      "advanced": "Advanced settings"
     },
     "permissions": {
       "title": "Write Permissions",
@@ -3162,7 +3169,7 @@
       "settings_token_budget": "Tokens per turn",
       "settings_token_factor": "Token estimate factor",
       "settings_pinned_max": "Pinned limit",
-      "settings_summary_window": "Archive scan interval",
+      "settings_summary_window": "Summary batch interval",
       "settings_auto_archive": "Auto-archive after turns",
       "settings_facts_soft_limit": "Facts soft limit",
       "settings_bucket_pinned": "Pinned bucket",
@@ -3210,7 +3217,8 @@
       "retrieval": "Retrieval",
       "retrieval_subtitle": "The memory text actually injected into the GM last turn",
       "retrieval_chunks": "{{count}} injected",
-      "retrieval_empty": "(No retrieval yet. Send a message and this will show what was actually injected into the GM.)"
+      "retrieval_empty": "(No retrieval yet. Send a message and this will show what was actually injected into the GM.)",
+      "settings_preset_applied": "Preset applied to this save"
     },
     "worldbook": {
       "location_time": "Location · Time",
@@ -3376,6 +3384,8 @@
       "memory_injection": "Memory layer injection",
       "memory_injection_meta": "{{lines}} lines · ~{{tokens}} tokens",
       "memory_budget": "Token budget",
+      "memory_deduped": "Cross-section dedupe",
+      "memory_deduped_tip": "Lines skipped because the same text already appeared in a higher-priority section (notes/facts/summaries).",
       "memory_injection_expand": "Expand full injected text",
       "memory_injection_empty": "No memory-layer injection recorded this turn"
     },
@@ -5280,12 +5290,12 @@
         "recall_behavior": "Recall Behavior",
         "recall_depth_label": "Recall Depth · {{n}}",
         "recall_depth_desc": "Max recent entries injected per non-pinned memory bucket (2–20); pinned uses pinned_max",
-        "summary_window_label": "Archive Scan Interval · {{n}}",
-        "summary_window_desc": "Runs an old-memory archive scan every N turns (3–20)",
+        "summary_window_label": "Summary Batch Interval · {{n}}",
+        "summary_window_desc": "Batch-generate archive summaries every N turns or when the buffer reaches 20 entries (3–20). Archive checks themselves run every turn.",
         "token_budget_label": "Token Budget · {{n}}",
         "token_budget_desc": "Maximum tokens injected from memory per turn (200–5000)",
         "auto_archive_label": "Auto-Archive · after {{n}} turns",
-        "auto_archive_desc": "Narrative facts older than this are archived and no longer injected (10–200)",
+        "auto_archive_desc": "Narrative facts older than this are archived and no longer injected (10–200); above the soft limit, lowest importance (then oldest) is archived first.",
         "buckets": "Memory Buckets",
         "pinned_max": "Pinned Memory Limit",
         "pinned_max_desc": "Max pinned entries per game; delete old ones to add new past the limit",

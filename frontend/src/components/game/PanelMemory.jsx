@@ -10,10 +10,16 @@ import React, { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Icon } from '../../game-icons.jsx';
 import { ForcedSetSection } from './ForcedSetSection.jsx';
+import { MEMORY_PRESETS, memoryPresetPatch, matchMemoryPreset } from '../../lib/memory-presets.js';
 
 function PanelMemory({ state, density }) {
   const { t } = useTranslation();
   const m = state.memory;
+  // 本轮审查修复：本存档设置/冷归档搜索必须随活动存档切换重置。
+  // RightPanel 在切换存档时不卸载本组件（只更新 state prop），旧实现只在 mount 时
+  // load 一次设置 → 切档后仍显示上一档的 override，点“保存到本存档/预设”会把旧档
+  // 的数值写进新档；冷归档结果也会串档。
+  const saveId = (state && state._raw && state._raw.save_id) || null;
   // 本存档记忆设置（本次记忆修复）: GET /api/memory/settings 返回 global/overrides/effective。
   // 表单只提交 dirty 字段——没改的字段继续保持「跟随全局」，不会被本存档冻结。
   const [saveSettings, setSaveSettings] = useState(null);
@@ -35,18 +41,33 @@ function PanelMemory({ state, density }) {
   const [coldHasMore, setColdHasMore] = useState(false);
   const [coldLoading, setColdLoading] = useState(false);
   const HISTORY_PAGE_SIZE = 10;
-  const loadSettings = async () => {
-    try {
-      const r = await window.api.game.memorySettingsGet();
-      setSaveSettings(r || null);
-      setSettingsForm((r && r.effective) || {});
-      setSettingsDirty({});
-      setSettingsErrors({});
-    } catch (_) {
-      setSaveSettings(null);
-    }
-  };
-  useEffect(() => { loadSettings(); }, []);
+  useEffect(() => {
+    // saveId 变化 = 切档：先清掉上一档的设置/冷搜索状态，再按新档重新拉取。
+    // cancelled 防止快速切档时旧请求晚到、用旧档 effective 覆盖新档表单。
+    let cancelled = false;
+    setSaveSettings(null);
+    setSettingsForm({});
+    setSettingsDirty({});
+    setSettingsErrors({});
+    setColdHistory([]);
+    setColdTotal(0);
+    setColdOffset(0);
+    setColdHasMore(false);
+    setHistoryQuery("");
+    setHistoryFilter("all");
+    setHistoryPage(0);
+    (async () => {
+      try {
+        const r = await window.api.game.memorySettingsGet();
+        if (cancelled) return;
+        setSaveSettings(r || null);
+        setSettingsForm((r && r.effective) || {});
+      } catch (_) {
+        if (!cancelled) setSaveSettings(null);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [saveId]);
   const updateSetting = (key, value) => {
     setSettingsForm((prev) => ({ ...prev, [key]: value }));
     setSettingsDirty((prev) => ({ ...prev, [key]: true }));
@@ -113,6 +134,39 @@ function PanelMemory({ state, density }) {
       window.__apiToast?.(t('game.memory.settings_reset_done', { defaultValue: '已恢复为跟随全局' }), { kind: 'ok' });
     } catch (e) {
       window.__apiToast?.(t('game.memory.settings_failed', { defaultValue: '记忆设置保存失败' }), { kind: 'danger', detail: e?.message });
+    } finally {
+      setSettingsSaving(false);
+    }
+  };
+  const currentPreset = matchMemoryPreset(settingsForm);
+  const applyPresetToSave = async (key) => {
+    const patch = memoryPresetPatch(key);
+    if (!Object.keys(patch).length) return;
+    setSettingsSaving(true);
+    try {
+      const r = await window.api.game.memorySettingsSet({ settings: patch });
+      _applySettingsResponse(r);
+      // 预设值理论上都合法；若后端仍拒绝某个字段，必须像手动保存一样提示，
+      // 不能按钮点完显示“已应用”而实际只写入了一部分。
+      const errs = (r && r.errors) || {};
+      const errKeys = Object.keys(errs);
+      if (errKeys.length) {
+        window.__apiToast?.(
+          t('game.memory.settings_partial', {
+            defaultValue: '部分设置未保存：{{items}}',
+            items: errKeys.map((k) => `${k}: ${errs[k]}`).join('；'),
+          }),
+          { kind: 'danger', detail: errKeys.join(', ') },
+        );
+        return;
+      }
+      window.__apiToast?.(
+        t('game.memory.settings_preset_applied', { defaultValue: '已应用预设到本存档' }),
+        { kind: 'ok' },
+      );
+    } catch (e) {
+      window.__apiToast?.(t('game.memory.settings_failed', { defaultValue: '记忆设置保存失败' }),
+        { kind: 'danger', detail: e?.message });
     } finally {
       setSettingsSaving(false);
     }
@@ -266,13 +320,33 @@ function PanelMemory({ state, density }) {
               <span className="pill mono">{Object.keys(saveSettings.overrides || {}).length}</span>
             )}
           </div>
+          <div style={{display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 8}}>
+            {Object.keys(MEMORY_PRESETS).map((key) => (
+              <button key={key} type="button"
+                className={`btn ${currentPreset === key ? "" : "ghost"}`}
+                style={{fontSize: 12, padding: "4px 10px"}}
+                disabled={settingsSaving}
+                onClick={() => applyPresetToSave(key)}>
+                {t(`settings.memory.preset_${key}`)}
+              </button>
+            ))}
+            {currentPreset === "custom" && (
+              <span className="muted-2" style={{fontSize: 12, alignSelf: "center"}}>
+                {t('settings.memory.preset_custom')}
+              </span>
+            )}
+          </div>
+          <details style={{marginTop: 4}}>
+            <summary className="muted-2" style={{cursor: "pointer", fontSize: 12, padding: "4px 0"}}>
+              {t('settings.memory.advanced', { defaultValue: '高级参数' })}
+            </summary>
           <div style={{display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8}}>
             {[
               ["recall_depth", t('game.memory.settings_recall_depth', { defaultValue: '召回深度' }), 1, 20],
               ["token_budget", t('game.memory.settings_token_budget', { defaultValue: '每轮 token' }), 200, 5000],
               ["token_estimate_factor", t('game.memory.settings_token_factor', { defaultValue: 'token 估算系数' }), 0.5, 3, 0.1],
               ["pinned_max", t('game.memory.settings_pinned_max', { defaultValue: '固定记忆上限' }), 5, 100],
-              ["summary_window", t('game.memory.settings_summary_window', { defaultValue: '归档扫描周期' }), 1, 50],
+              ["summary_window", t('game.memory.settings_summary_window', { defaultValue: '摘要批量周期' }), 1, 50],
               ["auto_archive_after_turns", t('game.memory.settings_auto_archive', { defaultValue: '自动归档轮数' }), 10, 200],
               ["facts_soft_limit", t('game.memory.settings_facts_soft_limit', { defaultValue: '事实软上限' }), 20, 500],
             ].map(([key, label, min, max, step]) => (
@@ -321,6 +395,7 @@ function PanelMemory({ state, density }) {
               </label>
             ))}
           </div>
+          </details>
           <div style={{display: "flex", gap: 8, marginTop: 8}}>
             <button className="btn ghost" style={{fontSize: 12, padding: "4px 10px"}}
               disabled={settingsSaving || !Object.keys(settingsDirty).length}

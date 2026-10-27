@@ -236,3 +236,44 @@ def test_merged_vector_hit_never_shortcircuits_history(monkeypatch):
     kinds = [(h["kind"], h["text"][:12]) for h in hits]
     assert any(h["kind"] == "history" and "煎了鱼" in h["text"] for h in hits), kinds
     assert any(h["kind"] == "event" for h in hits), kinds  # 向量视角仍在场
+
+
+def test_skips_deleted_fact_tombstones(monkeypatch):
+    """删除 tombstone（文本 + hash）必须同时拦住 episodic 冷归档召回。
+
+    KB 的 afactc 是永久事件行；如果 episodic 不看 facts_deleted，玩家删掉的
+    事实会从「相关往事」重新回到 prompt。
+    """
+    import hashlib
+
+    import core.feature_flags as ff
+    monkeypatch.setattr(ff, "feature_enabled", lambda key, uid=None: True)
+    import kb.episodic as ep
+
+    deleted_text = "张三把钥匙藏在码头"
+    deleted_hash_text = "李四欠王五一袋金币"
+    live_text = "酒馆老板说明天有集市"
+    monkeypatch.setattr(ep, "retrieve_episodic_merged", lambda *a, **k: [
+        {"kind": "event", "text": deleted_text, "score": 9, "meta": ""},
+        {"kind": "event", "text": deleted_hash_text, "score": 8, "meta": ""},
+        {"kind": "event", "text": live_text, "score": 7, "meta": ""},
+    ])
+
+    s = _FakeState(_mk_history())
+    s.data["memory"] = {
+        "facts_deleted": [deleted_text],
+        "facts_deleted_hashes": [
+            hashlib.sha1(deleted_hash_text.encode("utf-8")).hexdigest()[:16]
+        ],
+    }
+    c = EpisodicRecallProvider().collect(
+        s, DEFAULT_FREEFORM_MANIFEST,
+        Demand(player_intent="钥匙和金币在哪里", retrieval_query="钥匙和金币在哪里"),
+        ProviderServices(user_id=None, save_id=None),
+    )
+    assert c.applied and c.layers, c.warnings
+    text = c.layers[0]["content"]
+    assert live_text in text
+    assert deleted_text not in text
+    assert deleted_hash_text not in text
+    assert c.debug["tombstoned_deleted_facts"] == 2

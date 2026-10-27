@@ -101,6 +101,32 @@ class EpisodicRecallProvider(ContextProvider):
         from kb.episodic import retrieve_episodic_merged
         hits = retrieve_episodic_merged(
             int(save_id or 0), commit, user_id, query, hist, k=3, exclude_recent=12)
+        # 已删除事实过滤（本轮审查修复）：remove_memory / `set memory.facts` 删除的事实
+        # 会写 memory.facts_deleted(+hashes)，但 KB 冷归档 afactc 是永久事件行。
+        # episodic 若不看 tombstone，玩家明确删掉的事实会从「相关往事」层重新召回，
+        # 与 query_memory 的冷查询排除口径不一致。文本+hash 双保险，与删除路径同源。
+        mem = data.get("memory") or {}
+        _deleted_texts = {
+            str(t).strip() for t in (mem.get("facts_deleted") or []) if str(t).strip()
+        }
+        _deleted_hashes = {
+            str(h).strip() for h in (mem.get("facts_deleted_hashes") or []) if str(h).strip()
+        }
+        _tombstoned = 0
+        if (_deleted_texts or _deleted_hashes) and hits:
+            import hashlib as _hashlib
+            _kept_by_tomb: list[dict] = []
+            for h in hits:
+                ht = str(h.get("text") or "").strip()
+                if not ht:
+                    continue
+                hh = (_hashlib.sha1(ht.encode("utf-8")).hexdigest()[:16]
+                      if _deleted_hashes else "")
+                if ht in _deleted_texts or (hh and hh in _deleted_hashes):
+                    _tombstoned += 1
+                    continue
+                _kept_by_tomb.append(h)
+            hits = _kept_by_tomb
         # 跨层去重（本次记忆修复）: memory provider 先跑，会把本轮实际注入的正文
         # （最近事实/笔记/摘要/篇章/相关记忆）挂到 state；这里统一跳过同文片段。
         # 旧实现只对比「相关记忆」top-3，最近 facts / summaries 仍会和往事重复。
@@ -120,8 +146,12 @@ class EpisodicRecallProvider(ContextProvider):
                 _kept.append(h)
             hits = _kept
         if not hits:
-            return ContextContribution.skipped(
-                self.id, "无召回(休眠)" if not _deduped else "与记忆层重复")
+            reason = "无召回(休眠)"
+            if _deduped:
+                reason = "与记忆层重复"
+            elif _tombstoned:
+                reason = "命中项均已被玩家删除"
+            return ContextContribution.skipped(self.id, reason)
         lines: list[str] = []
         for i, h in enumerate(hits, 1):
             if h.get("kind") == "history":
@@ -154,6 +184,7 @@ class EpisodicRecallProvider(ContextProvider):
             tokens_estimate=estimate_tokens_with_factor(text, _factor),
             debug={"source": source, "hits": len(lines),
                    "deduped_against_memory": _deduped,
+                   "tombstoned_deleted_facts": _tombstoned,
                    "token_estimate_factor": _factor},
         )
 

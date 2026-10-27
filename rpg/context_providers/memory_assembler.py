@@ -10,10 +10,14 @@
 abilities 全被饿死」，也方便后续把 recalled facts / 实体召回独立演进。
 
 召回策略（无 embedding 依赖）：
-  · 最近 facts：仍然按写入顺序取最近 recall_depth 条（主通道）。
+  · 最近 facts：按写入顺序取最近 max(24, recall_depth×8)（硬上限 64）作为候选，
+    实际注入条数由 section 预算决定（本次记忆修复：不再直接截到 recall_depth）。
   · 相关 facts：对 demand.retrieval_query / player_intent 做 CJK 2-3 gram 打分，
-    叠加「查询里出现的已知角色名」实体加分；top-k 去重后作为「相关记忆：」注入。
+    叠加「查询里出现的已知角色名」实体加分与当前地点/场景加分；top-k 去重后
+    作为「相关记忆：」注入。
   · 只召回 active、未归档、且不在最近 facts 里的条目，避免重复。
+  · 跨 section 再做一次归一化文本去重（pinned→objective→notes→facts→recalled
+    →summaries→arc→abilities→resources，保留优先级最高的一处）。
 
 注意：本模块只负责「把已有记忆装进 prompt」，不写 state、不调 LLM、不做归档。
 归档/摘要生命周期在 chat_pipeline.memory_maintenance + context_providers.memory 里。
@@ -65,6 +69,26 @@ _SUMMARIES_CANDIDATE_MIN = 12
 _SUMMARIES_CANDIDATE_MAX = 50
 _PERSISTENT_CANDIDATE_MIN = 40
 _PERSISTENT_CANDIDATE_MAX = 100
+
+# 跨 section 文本去重（本次优化）：同一句话可能同时出现在 pinned/notes/facts/
+# summaries/arc；按归一化文本只保留优先级最高的一处。只做精确归一化匹配，
+# 不做语义相似，避免误删不同事实。
+_DEDUPE_PUNCT_RE = re.compile(
+    r"[\s，。；：、！？,.!?;:\"'“”‘’（）()【】\[\]《》<>·…—\-]+"
+)
+
+
+def _dedupe_key(text: str) -> str:
+    return _DEDUPE_PUNCT_RE.sub("", str(text or "")).strip().lower()
+
+
+def _importance_of(item: dict) -> int:
+    """读取条目重要性（本轮优化）。0 是合法最低分，不能用 `or 40` 抬高。"""
+    try:
+        value = item.get("importance")
+        return int(value) if value is not None else 40
+    except (TypeError, ValueError, AttributeError):
+        return 40
 
 # 输出行前缀 → 去重时剥掉，只比较正文。供跨层去重（episodic）使用。
 _LINE_PREFIXES = (
@@ -221,7 +245,10 @@ class MemoryAssembler:
         if not grams and not entities and not scene_keys:
             return []
         items = self.mem.get("items") or []
-        candidates: dict[tuple[str, str], tuple[int, int]] = {}
+        # 本轮优化：候选值 = (相关度, 重要性, turn)。重要性只在相关度同分时
+        # 参与排序；它不能压过相关度 —— 否则「玩家刚问钥匙」时一条高分的旧
+        # 誓言会挤掉真正匹配的钥匙事实。
+        candidates: dict[tuple[str, str], tuple[int, int, int]] = {}
         # 最近窗口集合只建一次：items 可能有上千条，逐条构造 set 是纯浪费。
         recent_sets = {b: set(v or []) for b, v in recent.items()}
         if isinstance(items, list) and items:
@@ -264,28 +291,31 @@ class MemoryAssembler:
                             or (it_scene and key in it_scene)):
                         score += max(4, len(key) * 2)
                 if score >= _RECALL_SCORE_FLOOR:
-                    candidates[(bucket, text)] = (score, int(it.get("turn") or 0))
-        else:
-            # 旧存档 items 为空：只能纯文本打分（没有 turn/characters 元数据）。
-            for bucket in ("facts", "notes"):
-                recent_set = set(recent.get(bucket) or [])
-                for text in self.mem.get(bucket) or []:
-                    text = str(text or "").strip()
-                    if not text or text in recent_set:
-                        continue
-                    score = _score_text(text, grams)
-                    for ent in entities:
-                        if ent in text:
-                            score += len(ent) * 2
-                    for key in scene_keys:
-                        if key in text:
-                            score += max(4, len(key) * 2)
-                    if score >= _RECALL_SCORE_FLOOR:
-                        candidates[(bucket, text)] = (score, 0)
+                    candidates[(bucket, text)] = (
+                        score, _importance_of(it), int(it.get("turn") or 0))
+            else:
+                # 旧存档 items 为空：只能纯文本打分（没有 turn/characters 元数据）。
+                for bucket in ("facts", "notes"):
+                    recent_set = set(recent.get(bucket) or [])
+                    for text in self.mem.get(bucket) or []:
+                        text = str(text or "").strip()
+                        if not text or text in recent_set:
+                            continue
+                        score = _score_text(text, grams)
+                        for ent in entities:
+                            if ent in text:
+                                score += len(ent) * 2
+                        for key in scene_keys:
+                            if key in text:
+                                score += max(4, len(key) * 2)
+                        if score >= _RECALL_SCORE_FLOOR:
+                            candidates[(bucket, text)] = (score, 40, 0)
 
         ranked = sorted(
             candidates.items(),
-            key=lambda kv: (-kv[1][0], -kv[1][1], kv[0][0], kv[0][1]),
+            # 相关度 > 重要性 > 新旧。重要性只做同分 tie-break。
+            key=lambda kv: (
+                -kv[1][0], -kv[1][1], -kv[1][2], kv[0][0], kv[0][1]),
         )
         return [key for key, _ in ranked[:_RECALL_TOP_K]]
 
@@ -318,6 +348,22 @@ class MemoryAssembler:
         notes = self._recent_items("notes", persistent_n) if world_on else []
         facts = self._recent_items("facts", facts_n) if world_on else []
         summaries = self._recent_items("summaries", summaries_n) if world_on else []
+        # 归档空窗兜底（本轮审查修复）：年龄/压力归档每回合都会把条目移出 facts，
+        # 但摘要按 summary_window 批量 flush，最长会有 N 个回合「条目已不在 facts、
+        # 也还没进 summaries」的注入空窗。buffer 里的原文先以「概要：」行补位，
+        # flush 后 buffer 清空、由正式摘要接替。buffer 本身有 20 条/500 条硬上限。
+        _pending_summary_texts: list[str] = []
+        if world_on:
+            for _entry in (self.mem.get("summary_archive_buffer") or []):
+                if not isinstance(_entry, dict):
+                    continue
+                _t = str(_entry.get("text") or "").strip()
+                if _t:
+                    _pending_summary_texts.append(_t)
+            if _pending_summary_texts:
+                # buffer 比已生成摘要新，放在尾部：summaries section 是 newest_first，
+                # 预算紧张时先装这些“刚归档、尚未成摘要”的条目。
+                summaries = summaries + _pending_summary_texts
         arcs = (self.mem.get("arc_summaries") or []) if world_on else []
         arc_lines = [
             f"篇章：{a.get('text')}"
@@ -368,6 +414,27 @@ class MemoryAssembler:
                 sections.append(MemorySection("abilities", [f"能力：{x}" for x in abilities], 0.06, 0))
             if resources:
                 sections.append(MemorySection("resources", [f"资源：{x}" for x in resources], 0.06, 0))
+
+        # ── 跨 section 文本去重（本次优化）──────────────────────────────
+        # section 顺序即优先级：pinned → objective → notes → facts → recalled
+        # → summaries → arc → abilities → resources。同一归一化文本只保留第一次。
+        _seen_text_keys: set[str] = set()
+        _deduped_sections: list[MemorySection] = []
+        _deduped_count = 0
+        for sec in sections:
+            _kept: list[str] = []
+            for line in sec.lines:
+                key = _dedupe_key(_strip_line_prefix(line))
+                if len(key) >= 2 and key in _seen_text_keys:
+                    _deduped_count += 1
+                    continue
+                if key:
+                    _seen_text_keys.add(key)
+                _kept.append(line)
+            if _kept:
+                sec.lines = _kept
+                _deduped_sections.append(sec)
+        sections = _deduped_sections
 
         # ── 预算装填 ─────────────────────────────────────────────────────
         remaining = max(0, budget - sum(_estimate_memory_tokens(line, token_factor) for line in priority_lines))
@@ -455,6 +522,12 @@ class MemoryAssembler:
             ],
             "recalled_count": len(recalled),
             "recalled_texts": [text for _, text in recalled][:8],
+            # 已归档、尚未批量成摘要的原文条数（本轮优化）：这些条目暂以「概要：」
+            # 行注入，避免归档与摘要批量之间出现注入空窗。
+            "summary_buffer_count": len(_pending_summary_texts),
+            # 跨 section 去重（本次优化）：被丢弃的重复行数。用于确认「事实/概要/
+            # 篇章写了同一件事」时确实省下了 token，而不是候选不足。
+            "deduped_across_sections": _deduped_count,
             "injected_texts": injected_texts[:200],
             "query": self._query_text()[:120],
             # 候选窗口 vs 实际注入：调试面板据此判断“是没候选，还是预算裁掉了”。

@@ -346,8 +346,11 @@ DEFAULT_STATE = {
         # GM 回复后的收尾 worker(chat_pipeline.memory_summary)调 LLM 精修后清空。
         "summary_pending": {},
         # task 74：结构化记忆 dual-write 槽位。MemoryItem schema:
-        # {id, kind, text, source, turn, time_label?, characters?, status, ts}
+        # {id, kind, text, source, turn, ts, status, importance?, time_label?,
+        #  characters?, location?, scene_id?, phase_label?, legacy_bucket?,
+        #  archived?, superseded_*?, orphaned_*?}
         # 其中 kind ∈ {canon_fact, runtime_fact, hypothesis, user_constraint}。
+        # importance 是确定性 0-100 评分（压力归档排序 + 召回同分 tie-break）。
         # 旧 facts/notes/pinned/resources/abilities 数组继续工作（向后兼容），
         # 新 items 数组是 task 75/76/77/78 的结构化基础。
         "items": [],
@@ -415,6 +418,111 @@ def fact_text_similarity(a: str, b: str) -> float:
     if not ga or not gb:
         return 0.0
     return len(ga & gb) / len(ga | gb)
+
+
+# ── 记忆重要性（本轮优化：确定性规则评分）─────────────────────────────────
+# 目标：长局里除了「新旧」之外，还需要一个「值不值得留」的稳定标尺。
+# 全部规则确定性可复现（桶基线 + kind/来源 + 事件/关系关键词 + 实体/地点标注），
+# 不调 LLM、不随机、不依赖语言模型版本；同一份 state 在任何机器上分数一致。
+# 用途：
+#   · 压力归档：先压低分、旧的事实，高分事实留得更久；
+#   · 自动召回：相关度同分时高分优先（见 MemoryAssembler._recalled_items）。
+MEMORY_IMPORTANCE_DEFAULT = 40
+
+# 桶基线。pinned/notes/abilities/resources 本来就禁止自动归档，这里给高分主要
+# 是为了让「显式记忆」在 query/调试面板里排序靠前；facts 基线最低，压力归档
+# 会优先挑它们。
+_IMPORTANCE_BUCKET_BASE = {
+    "pinned": 100,
+    "notes": 85,
+    "abilities": 70,
+    "resources": 70,
+    "facts": 45,
+}
+
+# 来源加成：玩家亲手写/编辑/恢复的记忆不该跟 GM 自动抽取的旁白事实同等待遇。
+# ui_button / llm_set / api_direct 是 dispatcher 鉴权后注入的用户意图 origin
+# （与 user_locked 判定同一口径），LLM 无法伪造；玩家 /set 走 apply_ops 时
+# source 形如 "user:/set"、update_time 形如 "user_set"，统一按 "user" 前缀识别。
+# legacy_add_memory 是内部兜底名，不加分。
+_IMPORTANCE_SOURCE_BONUS = {
+    "player": 15,
+    "ui_button": 15,
+    "llm_set": 15,
+    "api_direct": 15,
+    "ui_edit": 10,
+    "ui_restore": 10,
+}
+
+
+def _importance_source_bonus(source: str) -> int:
+    """来源加成分：玩家侧 +15，玩家编辑/恢复 +10，其余（GM/内部）不加分。"""
+    src = str(source or "").strip().lower()
+    if not src:
+        return 0
+    if src.startswith("user") or src == "player":
+        return 15
+    return _IMPORTANCE_SOURCE_BONUS.get(src, 0)
+
+# 事件关键词：剧本游戏真正需要「记得」的是不可逆、有后果的事件。
+_IMPORTANCE_EVENT_KEYWORDS = (
+    "死亡", "杀死", "阵亡", "牺牲", "重伤", "失踪", "背叛", "出卖",
+    "誓言", "承诺", "约定", "结盟", "婚约", "契约", "交易", "欠",
+    "获得", "失去", "夺取", "偷走", "交付", "委托", "悬赏", "通缉",
+    "钥匙", "线索", "秘密", "真相", "身份", "任务", "目标", "弱点",
+    "欠债", "欠款", "亏欠", "欠下",
+)
+_IMPORTANCE_EVENT_BONUS = 6
+_IMPORTANCE_EVENT_BONUS_MAX = 18
+
+# 关系/态度变化：直接影响后续 NPC 行为与对话选项。
+_IMPORTANCE_RELATION_KEYWORDS = (
+    "好感", "信任", "敌意", "仇恨", "关系", "态度", "盟友", "敌人", "恋人",
+)
+_IMPORTANCE_RELATION_BONUS = 4
+_IMPORTANCE_RELATION_BONUS_MAX = 8
+
+
+def memory_importance_for(
+    text: str,
+    *,
+    kind: str = "runtime_fact",
+    legacy_bucket: str | None = None,
+    source: str = "",
+    characters: list[str] | None = None,
+    location: str | None = None,
+) -> int:
+    """确定性重要性评分（0-100），写入时算一次并落库，后续不再依赖文本重算。
+
+    评分构成（全部有上限，避免一句话堆关键词刷满）：
+      · 桶基线：pinned 100 / notes 85 / abilities,resources 70 / facts 45 / 其它 40；
+      · kind：user_constraint +15、canon_fact +10、hypothesis -15；
+      · 来源：player/user +15、ui_edit/ui_restore +10；
+      · 事件关键词：每个 +6，最多 +18；
+      · 关系关键词：每个 +4，最多 +8；
+      · 实体标注：每个 +4，最多 +8；地点标注 +3。
+    典型分档：普通旁白事实 45~55；带角色+事件的剧情事实 65~80；
+    玩家手写笔记 85+；固定记忆 100。
+    """
+    body = str(text or "")
+    score = _IMPORTANCE_BUCKET_BASE.get(str(legacy_bucket or ""), MEMORY_IMPORTANCE_DEFAULT)
+    if kind == "user_constraint":
+        score += 15
+    elif kind == "canon_fact":
+        score += 10
+    elif kind == "hypothesis":
+        # 推测默认不进 facts 归档/注入；低分只用于排序时把它排在事实之后。
+        score -= 15
+    score += _importance_source_bonus(source)
+    _event_hits = sum(1 for kw in _IMPORTANCE_EVENT_KEYWORDS if kw in body)
+    score += min(_IMPORTANCE_EVENT_BONUS_MAX, _event_hits * _IMPORTANCE_EVENT_BONUS)
+    _relation_hits = sum(1 for kw in _IMPORTANCE_RELATION_KEYWORDS if kw in body)
+    score += min(_IMPORTANCE_RELATION_BONUS_MAX, _relation_hits * _IMPORTANCE_RELATION_BONUS)
+    _char_count = len({str(c).strip() for c in (characters or []) if str(c).strip()})
+    score += min(8, _char_count * 4)
+    if str(location or "").strip():
+        score += 3
+    return max(0, min(100, int(score)))
 
 
 # 本次修复：旧版柏林剧本的建议规则从硬编码迁到 script_overrides 后，仓库里没有
@@ -633,6 +741,11 @@ class GameState(ApplyOpsMixin, RulesGameplayMixin, PendingMixin):
                             "ts": now_ts,
                             "status": "active",
                             "legacy_bucket": bucket,
+                            # 本轮优化：迁移路径也按同一确定性规则落 importance，
+                            # 避免旧档在下一次 maintenance 对账前出现“无分数”窗口。
+                            "importance": memory_importance_for(
+                                text, legacy_bucket=bucket,
+                                source="legacy_migration_v1"),
                         })
                 if backfilled:
                     memory_block["items"] = backfilled
@@ -1490,6 +1603,17 @@ class GameState(ApplyOpsMixin, RulesGameplayMixin, PendingMixin):
                 target["archived"] = False
                 target["turn"] = int(self.data.get("turn", 0) or 0)
                 target["source"] = str(source or "ui_restore")
+                # 本轮优化：旧档条目恢复时补 importance（已有则保留）。恢复是玩家
+                # 显式动作，来源加成与「玩家手写」一致。
+                if "importance" not in target:
+                    target["importance"] = memory_importance_for(
+                        target_text,
+                        kind=str(target.get("kind") or "runtime_fact"),
+                        legacy_bucket=b,
+                        source=str(source or "ui_restore"),
+                        characters=target.get("characters"),
+                        location=target.get("location"),
+                    )
                 target.pop("superseded_at_turn", None)
                 target.pop("superseded_by", None)
                 target.pop("supersede_reason", None)
@@ -1588,6 +1712,9 @@ class GameState(ApplyOpsMixin, RulesGameplayMixin, PendingMixin):
         # 精确去重排在洪泛闸**前面**:重复写入本来就什么都不改,拿「超额」当理由回它会
         # 误导 GM(它会以为自己在刷屏,其实只是重写了一条已有的)。
         if text in items:
+            # 桶里已有同文 = 这条事实本来就生效；顺手修掉旧档可能残留的 tombstone。
+            if bucket == "facts":
+                self._clear_fact_tombstone(text)
             return False, "已含此条(去重)"
         # 洪泛闸(群反馈:一门功法逐窍拆写刷了二十多条能力)。放在这里是因为这里是所有
         # 写入路径的共同终点;拒绝会原样退回给 GM,绝不静默丢玩家可见资产。
@@ -1596,25 +1723,16 @@ class GameState(ApplyOpsMixin, RulesGameplayMixin, PendingMixin):
         if blocked:
             self._log_memory_flood_block(bucket, text, blocked, origin)
             return False, blocked
+        # 写入确定放行后才清 tombstone/归档索引（若在洪泛闸前清，被拒的写入会让
+        # 一条已删除事实恢复冷召回资格）。
+        if bucket == "facts":
+            self._clear_fact_tombstone(text)
         # 本次记忆修复:写入时顺手做确定性实体/时间标注（不调 LLM）。characters 让
         # query_memory 的实体过滤和「按实体召回」可用；time_label 记录写入时的世界
         # 时间，方便后续按时间窗口召回。识别不出实体时留空，不影响原文本注入。
         _chars = self._memory_characters_for(text)
         _time_label = str((self.data.get("world") or {}).get("time") or "").strip() or None
         _ctx = self._memory_context_meta()
-        # 重新添加一条曾删除的事实：清掉删除 tombstone，否则它虽然回到 facts 桶，
-        # 冷归档查询仍会因 tombstone 被永久排除。
-        if bucket == "facts":
-            _deleted = self.data.setdefault("memory", {}).get("facts_deleted")
-            if isinstance(_deleted, list) and text in _deleted:
-                self.data["memory"]["facts_deleted"] = [t for t in _deleted if t != text]
-            _hashes = self.data["memory"].get("facts_deleted_hashes")
-            if isinstance(_hashes, list) and _hashes:
-                _h = hashlib.sha1(text.encode("utf-8")).hexdigest()[:16]
-                if _h in _hashes:
-                    self.data["memory"]["facts_deleted_hashes"] = [
-                        h for h in _hashes if h != _h
-                    ]
         # 保守自动 supersede 只对 GM/史官写入的 facts 生效（玩家手写 facts 不自动取代）。
         # 它可能重建 memory.facts 列表，所以必须在 append 前调用并重新取一次桶引用。
         # skip_auto_supersede：显式 supersede 的 new_text 已经由那条 op 表达过意图，
@@ -1629,7 +1747,10 @@ class GameState(ApplyOpsMixin, RulesGameplayMixin, PendingMixin):
         self.add_memory_item(
             text=text,
             kind="runtime_fact",
-            source="legacy_add_memory",
+            # 保留真实 origin（ui_button/llm_set/api_direct/gm...）而不是统一写成
+            # legacy_add_memory：查询面板能看出是谁写的，importance 也能据此给
+            # 玩家亲手写入的记忆加来源分。origin 为空时退回旧名称兼容旧调用方。
+            source=str(origin or "").strip() or "legacy_add_memory",
             legacy_bucket=bucket,
             characters=_chars or None,
             time_label=_time_label,
@@ -1675,6 +1796,7 @@ class GameState(ApplyOpsMixin, RulesGameplayMixin, PendingMixin):
         status: str = "active",
         supersedes: list[str] | None = None,
         legacy_bucket: str | None = None,
+        importance: int | None = None,
     ) -> str:
         text = _clean_item(text)
         if not text:
@@ -1709,6 +1831,31 @@ class GameState(ApplyOpsMixin, RulesGameplayMixin, PendingMixin):
             item["supersedes"] = list(supersedes)
         if legacy_bucket:
             item["legacy_bucket"] = legacy_bucket
+        # 本轮优化：写入即算确定性重要性（0-100）。调用方显式传入时以传入值为准
+        # （供未来 UI/手动调整使用）；不传则按桶/来源/关键词/实体规则评分。
+        # 分数落库后不再随文本改动以外的因素变化，保证归档/召回行为可复现。
+        if importance is None:
+            importance = memory_importance_for(
+                text,
+                kind=kind,
+                legacy_bucket=legacy_bucket,
+                source=source,
+                characters=characters,
+                location=location,
+            )
+        try:
+            importance_int = int(importance)
+        except (TypeError, ValueError):
+            # 外部显式传入非法值时不能中断写入：退回规则评分，保证记忆不丢。
+            importance_int = memory_importance_for(
+                text,
+                kind=kind,
+                legacy_bucket=legacy_bucket,
+                source=source,
+                characters=characters,
+                location=location,
+            )
+        item["importance"] = max(0, min(100, importance_int))
         items = self.data.setdefault("memory", {}).setdefault("items", [])
         items.append(item)
         self._prune_memory_items(items)
@@ -1780,8 +1927,8 @@ class GameState(ApplyOpsMixin, RulesGameplayMixin, PendingMixin):
         items 里有、legacy 桶里没有 → 已被覆盖/删除的事实还能被召回（僵尸记忆）。
 
         对账策略（用户拍板：legacy 桶是“当前生效集合”的权威）：
-          · legacy 文本缺少 active item → 补建 item（turn=0 / source=reconcile_v1，
-            不伪造时间，避免被自动归档立刻清走）；
+          · legacy 文本缺少 active item → 补建 item（turn=当前回合 / source=reconcile_v1；
+            原始时间不可考，用当前回合避免刚补建就被年龄归档清走）；
           · active item 的文本已不在 legacy 桶 → 标 `orphaned`（保留历史，不硬删），
             让它立即退出召回/归档/query_memory；
           · 顺带清洗 legacy 桶的空值、验收元信息和重复文本。
@@ -1820,6 +1967,22 @@ class GameState(ApplyOpsMixin, RulesGameplayMixin, PendingMixin):
                 if cleaned != raw_list:
                     mem[bucket] = cleaned
                     changed = True
+
+            # 1.5) importance 回填（本轮优化）：旧 item 没有该字段，按与写入时完全相同
+            # 的确定性规则补上。只补缺失字段、不覆盖已有分数 —— 分数一旦落库就稳定，
+            # 不会因为后来新增了角色/地点而悄悄改变归档顺序。
+            for it in items:
+                if not isinstance(it, dict) or "importance" in it:
+                    continue
+                it["importance"] = memory_importance_for(
+                    str(it.get("text") or ""),
+                    kind=str(it.get("kind") or "runtime_fact"),
+                    legacy_bucket=it.get("legacy_bucket"),
+                    source=str(it.get("source") or ""),
+                    characters=it.get("characters"),
+                    location=it.get("location"),
+                )
+                changed = True
 
             # 2) active item 按 bucket+text 建索引。
             active_keys: set[tuple[str, str]] = set()
@@ -1929,6 +2092,62 @@ class GameState(ApplyOpsMixin, RulesGameplayMixin, PendingMixin):
             self._touch_memory()
         return out
 
+    def _clear_fact_tombstone(self, text: str) -> None:
+        """把一条重新生效的事实从删除 tombstone / 归档索引里清掉。
+
+        与 _tombstone_fact_text 成对：重新添加、在 facts 桶里重写、编辑成旧文本时
+        调用，保证「当前 facts 桶里的文本」永远不会被冷查询因 tombstone 排除。
+        """
+        t = _clean_item(str(text or ""))
+        if not t:
+            return
+        try:
+            mem = self.data.setdefault("memory", {})
+            deleted = mem.get("facts_deleted")
+            if isinstance(deleted, list):
+                mem["facts_deleted"] = [
+                    x for x in deleted if _clean_item(str(x)) != t
+                ]
+            hashes = mem.get("facts_deleted_hashes")
+            if isinstance(hashes, list) and hashes:
+                h = hashlib.sha1(t.encode("utf-8")).hexdigest()[:16]
+                mem["facts_deleted_hashes"] = [x for x in hashes if x != h]
+            arch = mem.get("archived_facts")
+            if isinstance(arch, list):
+                mem["archived_facts"] = [
+                    x for x in arch if _clean_item(str(x)) != t
+                ]
+        except Exception:
+            pass
+
+    def _tombstone_fact_text(self, text: str) -> None:
+        """记录一条 facts 删除 tombstone（文本 + sha1[:16] 双保险）。
+
+        KB 冷归档 afactc 是永久事件行，query_memory 的冷查询与 episodic_recall
+        都不看 item.status；删除 / 整桶覆盖 / 编辑掉的事实必须靠这里才能在冷检索里
+        被排除。文本列表有上限（1000），hash 体积小保留更多（5000）。
+        恢复 / 重新添加路径负责清 tombstone（restore_memory_item_ex / add_memory_ex）。
+        """
+        t = _clean_item(str(text or ""))
+        if not t:
+            return
+        try:
+            mem = self.data.setdefault("memory", {})
+            deleted = mem.setdefault("facts_deleted", [])
+            if isinstance(deleted, list) and t not in deleted:
+                deleted.append(t)
+                if len(deleted) > 1000:
+                    del deleted[:-1000]
+            hashes = mem.setdefault("facts_deleted_hashes", [])
+            if isinstance(hashes, list):
+                h = hashlib.sha1(t.encode("utf-8")).hexdigest()[:16]
+                if h not in hashes:
+                    hashes.append(h)
+                    if len(hashes) > 5000:
+                        del hashes[:-5000]
+        except Exception:
+            pass
+
     def remove_memory(self, bucket: str, index: int):
         items = self.data["memory"].get(bucket, [])
         if not (0 <= index < len(items)):
@@ -1963,21 +2182,17 @@ class GameState(ApplyOpsMixin, RulesGameplayMixin, PendingMixin):
         remaining = sum(1 for t in items if _clean_item(str(t)) == removed_text)
         # 本次记忆修复：如果这条事实被彻底删除，记 tombstone，KB 冷归档/查询
         # 不应再把它召回。只记文本，不保留 item 元数据。
-        if bucket == "facts" and remaining == 0 and removed_text:
+        if bucket == "facts" and removed_text:
             mem = self.data.setdefault("memory", {})
-            deleted = mem.setdefault("facts_deleted", [])
-            if isinstance(deleted, list) and removed_text not in deleted:
-                deleted.append(removed_text)
-                if len(deleted) > 1000:
-                    del deleted[:-1000]
-            hashes = mem.setdefault("facts_deleted_hashes", [])
-            if isinstance(hashes, list):
-                h = hashlib.sha1(removed_text.encode("utf-8")).hexdigest()[:16]
-                if h not in hashes:
-                    hashes.append(h)
-                    # hash 很小，保留更多，覆盖文本 tombstone 被裁后的远期删除。
-                    if len(hashes) > 5000:
-                        del hashes[:-5000]
+            # 当前生效桶里若已没有这条文本，archived_facts 索引也不应再列它
+            # （历史原文仍保留在 items 的 archived 条目里，面板可恢复）。
+            arch = mem.get("archived_facts")
+            if isinstance(arch, list):
+                mem["archived_facts"] = [
+                    t for t in arch if _clean_item(str(t)) != removed_text
+                ]
+            if remaining == 0:
+                self._tombstone_fact_text(removed_text)
         to_remove = max(0, len(matched) - remaining)
         while to_remove > 0 and matched:
             structured.pop(matched[0])
@@ -2006,6 +2221,7 @@ class GameState(ApplyOpsMixin, RulesGameplayMixin, PendingMixin):
 
         返回 (是否成功, 给调用方/GM 看的说明)。任何异常都返回失败，不半写。
         """
+        _mem_backup = None
         try:
             bucket = str(bucket or "").strip()
             if bucket not in {"resources", "abilities", "facts", "pinned", "notes"}:
@@ -2023,6 +2239,9 @@ class GameState(ApplyOpsMixin, RulesGameplayMixin, PendingMixin):
                 cleaned.append(text)
 
             mem = self.data.setdefault("memory", {})
+            # 原子性：下面会分步改 tombstone / superseded / items；任何异常必须整体
+            # 回滚，否则调用方收到“失败”但 state 已被半写（与函数契约不符）。
+            _mem_backup = copy.deepcopy(mem)
             # 新列表里重新出现的事实不再算“已删除”，清掉 tombstone。
             if bucket == "facts":
                 _deleted = mem.get("facts_deleted")
@@ -2068,6 +2287,34 @@ class GameState(ApplyOpsMixin, RulesGameplayMixin, PendingMixin):
                     it["supersede_source"] = str(source or "gm:json")
                     removed_items += 1
 
+            # 3.5) 本轮审查修复：完整重写 facts 桶时，被移除的文本也要落删除 tombstone。
+            # 旧实现只把 item 标 superseded（state 内历史），但 KB 冷归档（afactc）不受
+            # item.status 控制 —— 玩家/GM 用 `set memory.facts` 删掉一条曾归档的事实后，
+            # query_memory(scope=archived) / episodic 仍能从冷存储把它召回，表现为
+            # 「删掉的事实又回来了」。与 remove_memory 保持同一套 text+hash 双保险；
+            # 恢复/重新添加时 restore_memory_item_ex / add_memory 会清 tombstone。
+            if bucket == "facts":
+                _old_list = mem.get(bucket)
+                _old_texts = {
+                    _clean_item(str(t))
+                    for t in (_old_list if isinstance(_old_list, list) else [])
+                }
+                # 同时覆盖只存在于 items、legacy 桶已漂移丢失的条目。
+                _removed_texts = {
+                    t for t in ((_old_texts | set(active_by_text)) - seen) if t
+                }
+                if _removed_texts:
+                    for t in _removed_texts:
+                        self._tombstone_fact_text(t)
+                    # 已被当前生效集合移除的文本不应继续挂在 archived_facts 索引里
+                    # （历史条目仍在 items，面板可恢复）。
+                    _arch = mem.get("archived_facts")
+                    if isinstance(_arch, list):
+                        mem["archived_facts"] = [
+                            t for t in _arch
+                            if _clean_item(str(t)) not in _removed_texts
+                        ]
+
             # 4) 新列表里没有 active item 的文本 → 补建 item（archived 同文则直接复活，
             #    superseded 同文则新建，保留旧版本的 supersede 链）。
             created = 0
@@ -2091,6 +2338,16 @@ class GameState(ApplyOpsMixin, RulesGameplayMixin, PendingMixin):
                     for key in ("location", "scene_id", "phase_label"):
                         if not revived.get(key) and _ctx.get(key):
                             revived[key] = _ctx[key]
+                    # 本轮优化：旧归档 item 可能没有 importance，复活时补算（已有则保留）。
+                    if "importance" not in revived:
+                        revived["importance"] = memory_importance_for(
+                            text,
+                            kind=str(revived.get("kind") or "runtime_fact"),
+                            legacy_bucket=bucket,
+                            source=str(source or "gm:json"),
+                            characters=revived.get("characters"),
+                            location=revived.get("location") or _ctx.get("location"),
+                        )
                     created += 1
                     if bucket == "facts":
                         _arch = mem.get("archived_facts")
@@ -2112,6 +2369,14 @@ class GameState(ApplyOpsMixin, RulesGameplayMixin, PendingMixin):
 
             # 5) 最后才替换 legacy 列表：即使上面某一步异常，也不会出现“桶已改、items 没改”。
             mem[bucket] = cleaned
+            # 新列表里的 facts 已成为当前生效事实，不能继续挂在 archived_facts
+            # 索引里（否则同一句既是「当前事实」又是「远期归档」，热/冷查询重复）。
+            if bucket == "facts":
+                _arch = mem.get("archived_facts")
+                if isinstance(_arch, list) and seen:
+                    mem["archived_facts"] = [
+                        t for t in _arch if _clean_item(str(t)) not in seen
+                    ]
 
             if removed_items or created:
                 try:
@@ -2136,6 +2401,13 @@ class GameState(ApplyOpsMixin, RulesGameplayMixin, PendingMixin):
                 f"取代 {removed_items} 条，新建 {created} 条）"
             )
         except Exception as exc:  # noqa: BLE001 —— 写入口失败要回给调用方，不破回合
+            # 已发生的分步修改整体回滚；同时 bump rev 让 recall 索引重建。
+            if _mem_backup is not None:
+                try:
+                    self.data["memory"] = _mem_backup
+                    self._touch_memory()
+                except Exception:
+                    pass
             return False, f"重写记忆桶失败：{exc}"
 
     def edit_memory(self, bucket: str, index: int, new_text: str) -> bool:
@@ -2159,6 +2431,21 @@ class GameState(ApplyOpsMixin, RulesGameplayMixin, PendingMixin):
             self.data.setdefault("memory", {})["items"] = structured
         if not old_text:
             return True
+        # 编辑替换了旧文本：旧版本不应再从冷归档被召回。若桶里仍有同文重复条，
+        # 说明不是彻底替换，不记 tombstone；archived_facts 索引始终去掉旧文本
+        # （当前生效桶已不再以旧文本出现）。
+        if bucket == "facts":
+            # 新文本成为当前事实：若它曾是「已删除/归档」状态，先清 tombstone/索引，
+            # 避免编辑成旧文本后冷查询仍把它排除。
+            self._clear_fact_tombstone(new_text)
+            mem = self.data.setdefault("memory", {})
+            arch = mem.get("archived_facts")
+            if isinstance(arch, list):
+                mem["archived_facts"] = [
+                    t for t in arch if _clean_item(str(t)) != old_text
+                ]
+            if old_text not in items:
+                self._tombstone_fact_text(old_text)
         for it in structured:
             if (
                 isinstance(it, dict)
@@ -2168,6 +2455,16 @@ class GameState(ApplyOpsMixin, RulesGameplayMixin, PendingMixin):
             ):
                 it["text"] = new_text
                 it["source"] = "ui_edit"
+                # 本轮优化：文本变了，原重要性分数不再代表这条记忆（可能新增或
+                # 去掉了「钥匙/背叛/承诺」等事件关键词），按新文本重算一次。
+                it["importance"] = memory_importance_for(
+                    new_text,
+                    kind=str(it.get("kind") or "runtime_fact"),
+                    legacy_bucket=bucket,
+                    source="ui_edit",
+                    characters=it.get("characters"),
+                    location=it.get("location"),
+                )
                 self._touch_memory()
                 return True
         # 没有对应 item：补建一条 active item（turn 用当前回合，便于后续归档/召回）。

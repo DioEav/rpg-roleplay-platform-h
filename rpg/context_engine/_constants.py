@@ -26,7 +26,11 @@ _BASE_LAYER_CHARS = {
     "timeline": 2400,
     "timeline_pending": 2400,     # provider 实际层 id,补全防默认 1800 截断
     "novel_timeline": 2400,
-    "memory": 4000,
+    # 本轮审查修复：原 4000 字符会与 MemorySettings.token_budget(最高 5000 token)
+    # 打架 —— factor=1.0 时 2400 token 就需要 4800 字符，超过 4000 后会被这里
+    # 静默截断，用户把预算调大却不生效。提到 12000 覆盖 5000 token × factor 1.0
+    # （实际注入量仍由 MemoryAssembler 的 token_budget 决定，默认档远用不到）。
+    "memory": 12000,
     "worldline": 3000,
     "worldline_directive": 3000,   # task 140: 玩家给 GM 的高优先级导演指令
     "anchor_pending": 8000,        # 世界线收束·接下来的锚点 — ch1 通常 8+ 实体
