@@ -69,6 +69,9 @@ def test_auto_archive_exempts_notes_and_pinned_but_archives_facts():
 def test_memory_provider_still_renders_notes_after_long_session_with_precedence():
     ms = MemorySettings()
     s = _long_session_state(_archive_turn(ms))
+    # 本次记忆修复: 归档已移出读路径，由回合后 maintenance 执行。本测试验证
+    # 「归档之后 MemoryProvider 仍渲染玩家笔记/固定记忆」，所以显式先跑归档。
+    _maybe_auto_archive(s, ms)
     text = MemoryProvider().collect(s, manifest=None, demand=None, services=_Svc()).layers[0]["content"]
 
     # 根因①修复:长会话归档后,玩家笔记/固定记忆仍被渲染给 GM

@@ -26,6 +26,18 @@ def _estimate_tokens(text: str) -> int:
     return max(1, len(text or "") // 2)
 
 
+def estimate_tokens_with_factor(text: str, factor: float = 1.0) -> int:
+    """带配置系数的 token 估算（本次记忆修复）。
+
+    基础仍是 chars//2（兼容旧行为）；factor 由 MemorySettings.token_estimate_factor
+    控制，memory / episodic 等记忆相关层统一使用，避免同一份上下文里
+    “记忆层按 2.0 裁剪、往事层仍按 1.0” 的预算不一致。
+    """
+    base = _estimate_tokens(text)
+    f = max(0.5, min(3.0, float(factor or 1.0)))
+    return max(1, int(round(base * f)))
+
+
 def _cache_plan(debug_layers: list[dict[str, Any]], prompt_parts: list[str]) -> dict[str, Any]:
     # 与 build_context_bundle 的 layer 顺序对齐：rules → agent_runtime → player_card
     # 是真正的稳定前缀，每轮不变；后面接 npc_cards/worldbook 算半稳定（可选纳入）。

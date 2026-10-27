@@ -153,6 +153,7 @@ def build_context_bundle(
     manifest: dict | None = None,
     save_id: int | None = None,  # task 107E
     budget_chars: int | None = None,  # v1.82.0 全局预算求解;None/0 = 每层各拿 want(旧行为)
+    user_id: int | None = None,  # 本次记忆修复：fallback provider 也要拿用户级记忆设置
 ) -> dict[str, Any]:
     """组装单轮 prompt 上下文。
 
@@ -180,7 +181,7 @@ def build_context_bundle(
             from context_providers import Demand
             from retrieval import retrieve_context as _retrieve_fn
             services = ProviderServices(
-                user_id=None, script_id=script_id, book_id=book_id,
+                user_id=user_id, script_id=script_id, book_id=book_id,
                 save_id=save_id,  # task 107E
                 retrieve_fn=_retrieve_fn,
                 timeline_filter_fn=timeline_filter_for_label,

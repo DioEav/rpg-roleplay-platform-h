@@ -51,6 +51,11 @@ DEFAULT_NOVEL_MANIFEST: dict = {
         "novel_characters",
         "novel_worldbook",
         "memory",
+        # 本次记忆修复: 剧本模式也挂载玩家自己的全程历史召回（此前只有 tavern/
+        # freeform/module 有；novel 的检索只查原著 canon，玩家历史没有语义通道）。
+        # feature flag episodic_recall 默认开、可在设置里关；与 novel_retrieval
+        # 的原著 RAG 正交，不会把原著当玩家历史。
+        "episodic_recall",
         "worldline",
         # #18 复读修复: 不再注入 recent_chat 文本层 — 历史已由 master 以
         # state.history_messages() 作为结构化 messages[] 传给模型,文本层是

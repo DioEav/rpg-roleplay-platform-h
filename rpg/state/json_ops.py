@@ -408,6 +408,8 @@ def _op_conflict_key(op: dict) -> tuple:
         return (kind, str(op.get("id") or ""))
     if kind == "consequence":
         return ("consequence", str(op.get("text") or "").strip())
+    if kind == "supersede":
+        return ("supersede", str(op.get("id") or op.get("old") or op.get("old_text") or "").strip())
     if kind == "agenda":
         return ("agenda", str(op.get("name") or "").strip())
     return (kind, _op_fingerprint(op))

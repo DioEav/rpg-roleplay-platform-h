@@ -60,6 +60,108 @@ def test_dormant_on_generic_input(monkeypatch):
     assert not c.applied
 
 
+def test_low_signal_continue_skips_without_retrieval(monkeypatch):
+    """默认开后，纯「继续」不应触发 DB/history 召回（低信号闸）。"""
+    c = _collect("继续", _mk_history(), monkeypatch=monkeypatch)
+    assert not c.applied
+    c2 = _collect("嗯", _mk_history(), monkeypatch=monkeypatch)
+    assert not c2.applied
+
+
+def test_dedupes_against_memory_recalled_texts(monkeypatch):
+    """memory 层已召回的相关事实/笔记，episodic 不应再注入同文片段。"""
+    import core.feature_flags as ff
+    monkeypatch.setattr(ff, "feature_enabled", lambda key, uid=None: True)
+    state = _FakeState(_mk_history())
+    state._memory_recalled_texts = {"交给菲奥娜保管"}
+    state._memory_recalled_turn = 0  # _FakeState.data.turn 默认 0
+    services = ProviderServices(user_id=None, save_id=None)
+    demand = Demand(player_intent="我想起交给菲奥娜的银怀表",
+                    retrieval_query="我想起交给菲奥娜的银怀表")
+    c = EpisodicRecallProvider().collect(state, DEFAULT_FREEFORM_MANIFEST, demand, services)
+    assert c.applied
+    assert c.debug["deduped_against_memory"] >= 1
+    # 被 memory 层召回的那段原文不应再出现在相关往事里
+    assert "交给菲奥娜保管" not in c.layers[0]["content"]
+
+
+def test_dedupes_against_memory_injected_texts(monkeypatch):
+    """最近 facts/summaries/篇章 等实际注入正文也应参与跨层去重。"""
+    import core.feature_flags as ff
+    monkeypatch.setattr(ff, "feature_enabled", lambda key, uid=None: True)
+    state = _FakeState(_mk_history())
+    state._memory_injected_texts = {"我把祖传的银怀表交给菲奥娜保管,叮嘱她别打开表盖"}
+    state._memory_recalled_turn = 0
+    services = ProviderServices(user_id=None, save_id=None)
+    demand = Demand(player_intent="我想起交给菲奥娜的银怀表",
+                    retrieval_query="我想起交给菲奥娜的银怀表")
+    c = EpisodicRecallProvider().collect(state, DEFAULT_FREEFORM_MANIFEST, demand, services)
+    assert c.debug.get("deduped_against_memory", 0) >= 1
+    # 被 memory 层注入的精确原文不能再作为「相关往事」重复出现。
+    assert "我把祖传的银怀表交给菲奥娜保管" not in (c.layers[0]["content"] if c.layers else "")
+
+
+def test_low_signal_patterns_are_skipped():
+    from context_providers.episodic_recall import _is_low_signal_query
+    for q in ("继续推进剧情吧", "好的。", "嗯嗯！", "ok", "可以"):
+        assert _is_low_signal_query(q), q
+    assert not _is_low_signal_query("然后我去码头找菲奥娜")
+
+
+def test_history_scan_is_capped(monkeypatch):
+    import core.feature_flags as ff
+    import kb.episodic as ep
+    monkeypatch.setattr(ff, "feature_enabled", lambda key, uid=None: True)
+    captured = {}
+
+    def _fake_merged(save_id, commit, user_id, query, history, *, k=3, exclude_recent=12):
+        captured["n"] = len(history)
+        return []
+
+    monkeypatch.setattr(ep, "retrieve_episodic_merged", _fake_merged)
+    long_hist = [{"role": "user", "content": f"第{i}轮玩家在码头调查银怀表"} for i in range(2000)]
+    c = _collect("银怀表在码头吗", long_hist, monkeypatch=monkeypatch)
+    assert not c.applied
+    assert captured["n"] == 1500
+
+
+def test_query_embedding_cache_avoids_repeated_calls(monkeypatch):
+    import kb.episodic as ep
+    import platform_app.knowledge.embedding as emb
+
+    calls = {"n": 0}
+
+    def _fake_embed(text, user_id=None):
+        calls["n"] += 1
+        return [0.1, 0.2]
+
+    monkeypatch.setattr(emb, "embed_query", _fake_embed)
+    ep._QUERY_EMBED_CACHE.clear()
+    assert ep._cached_embed_query("菲奥娜的银怀表", 1) == [0.1, 0.2]
+    assert ep._cached_embed_query("菲奥娜的银怀表", 1) == [0.1, 0.2]
+    assert calls["n"] == 1
+    # 不同 user/query 不串缓存
+    ep._cached_embed_query("银怀表", 2)
+    assert calls["n"] == 2
+
+
+def test_episodic_uses_memory_token_factor(monkeypatch):
+    import core.feature_flags as ff
+    from context_engine._utils import estimate_tokens_with_factor
+
+    monkeypatch.setattr(ff, "feature_enabled", lambda key, uid=None: True)
+    state = _FakeState(_mk_history())
+    state._memory_token_factor = 2.0
+    services = ProviderServices(user_id=None, save_id=None)
+    demand = Demand(player_intent="我想起交给菲奥娜的银怀表",
+                    retrieval_query="我想起交给菲奥娜的银怀表")
+    c = EpisodicRecallProvider().collect(state, DEFAULT_FREEFORM_MANIFEST, demand, services)
+    assert c.applied
+    text = c.layers[0]["content"]
+    assert c.tokens_estimate == estimate_tokens_with_factor(text, 2.0)
+    assert c.debug["token_estimate_factor"] == 2.0
+
+
 def test_flag_off_skips(monkeypatch):
     c = _collect("我想起交给菲奥娜的银怀表", _mk_history(), flag_on=False, monkeypatch=monkeypatch)
     assert not c.applied
@@ -93,12 +195,16 @@ def test_registered_in_non_novel_packs():
         assert "episodic_recall" in pack["context_providers"], pack["id"]
 
 
-def test_novel_pack_not_double_wired():
-    """novel 走 retrieve_context 内的注入,pack 不挂本 provider(防双注入)。"""
+def test_novel_pack_wires_episodic_recall():
+    """本次记忆修复: 剧本模式也挂玩家全程历史召回。
+
+    novel_retrieval 查的是原著 canon；episodic_recall 查的是玩家自己的 kb_events/
+    history，两者正交，不是双注入。feature flag 默认开、可在设置里关。
+    """
     import context_providers.registry as reg
     novel = next(v for v in vars(reg).values()
                  if isinstance(v, dict) and v.get("kind") == "novel_adaptation")
-    assert "episodic_recall" not in novel["context_providers"]
+    assert "episodic_recall" in novel["context_providers"]
 
 
 def test_merged_strong_history_beats_weak_kb_event():

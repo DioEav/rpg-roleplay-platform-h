@@ -134,13 +134,12 @@ class TestPremiseThisTradeoffRestsOn(unittest.TestCase):
 class TestAllClientsReadTheFlag(unittest.TestCase):
     """同面横扫:三端都消费 login-code/request,漏一端就还有人卡在死路上。"""
 
-    def test_web_routes_to_register(self):
+    def test_web_login_code_flow_removed(self):
+        """Web 端「邮箱验证码登录」已于 2026-10 下线，不再请求 loginCodeRequest。
+        iOS/移动端仍保留旧流程（下面两个用例继续覆盖 registered 字段）。"""
         src = (REPO / "frontend/src/login-app.jsx").read_text(encoding="utf-8")
-        i = src.index("const j = await window.api.auth.loginCodeRequest")
-        body = src[i: i + 900]
-        self.assertIn("j.registered === false", body)
-        self.assertIn("setMode('register')", body)
-        self.assertIn("email: cleanEmail", body)   # 邮箱预填,别让人重打
+        self.assertNotIn("loginCodeRequest", src)
+        self.assertIn("已下线", src)
 
     def test_ios_surfaces_it(self):
         api = (REPO / "ios/Sources/API.swift").read_text(encoding="utf-8")

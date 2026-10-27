@@ -1,22 +1,51 @@
-"""episodic_recall.py — 永恒记忆·情景召回 context provider(酒馆/自由/模组模式)。
+"""episodic_recall.py — 永恒记忆·情景召回 context provider。
 
-原著改编档(novel_adaptation)的情景召回走 NovelProvider→retrieve_context 内的注入,
-本 provider **不挂 novel pack**(避免双注入);挂 tavern/freeform/module —— 这些模式
-此前完全没有长程召回(用户实锤:「修的是游戏模式,酒馆没得到修复?」→ 属实,补齐)。
+本次记忆修复后，novel/script、tavern、freeform、module 都挂载本 provider：
+  · 原著改编/剧本模式此前没有玩家历史的召回通道（novel_retrieval 只查原著 canon）；
+  · 酒馆/自由/模组此前也没有长程召回（用户实锤「修的是游戏模式，酒馆没得到修复」）。
+两路正交：novel_retrieval 查原著，episodic_recall 查玩家自己创造的过去。
 
-语料优先级:
-  1. kb_events(谱系 CTE 分支隔离,vector→keyword,复用 kb.episodic.retrieve_episodic);
-  2. kb_events 空(酒馆跳过史官=生产常态,75 档仅 4 档有事件)→ state 全量 history
-     确定性打分(score_history_messages),排除近因 6 轮窗口已原文注入的 12 条。
+语料：kb_events（谱系 CTE，分支隔离）+ state.history，同池打分合并取 top-k。
+  · kb_events 有嵌入时先走向量，否则/无命中走确定性关键词；
+  · 酒馆跳过史官时 kb_events 很少，history 兜底是主路径；
+  · 本轮 memory 层已注入的正文会跨层去重，避免同一事实在「事实/摘要/篇章」和
+    「相关往事」里重复出现。
 
-feature gate: episodic_recall(与 novel 路径同一 flag,全局已开);无命中=休眠零注入。
+feature gate: episodic_recall（默认开，可在设置里关）；无命中=休眠零注入。
 """
 from __future__ import annotations
+
+import re
 
 from .base import ContextContribution, ContextProvider
 from .registry import register_provider
 
 PRIORITY = 78  # 略低于 memory(60 之上为先出;此处按既有语义放在记忆层附近、近因窗口之前)
+
+# 默认开（本次记忆修复）后，每回合都可能触发一次 kb_events/history 检索。
+# 纯推进/确认类输入（"继续""好""嗯"）几乎不可能指向某个远期事件，直接跳过，
+# 避免默认开给每一轮都加一次 DB 查询 + 全量 history 打分。
+_LOW_SIGNAL_QUERIES = frozenset((
+    "继续", "继续吧", "继续推进", "继续推进剧情", "好", "好的", "嗯", "嗯嗯", "行", "可以",
+    "走吧", "然后呢", "接着", "接着来", "往下", "下一个", "开始吧", "ok", "okay", "yes",
+))
+# 纯确认/语气词（可带标点）：整句只有这些字符时也视为低信号。
+_LOW_SIGNAL_ONLY_RE = re.compile(r"^[好嗯行可以okayesy\s,，.!！?？。…、]+$", re.IGNORECASE)
+# history 扫描上限：酒馆没有 kb_events 时 history 是唯一语料，但长局 5000+ 条
+# 每回合全量打分成本会线性上升。保留最近 1500 条（约 750 回合）足够覆盖
+# “玩家还记得的往事”；更早的由 kb_events/摘要/arc 承担。
+_HISTORY_SCAN_CAP = 1500
+
+
+def _is_low_signal_query(query: str) -> bool:
+    q = (query or "").strip().strip("。！？!?…，,. ")
+    if len(q) < 2 or q.lower() in _LOW_SIGNAL_QUERIES:
+        return True
+    # “继续推进剧情吧”“接着往下”这类短指令：前缀是推进词且长度很短，视为低信号；
+    # “继续去码头找菲奥娜”这种带明确目标的输入不跳过。
+    if len(q) <= 8 and q.startswith(("继续", "接着", "往下", "下一个")):
+        return True
+    return bool(_LOW_SIGNAL_ONLY_RE.match(q))
 
 
 class EpisodicRecallProvider(ContextProvider):
@@ -32,6 +61,8 @@ class EpisodicRecallProvider(ContextProvider):
                  ).strip() or (getattr(demand, "player_intent", "") or "").strip()
         if not query:
             return ContextContribution.skipped(self.id, "无查询文本")
+        if _is_low_signal_query(query):
+            return ContextContribution.skipped(self.id, "低信号输入，跳过召回")
 
         data = getattr(state, "data", None)
         if not isinstance(data, dict):
@@ -40,24 +71,57 @@ class EpisodicRecallProvider(ContextProvider):
 
         # 合并同池打分:kb_events + 全量 history 单一排序(酒馆 e2e 实锤教训:两级
         # 短路会让一条弱相关 kb 事件压掉 history 里的真答案,模型只好编造)。
-        hist = data.get("history") or []
+        # 本次记忆修复：history 只取最近 _HISTORY_SCAN_CAP 条，避免几千回合后每轮
+        # 对全量历史做 gram 打分；更早的玩家历史由 kb_events/摘要/arc 承接。
+        hist = list(data.get("history") or [])[-_HISTORY_SCAN_CAP:]
         commit = 0
         if save_id:
-            try:
-                from platform_app.db import connect
-                with connect() as db:
-                    cm = db.execute(
-                        "select active_commit_id from game_saves where id=%s",
-                        (int(save_id),),
-                    ).fetchone()
-                commit = int((cm or {}).get("active_commit_id") or 0)
-            except Exception:
-                commit = 0
+            # 同回合缓存 active_commit_id：context 组装一回合只构建一次，但 provider
+            # 可能因重试/调试被调用多次；避免重复 DB 查询。
+            _cur_turn = int(data.get("turn") or 0)
+            _cache = getattr(state, "_episodic_commit_cache", None)
+            if (isinstance(_cache, tuple) and len(_cache) == 3
+                    and _cache[0] == save_id and _cache[1] == _cur_turn):
+                commit = int(_cache[2] or 0)
+            else:
+                try:
+                    from platform_app.db import connect
+                    with connect() as db:
+                        cm = db.execute(
+                            "select active_commit_id from game_saves where id=%s",
+                            (int(save_id),),
+                        ).fetchone()
+                    commit = int((cm or {}).get("active_commit_id") or 0)
+                except Exception:
+                    commit = 0
+                try:
+                    state._episodic_commit_cache = (save_id, _cur_turn, commit)
+                except Exception:
+                    pass
         from kb.episodic import retrieve_episodic_merged
         hits = retrieve_episodic_merged(
             int(save_id or 0), commit, user_id, query, hist, k=3, exclude_recent=12)
+        # 跨层去重（本次记忆修复）: memory provider 先跑，会把本轮实际注入的正文
+        # （最近事实/笔记/摘要/篇章/相关记忆）挂到 state；这里统一跳过同文片段。
+        # 旧实现只对比「相关记忆」top-3，最近 facts / summaries 仍会和往事重复。
+        _deduped = 0
+        _cur_turn = int((getattr(state, "data", None) or {}).get("turn") or 0)
+        _recalled = None
+        if getattr(state, "_memory_recalled_turn", None) == _cur_turn:
+            _recalled = (getattr(state, "_memory_injected_texts", None)
+                         or getattr(state, "_memory_recalled_texts", None))
+        if _recalled and hits:
+            _kept = []
+            for h in hits:
+                ht = str(h.get("text") or "")
+                if any(len(t) >= 6 and (t in ht or ht in t) for t in _recalled):
+                    _deduped += 1
+                    continue
+                _kept.append(h)
+            hits = _kept
         if not hits:
-            return ContextContribution.skipped(self.id, "无召回(休眠)")
+            return ContextContribution.skipped(
+                self.id, "无召回(休眠)" if not _deduped else "与记忆层重复")
         lines: list[str] = []
         for i, h in enumerate(hits, 1):
             if h.get("kind") == "history":
@@ -74,6 +138,10 @@ class EpisodicRecallProvider(ContextProvider):
         import logging
         logging.getLogger(__name__).info(
             "[episodic_recall] 注入 %d 条 (source=%s, save=%s)", len(lines), source, save_id)
+        # 本次记忆修复：与 MemoryProvider 共用 token_estimate_factor，避免同一
+        # 上下文里记忆层按 2.0 裁剪、往事层仍按 1.0 估算。
+        _factor = float(getattr(state, "_memory_token_factor", 1.0) or 1.0)
+        from context_engine._utils import estimate_tokens_with_factor
         layer = self.make_layer(
             "episodic_recall", "相关往事·全程历史召回", text,
             sticky=False, priority=PRIORITY,
@@ -83,8 +151,10 @@ class EpisodicRecallProvider(ContextProvider):
             kind="episodic_recall",
             priority=PRIORITY,
             layers=[layer],
-            tokens_estimate=len(text) // 2,
-            debug={"source": source, "hits": len(lines)},
+            tokens_estimate=estimate_tokens_with_factor(text, _factor),
+            debug={"source": source, "hits": len(lines),
+                   "deduped_against_memory": _deduped,
+                   "token_estimate_factor": _factor},
         )
 
 

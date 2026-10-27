@@ -774,6 +774,22 @@ async def run_gm_phase(
                 except Exception as _hb_err:
                     log.warning(f"[chat] world_heartbeat 启动失败,跳过: {_hb_err}")
 
+            # 回合后记忆维护（本次记忆修复）:归档扫描/多块摘要/known_events 上限
+            # 从 MemoryProvider.collect 移到这里，保证读路径无写副作用；必须在
+            # _ms_task 启动前跑，才能让本轮新产生的 summary_pending 被精修。
+            try:
+                from chat_pipeline.memory_maintenance import run_memory_maintenance
+                # get_memory_settings 会读 DB，放线程里跑，避免阻塞 SSE 事件循环。
+                _mem_dbg = await asyncio.to_thread(
+                    run_memory_maintenance, state, _uid_of(api_user),
+                    ctx.active_save_id or ctx.early_active_save_id or 0)
+                if (_mem_dbg.get("archived") or _mem_dbg.get("known_events_trimmed")
+                        or _mem_dbg.get("reconciled_backfilled")
+                        or _mem_dbg.get("reconciled_orphaned")):
+                    log.info("[chat] memory_maintenance: %s", _mem_dbg)
+            except Exception as _mem_err:
+                log.warning(f"[chat] memory_maintenance 跳过: {_mem_err}")
+
             # 归档摘要 LLM 精修(真摘要压缩第二步):与心跳同款纪律 —— 此处 create_task
             # 起、两个 return 前 await,只写 memory.summaries/summary_pending 专属键,
             # Phase 5 统一持久化。⚠️接线必须在这条【async 生产默认路径】(心跳 v1.41.0
@@ -932,6 +948,18 @@ async def run_gm_phase(
                     log.warning(f"[chat] black_swan 等待失败: {_bs_err}")
             return
     # ── 同步后处理路径 (sync 模式 or enqueue 失败降级) ─────────────────────
+    # 回合后记忆维护：sync 路径的 _worker_memory_summary 在 _run_post_gm_parallel 内，
+    # 必须先把归档任务写进 summary_pending，精修 worker 才能看到。
+    try:
+        from chat_pipeline.memory_maintenance import run_memory_maintenance
+        _mem_dbg = run_memory_maintenance(
+            state, _uid_of(api_user), ctx.active_save_id or ctx.early_active_save_id or 0)
+        if (_mem_dbg.get("archived") or _mem_dbg.get("known_events_trimmed")
+                or _mem_dbg.get("reconciled_backfilled")
+                or _mem_dbg.get("reconciled_orphaned")):
+            log.info("[chat] memory_maintenance(sync): %s", _mem_dbg)
+    except Exception as _mem_err:
+        log.warning(f"[chat] memory_maintenance(sync) 跳过: {_mem_err}")
 
     # 并行执行 GM 后处理三项(timeline_guard / black_swan / extractor):
     # - 均只读 response + state,互相无依赖

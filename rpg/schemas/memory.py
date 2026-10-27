@@ -1,7 +1,7 @@
 """schemas.memory — 记忆管理路由请求模型 + MemorySettings 配置 schema。"""
 from __future__ import annotations
 
-from typing import Annotated
+from typing import Annotated, Any
 
 from pydantic import BaseModel, Field
 
@@ -28,6 +28,29 @@ class MemoryUpdateRequest(_BaseRequest):
     text: Annotated[str, Field(max_length=2000)] | None = ""
 
 
+class MemoryRestoreRequest(_BaseRequest):
+    """恢复归档/取代条目（本次记忆修复）：id 或 bucket+text 二选一。
+
+    supersede_conflicts=True 表示用户已确认：恢复旧事实时把当前相似/替代版本
+    标记 superseded，避免两个矛盾版本同时 active。
+    """
+    id: str | None = None
+    bucket: str | None = None
+    text: Annotated[str, Field(max_length=2000)] | None = None
+    supersede_conflicts: bool = False
+
+
+class MemorySettingsOverrideRequest(_BaseRequest):
+    """本存档记忆设置覆盖（本次记忆修复）。
+
+    settings: 只提交要改的字段；unset: 要恢复“跟随全局”的字段名；reset=True 清空全部。
+    unset 与 settings 可同时出现（先删后写），方便 UI 做逐字段恢复。
+    """
+    settings: dict[str, Any] | None = None
+    unset: list[str] | None = None
+    reset: bool = False
+
+
 class MemorySettings(BaseModel):
     """用户级记忆系统配置。
 
@@ -47,11 +70,30 @@ class MemorySettings(BaseModel):
             "facts/notes 会被摘要挤掉。"
         ),
     )
+    token_estimate_factor: float = Field(
+        default=1.0,
+        ge=0.5,
+        le=3.0,
+        description=(
+            "token 估算系数（本次记忆修复）：最终估算 = len(text)//2 × factor。"
+            "默认 1.0 保留旧行为；中文 token 密度高的模型（约 1 字≈1 token）"
+            "可调到 1.5–2.0，避免候选扩大后实际 prompt 超出 token_budget。"
+        ),
+    )
     auto_archive_after_turns: int = Field(
         default=50,
         ge=10,
         le=200,
         description="N 轮后自动归档旧记忆（不删除，仅不注入上下文）",
+    )
+    facts_soft_limit: int = Field(
+        default=80,
+        ge=20,
+        le=500,
+        description=(
+            "active facts 软上限（本次记忆修复）：超过时在归档扫描回合按“最旧优先”"
+            "归档到上限。高密度长局用它防止最近候选窗口与归档阈值之间出现记忆断层。"
+        ),
     )
     pinned_max: int = Field(
         default=20,
@@ -79,8 +121,9 @@ class MemorySettings(BaseModel):
         ge=1,
         le=20,
         description=(
-            "每个非 pinned 记忆桶最多注入最近 N 条。"
-            "pinned 不看这个值，按 pinned_max 全量候选（再由 token_budget 裁剪）。"
+            "记忆桶的候选窗口基准：至少看最近 N 条，实际注入条数由 token_budget 裁剪"
+            "（facts/摘要会按倍数扩大候选，notes/abilities/resources 有更高的候选下限）。"
+            "pinned 不看这个值，按 pinned_max 全量候选。"
         ),
     )
     summary_window: int = Field(

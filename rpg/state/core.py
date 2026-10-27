@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import copy
+import hashlib
 import json
 import re
 from datetime import datetime
@@ -268,6 +269,10 @@ DEFAULT_STATE = {
         "known_events": []
     },
     "relationships": {},    # {角色名: "信任/警惕/未知"...}
+    # 关系写入元数据（本次记忆修复新增）: {角色名: {updated_turn, previous, source}}。
+    # 兼容期不改 relationships 的字符串值，避免所有读取方（short_summary/面板/规则）
+    # 一起改；元数据先供后续实体召回、审计和「关系变化时间线」使用。
+    "relationship_meta": {},
     "history": [],           # 完整对话 [{"role":"user","content":...}, ...]
     "permissions": {
         "mode": "full_access",  # default / auto_review / full_access
@@ -297,6 +302,10 @@ DEFAULT_STATE = {
         },
         "custom_ui": {}
     },
+    # 本存档记忆设置覆盖（本次记忆修复）: 只存用户显式改过的 MemorySettings 字段；
+    # 未设字段继续跟随用户全局设置。由 /api/memory/settings 写入，Provider/maintenance
+    # 经 get_effective_memory_settings 读取。
+    "memory_settings": {},
     "memory": {
         "mode": "normal",    # concise / normal / deep
         "main_quest": "",
@@ -305,6 +314,29 @@ DEFAULT_STATE = {
         "resources": [],
         "abilities": [],
         "facts": [],
+        # 归档事实索引（本次记忆修复新增）: _maybe_auto_archive 把超龄 facts 从 facts
+        # 桶移出时，先把原文追加到这里。facts 桶保持精简（注入只看最近 N 条），
+        # archived_facts 作为「远期事实存档」供 KB/episodic 召回；不参与 MemoryProvider
+        # 的常规注入。上限 _ARCHIVED_FACTS_MAX，防止 state 无界增长。
+        "archived_facts": [],
+        # 玩家显式删除的事实文本（本次记忆修复）：KB 冷归档不应把已删除事实
+        # 重新召回。只记录文本，不保留 item；上限防长局无界增长。
+        "facts_deleted": [],
+        # 删除文本的 sha1[:16]（小体积、可长期保留）：即使文本 tombstone 被裁，
+        # 冷查询也能按 hash 排除已删除事实。与退役事件双保险。
+        "facts_deleted_hashes": [],
+        # 记忆生命周期计数（本次记忆修复）：只增不减，供 Debug/运维观测。
+        # 不参与注入；KB 作为 memory 子树变量持久化。
+        "stats": {
+            "archived_total": 0,
+            "superseded_total": 0,
+            "cold_queries": 0,
+        },
+        # 篇章级 arc rollup（本次记忆修复 Phase 3）: 每 5 个 closed phase 一条确定性
+        # 汇总（读 save_phase_digests，不额外调 LLM），由 MemoryAssembler 注入。
+        # arc_refresh_turn 是节流戳（每 10 回合最多刷新一次）。
+        "arc_summaries": [],
+        "arc_refresh_turn": -1,
         "pinned": [],
         "notes": [],
         # 真摘要压缩:归档扫描把超龄 facts 压缩成的「第X-Y轮：…」条目(系统生成,只读,
@@ -338,32 +370,117 @@ DEFAULT_STATE = {
 
 MAX_HISTORY_TURNS = 6  # 保留最近6轮（12条消息）
 
+# world.known_events 硬上限（本次记忆修复统一）: 工具写入路径原本已 cap 100，
+# 但 JSON ops/史官 append 路径没有 —— 同样的事件走不同通道，长局会无界增长。
+# 注入只看最近 15 条，保留最近 100 条足够；超出部分由 _append_known_events_capped
+# / apply_ops / maintenance 统一裁掉。
+KNOWN_EVENTS_MAX = 100
+
+# memory.items 软上限（本次记忆修复）：旧实现 `items[-500:]` 直接砍最旧，长局里
+# 被砍掉的可能是仍 active 的 notes/abilities item，而 legacy 桶还保留着文本 →
+# 两套表示漂移。现在上限只裁“非 active”历史（archived/superseded/rejected），
+# active 条目永远保留；active 本身超过上限时允许继续增长，优先保证记忆正确。
+MEMORY_ITEMS_MAX = 500
+# characters 回填/别名归并的节流窗口（本次记忆修复）。旧实现对每个缺 characters
+# 的 item 每回合重扫；关系名没变时结果不会变，纯浪费。20 回合重扫一次足够让
+# 新写入 relationships 的角色在合理时间内被旧事实识别。
+CHARACTER_RESCAN_TURNS = 20
+
+# ── 事实 supersede（本次记忆修复）──────────────────────────────────────────
+# 保守自动取代：同一批 characters（实体标注非空）+ 文本高度重叠才认为「新事实
+# 取代旧事实」。阈值刻意高（包含关系或 2-gram Jaccard ≥0.68），宁漏勿误。
+_SUPERSEDE_MIN_NORM_CHARS = 8
+_SUPERSEDE_JACCARD = 0.68
+_SUPERSEDE_PUNCT_RE = re.compile(r"[\s，。；：、！？,.!?;:\"'“”‘’（）()【】\[\]《》<>·…—\-]+")
+
+
+def normalize_fact_text(text: str) -> str:
+    """事实比较用的归一化：去空白/标点，只留文字数字。"""
+    return _SUPERSEDE_PUNCT_RE.sub("", str(text or ""))
+
+
+def fact_text_similarity(a: str, b: str) -> float:
+    """两条事实的保守相似度（0-1）。长度 < 8 或完全不同返回 0。"""
+    a, b = normalize_fact_text(a), normalize_fact_text(b)
+    if not a or not b:
+        return 0.0
+    if a == b:
+        return 1.0
+    if len(a) < _SUPERSEDE_MIN_NORM_CHARS or len(b) < _SUPERSEDE_MIN_NORM_CHARS:
+        return 0.0
+    if a in b or b in a:
+        return 1.0
+    ga = {a[i:i + 2] for i in range(len(a) - 1)}
+    gb = {b[i:i + 2] for i in range(len(b) - 1)}
+    if not ga or not gb:
+        return 0.0
+    return len(ga & gb) / len(ga | gb)
+
+
+# 本次修复：旧版柏林剧本的建议规则从硬编码迁到 script_overrides 后，仓库里没有
+# 对应 JSON、测试/本地无 DB 时柏林存档只剩 5 条通用建议（“柏林势力图/特殊小队”
+# 等既有能力静默消失）。这里保留一份最小内置 fallback；数据库/文件里存在同名
+# script_key 时以外部 overrides 为准（merge 时外部覆盖内置）。
+_BUILTIN_SCRIPT_OVERRIDES: dict[str, dict] = {
+    "berlin_default": {
+        "script_key": "berlin_default",
+        "novel_signature_tokens": [
+            "柏林", "扎府", "哈布斯堡", "图卢兹", "薇瑟", "蕾穆丽娜",
+            "斯雷因", "扎兹巴鲁姆", "蛇信",
+        ],
+        # 当前剧情位置仍含这些 token 才允许出现柏林专属建议。
+        "setting_lock_tokens": ["柏林", "扎府", "哈布斯堡"],
+        "setting_locked_text_tokens": ["柏林", "扎府", "哈布斯堡"],
+        "rules": [
+            {
+                "score": 120,
+                "text": "要求一份柏林当前势力图和行动时限。",
+                "needles": ["柏林", "图卢兹", "蛇信", "薇瑟"],
+            },
+            {
+                "score": 115,
+                "text": "召集特殊小队，建立柏林城内侦察与撤离预案。",
+                "needles": ["特殊小队", "扎兹巴鲁姆"],
+            },
+            {
+                "score": 105,
+                "text": "摸清基地核心机密库的守卫与进入路线。",
+                "needles": ["核心机密库", "基地"],
+            },
+        ],
+    },
+}
+
 
 @lru_cache(maxsize=1)
 def _load_script_overrides() -> dict:
     """从 DB script_overrides 表加载所有剧本 overrides,按 script_key 索引。
 
-    DB 不可用时 fallback 到 modules/_script_overrides/*.json（本地开发兜底）。
+    DB 不可用时 fallback 到 modules/_script_overrides/*.json（本地开发兜底）；
+    最后合并内置 legacy fallback（外部同名 key 优先）。
     """
+    out: dict[str, dict] = {}
     try:
         from platform_app.knowledge.script_overrides import load_all_overrides_by_key
-        return load_all_overrides_by_key()
+        out = dict(load_all_overrides_by_key() or {})
     except Exception:
-        pass
+        out = {}
     # fallback: 读 JSON 文件（本地开发 / DB 不可用时兜底）
     overrides_dir = BASE / "modules" / "_script_overrides"
-    out: dict[str, dict] = {}
-    if not overrides_dir.is_dir():
-        return out
-    for f in sorted(overrides_dir.glob("*.json")):
-        try:
-            data = json.loads(f.read_text(encoding="utf-8"))
-            key = data.get("script_key")
-            if key:
-                out[key] = data
-        except Exception:
-            continue
-    return out
+    if overrides_dir.is_dir():
+        for f in sorted(overrides_dir.glob("*.json")):
+            try:
+                data = json.loads(f.read_text(encoding="utf-8"))
+                key = data.get("script_key")
+                if key:
+                    out[key] = data
+            except Exception:
+                continue
+    # 外部 overrides 先匹配（更具体的剧本优先），内置 legacy fallback 只补缺。
+    merged = dict(out)
+    for _k, _v in _BUILTIN_SCRIPT_OVERRIDES.items():
+        merged.setdefault(_k, dict(_v))
+    return merged
 
 
 def _detect_active_script_key(context: str) -> str | None:
@@ -886,11 +1003,16 @@ class GameState(ApplyOpsMixin, RulesGameplayMixin, PendingMixin):
             "player": dict(p),
             "world": dict(w),
             "relationships": dict(self.data["relationships"]),
+            # 关系变化元数据（本次记忆修复）: 前端 PanelCharacters 显示 updated_turn/previous。
+            "relationship_meta": copy.deepcopy(self.data.get("relationship_meta") or {}),
             # NPC 议程 v0:前端人物面板展示用;无议程 = 空 dict。
             "npc_agendas": copy.deepcopy(self.data.get("npc_agendas") or {}),
             "permissions": copy.deepcopy(self.data.get("permissions", {})),
             "worldline": copy.deepcopy(self.data.get("worldline", {})),
             "memory": copy.deepcopy(m),
+            # 本存档 MemorySettings override（本次记忆修复）: 前端 PanelMemory 据此回显
+            # 「本存档设置」；空 dict = 全部跟随用户全局。
+            "memory_settings": copy.deepcopy(self.data.get("memory_settings") or {}),
             "turn": self.data["turn"],
             "schema_version": self.data.get("schema_version", CURRENT_SCHEMA_VERSION),
             "is_new": self.data["is_new"],
@@ -997,11 +1119,456 @@ class GameState(ApplyOpsMixin, RulesGameplayMixin, PendingMixin):
     # 且非法值**静默丢弃** → 用户点「关闭」自动弹回普通(群反馈)。
     # data["memory"]["mode"] 字段保留不删:存量存档/快照往返兼容,留着无害(已无消费方)。
 
-    def add_memory(self, bucket: str, text: str, *, origin: str = "") -> bool:
-        """兼容门面:只回「写没写进去」。要区分「重复」和「被闸拦」用 add_memory_ex。"""
-        return self.add_memory_ex(bucket, text, origin=origin)[0]
+    def _memory_characters_for(self, text: str) -> list[str]:
+        """从文本中确定性识别已知角色名（本次记忆修复，不调用额外 LLM）。
 
-    def add_memory_ex(self, bucket: str, text: str, *, origin: str = "") -> tuple[bool, str]:
+        数据源：relationships 的键、active_entities 的 name/id、玩家名。
+        facts/notes/abilities/resources 写入时把这个结果塞进 MemoryItem.characters，
+        让 query_memory 的 characters 过滤和后续「按实体召回」真正可用。
+
+        只做子串命中，宁漏勿误：名字至少 2 字；长名优先；最多 8 个；排除
+        unknown/_player 这类哨兵值。它不是 NER，不指望识别正文里首次出现的新名字；
+        新名字先由 GM/史官写入 relationships/active_entities，下一轮才会被识别。
+        """
+        t = str(text or "")
+        if not t:
+            return []
+        names: set[str] = set()
+        for name in (self.data.get("relationships") or {}):
+            n = str(name or "").strip()
+            if len(n) >= 2:
+                names.add(n)
+        for ent in (self.data.get("active_entities") or []):
+            if isinstance(ent, dict):
+                n = str(ent.get("name") or ent.get("id") or "").strip()
+                if len(n) >= 2:
+                    names.add(n)
+        pn = str((self.data.get("player") or {}).get("name") or "").strip()
+        if len(pn) >= 2:
+            names.add(pn)
+        names.discard("unknown")
+        names.discard("未知")
+        names.discard("_player")
+        # 本次记忆修复：写入前做一次 canon 别名归并（云芝 → 云韵）。这样同一角色的
+        # 化名/主名写入的 facts 共享 characters，自动 supersede 和按实体召回不会漏。
+        # 注意要保留「原文名 → 主名」映射：match 用原文名（正文里可能写的是化名），
+        # 存进 item.characters 的用主名（后续过滤/取代用统一身份）。
+        _save_id = self.data.get("_active_save_id")
+        if _save_id:
+            try:
+                from kb.alias import canonical_name_for_save
+                canonical_map = {
+                    n: (canonical_name_for_save(_save_id, n) or n) for n in names
+                }
+            except Exception:
+                canonical_map = {n: n for n in names}
+        else:
+            canonical_map = {n: n for n in names}
+        hits = sorted(
+            {canonical for original, canonical in canonical_map.items() if original in t},
+            key=len, reverse=True,
+        )
+        return hits[:8]
+
+    def _memory_context_meta(self) -> dict[str, str | None]:
+        """当前地点/场景/篇章（本次记忆修复）。
+
+        写入事实/笔记时随 item 一起落库，让 MemoryAssembler 在玩家说“我回到这里
+        看看”这类没有明确人名的查询里，也能按当前场景/地点召回旧记忆。
+        旧档没有这些字段时全部返回 None，召回仍走文本 gram/实体兜底。
+        """
+        try:
+            data = self.data or {}
+            player = data.get("player") or {}
+            scene = data.get("scene") or {}
+            timeline = (data.get("world") or {}).get("timeline") or {}
+            location = str(player.get("current_location") or "").strip()
+            if not location:
+                location = str(scene.get("location_id") or "").strip()
+            scene_id = str(scene.get("location_id") or scene.get("module_id") or "").strip()
+            phase = str(timeline.get("current_phase") or "").strip()
+            return {
+                "location": location or None,
+                "scene_id": scene_id or None,
+                "phase_label": phase or None,
+            }
+        except Exception:
+            return {"location": None, "scene_id": None, "phase_label": None}
+
+    def _log_fact_supersede(self, old_text: str, new_text: str, *, source: str,
+                            auto: bool, score: float | None = None) -> None:
+        """事实取代进 audit_log（自动/显式共用，便于面板与排障）。"""
+        try:
+            audit = self.data.setdefault("permissions", {}).setdefault("audit_log", [])
+            audit.append({
+                "ts": now_iso(),
+                "kind": "memory_superseded_auto" if auto else "memory_superseded",
+                "source": str(source or "gm"),
+                "path": "memory.facts",
+                "old": str(old_text)[:160],
+                "new": str(new_text)[:160],
+                "score": round(float(score), 3) if score is not None else None,
+                "turn": int(self.data.get("turn") or 0),
+            })
+            if len(audit) > 200:
+                self.data["permissions"]["audit_log"] = audit[-200:]
+        except Exception:
+            pass
+
+    def _auto_supersede_fact(self, text: str, characters: list[str], origin: str) -> str:
+        """GM/史官写入新事实时，保守地把同实体的高度重叠旧事实标 superseded。
+
+        只在以下条件全部成立时动手（本次记忆修复，宁漏勿误）：
+          · 来源是 GM/史官（玩家手写 facts 不自动取代）
+          · 新旧事实共享至少一个 characters（没有实体标注就不判断）
+          · 文本包含关系，或 2-gram Jaccard ≥0.68
+        返回被取代的旧文本（没有则空串）。旧 item 保留为 superseded 供审计，
+        旧文本从 legacy facts 桶移除，不再注入/召回。
+        """
+        try:
+            from state.memory_budget import is_gated_origin
+            if not is_gated_origin(origin):
+                return ""
+            chars = {str(c) for c in (characters or []) if str(c).strip()}
+            if not chars:
+                return ""
+            items = (self.data.get("memory") or {}).get("items") or []
+            best: dict | None = None
+            best_score = 0.0
+            # 本次记忆修复：扫描全部 items，而不是只看最近 120 条。长局里旧矛盾
+            # 事实可能已经被后续大量无关 item 挤出窗口，只看 120 条会漏取代。
+            # items 本身有 500 软上限，O(n) 对每回合几十条事实写入可接受。
+            for it in reversed(items):
+                if not isinstance(it, dict):
+                    continue
+                if it.get("legacy_bucket") != "facts":
+                    continue
+                if (it.get("status") or "active") != "active" or it.get("archived"):
+                    continue
+                old_text = str(it.get("text") or "").strip()
+                if not old_text or old_text == text:
+                    continue
+                old_chars = {str(c) for c in (it.get("characters") or [])}
+                if not (chars & old_chars):
+                    continue
+                score = fact_text_similarity(text, old_text)
+                if score > best_score:
+                    best, best_score = it, score
+            if best is None or best_score < _SUPERSEDE_JACCARD:
+                return ""
+            old_text = str(best.get("text") or "").strip()
+            best["status"] = "superseded"
+            best["superseded_at_turn"] = int(self.data.get("turn") or 0)
+            best["superseded_by"] = text
+            facts = self.data.setdefault("memory", {}).setdefault("facts", [])
+            if isinstance(facts, list):
+                self.data["memory"]["facts"] = [t for t in facts if t != old_text]
+            self._log_fact_supersede(old_text, text, source=origin, auto=True, score=best_score)
+            self._bump_memory_stat("superseded_total")
+            return old_text
+        except Exception:
+            return ""
+
+    def _find_active_fact_item(self, item_id: str | None = None,
+                               old_text: str | None = None) -> dict | None:
+        """找一条可被 supersede 的 active fact item（本次记忆修复）。
+
+        优先 id；其次 old_text 精确匹配；最后做归一化（去空白/标点）唯一匹配 ——
+        GM 从 prompt 复制旧事实时常带标点差异，精确匹配会失败。归一化匹配只在
+        唯一命中时返回，避免把两条相似事实里的另一条误标 superseded。
+        """
+        items = (self.data.get("memory") or {}).get("items") or []
+        if item_id:
+            target = next(
+                (i for i in items if isinstance(i, dict) and i.get("id") == item_id),
+                None,
+            )
+            if target is not None:
+                if target.get("legacy_bucket") not in (None, "facts"):
+                    return None
+                return target
+        if not old_text:
+            return None
+        want = str(old_text).strip()
+        active = [
+            i for i in items
+            if isinstance(i, dict)
+            and i.get("legacy_bucket") in (None, "facts")
+            and (i.get("status") or "active") == "active"
+            and not i.get("archived")
+        ]
+        exact = [i for i in active if str(i.get("text") or "").strip() == want]
+        if exact:
+            return exact[0]
+        want_norm = normalize_fact_text(want)
+        if not want_norm:
+            return None
+        normalized = [
+            i for i in active if normalize_fact_text(str(i.get("text") or "")) == want_norm
+        ]
+        return normalized[0] if len(normalized) == 1 else None
+
+    def supersede_memory_item(self, *, item_id: str | None = None,
+                              old_text: str | None = None,
+                              new_text: str | None = None,
+                              source: str = "gm") -> bool:
+        """显式取代一条 facts 记忆（本次记忆修复）。
+
+        优先按 item id 找；否则按 old_text 精确/归一化匹配 active facts item。旧 item
+        标 superseded（保留历史/审计），旧文本从 facts 桶移除。new_text 非空且尚不存在
+        时顺手写入新事实（避免调用方还要再写一条 append op）。
+
+        本次加固：
+          · id 找不到时继续用 old_text 兜底（GM/史官可能只给其中一个）；
+          · old_text 标点/空白差异走归一化唯一匹配；
+          · 写入 new_text 时 skip_auto_supersede=True，避免显式取代又连锁触发
+            第二条自动取代（一条 op 只应该影响它点名的那条旧事实）。
+        """
+        try:
+            mem = self.data.setdefault("memory", {})
+            target = self._find_active_fact_item(item_id=item_id, old_text=old_text)
+            if target is not None:
+                old_text = str(target.get("text") or "").strip()
+                target["status"] = "superseded"
+                target["superseded_at_turn"] = int(self.data.get("turn") or 0)
+                target["superseded_by"] = str(new_text or "").strip()
+                target["supersede_reason"] = "explicit"
+            removed = False
+            if old_text:
+                facts = mem.setdefault("facts", [])
+                if isinstance(facts, list) and old_text in facts:
+                    mem["facts"] = [t for t in facts if t != old_text]
+                    removed = True
+            if target is None and not removed:
+                return False
+            self._log_fact_supersede(old_text or "", new_text or "",
+                                     source=source, auto=False)
+            self._bump_memory_stat("superseded_total")
+            if new_text:
+                self.add_memory("facts", new_text, origin=source,
+                                skip_auto_supersede=True)
+            self._touch_memory()
+            return True
+        except Exception:
+            return False
+
+    def find_restore_conflicts(self, target_text: str, *,
+                               target_chars: list[str] | None = None,
+                               superseded_by: str | None = None,
+                               limit: int = 5) -> list[dict]:
+        """恢复历史事实前，找出会被它顶掉的当前 active 事实（本次记忆修复）。
+
+        两种冲突来源：
+          · 直接取代链：旧 item 的 `superseded_by` 指向的新版本仍 active；
+          · 同实体且文本高度相似（characters 有交集 + similarity ≥0.68）。
+        只做检测，不改 state；返回 [{id,text,turn,reason}]，直接取代版本排最前。
+        """
+        target_text = _clean_item(str(target_text or ""))
+        if not target_text:
+            return []
+        chars = {str(c) for c in (target_chars or []) if str(c).strip()}
+        if not chars:
+            chars = set(self._memory_characters_for(target_text))
+        direct_text = _clean_item(str(superseded_by or ""))
+        out: list[dict] = []
+        for it in (self.data.get("memory") or {}).get("items") or []:
+            if not isinstance(it, dict):
+                continue
+            if it.get("legacy_bucket") not in (None, "facts"):
+                continue
+            # hypothesis/canon_fact/user_constraint 不走这条“事实恢复冲突”逻辑，
+            # 避免恢复事实时把一条推测或硬约束标成 superseded。
+            if it.get("kind") != "runtime_fact":
+                continue
+            if (it.get("status") or "active") != "active" or it.get("archived"):
+                continue
+            text = _clean_item(str(it.get("text") or ""))
+            if not text or text == target_text:
+                continue
+            reason = ""
+            if direct_text and text == direct_text:
+                reason = "direct_replacement"
+            else:
+                it_chars = {str(c) for c in (it.get("characters") or [])}
+                if chars and (chars & it_chars) and fact_text_similarity(target_text, text) >= _SUPERSEDE_JACCARD:
+                    reason = "similar"
+            if not reason:
+                continue
+            out.append({
+                "id": it.get("id"),
+                "text": text,
+                "turn": it.get("turn"),
+                "reason": reason,
+            })
+        out.sort(key=lambda x: (0 if x.get("reason") == "direct_replacement" else 1,
+                                -int(x.get("turn") or 0)))
+        return out[:max(1, int(limit))]
+
+    def restore_memory_item_ex(self, *, item_id: str | None = None,
+                               bucket: str | None = None,
+                               text: str | None = None,
+                               source: str = "ui_restore",
+                               supersede_conflicts: bool = False) -> tuple[bool, dict]:
+        """恢复历史事实的增强版：返回 (是否完成, 结果/待确认信息)。
+
+        与旧 `restore_memory_item` 的差别（本次记忆修复）：如果恢复后会和当前
+        active 事实矛盾（直接取代版本或同实体高相似），先返回 needs_confirmation，
+        UI 确认后再以 supersede_conflicts=True 调一次，把冲突版本标 superseded，
+        避免“恢复旧版 → 两个矛盾版本同时 active”。
+        """
+        try:
+            mem = self.data.setdefault("memory", {})
+            items = mem.get("items")
+            if not isinstance(items, list):
+                items = []
+                mem["items"] = items
+            buckets = {"facts", "notes", "pinned", "abilities", "resources"}
+            target = None
+            if item_id:
+                target = next(
+                    (i for i in items if isinstance(i, dict) and i.get("id") == item_id),
+                    None,
+                )
+            elif bucket and text:
+                target = next((
+                    i for i in items
+                    if isinstance(i, dict)
+                    and i.get("legacy_bucket") == bucket
+                    and _clean_item(str(i.get("text", ""))) == _clean_item(str(text))
+                ), None)
+
+            target_text = ""
+            b = ""
+            if target is not None:
+                b = str(target.get("legacy_bucket") or "")
+                if b not in buckets or target.get("kind") != "runtime_fact":
+                    return False, {"error": "该条目不是可恢复的事实类记忆"}
+                target_text = _clean_item(str(target.get("text") or ""))
+            else:
+                b = str(bucket or "").strip()
+                target_text = _clean_item(str(text or ""))
+                if b not in buckets or not target_text:
+                    return False, {"error": "未找到可恢复的记忆"}
+
+            conflicts = (
+                self.find_restore_conflicts(
+                    target_text,
+                    target_chars=(target.get("characters") if target is not None else None),
+                    superseded_by=(target.get("superseded_by") if target is not None else None),
+                ) if b == "facts" else []
+            )
+            if conflicts and not supersede_conflicts:
+                return False, {
+                    "needs_confirmation": True,
+                    "target": target_text,
+                    "conflicts": conflicts,
+                }
+
+            superseded_conflicts = 0
+            if conflicts:
+                facts = mem.setdefault("facts", [])
+                conflict_texts = {_clean_item(str(c.get("text") or "")) for c in conflicts}
+                turn = int(self.data.get("turn", 0) or 0)
+                for it in items:
+                    if not isinstance(it, dict):
+                        continue
+                    if _clean_item(str(it.get("text") or "")) not in conflict_texts:
+                        continue
+                    if (it.get("status") or "active") != "active" or it.get("archived"):
+                        continue
+                    it["status"] = "superseded"
+                    it["superseded_at_turn"] = turn
+                    it["superseded_by"] = target_text
+                    it["supersede_reason"] = "restore_conflict"
+                    it["supersede_source"] = str(source or "ui_restore")
+                    superseded_conflicts += 1
+                if isinstance(facts, list):
+                    mem["facts"] = [t for t in facts if _clean_item(str(t)) not in conflict_texts]
+
+            if target is not None:
+                target["status"] = "active"
+                target["archived"] = False
+                target["turn"] = int(self.data.get("turn", 0) or 0)
+                target["source"] = str(source or "ui_restore")
+                target.pop("superseded_at_turn", None)
+                target.pop("superseded_by", None)
+                target.pop("supersede_reason", None)
+                target.pop("supersede_source", None)
+                target.pop("orphaned_at_turn", None)
+                target.pop("orphan_reason", None)
+                bucket_list = mem.setdefault(b, [])
+                if isinstance(bucket_list, list) and target_text and target_text not in bucket_list:
+                    bucket_list.append(target_text)
+            else:
+                bucket_list = mem.setdefault(b, [])
+                if not isinstance(bucket_list, list):
+                    bucket_list = []
+                    mem[b] = bucket_list
+                if target_text not in bucket_list:
+                    bucket_list.append(target_text)
+                self.add_memory_item(
+                    text=target_text,
+                    kind="runtime_fact",
+                    source=str(source or "ui_restore"),
+                    characters=self._memory_characters_for(target_text) or None,
+                    legacy_bucket=b,
+                )
+            if b == "facts" and target_text:
+                arch = mem.get("archived_facts")
+                if isinstance(arch, list):
+                    mem["archived_facts"] = [t for t in arch if _clean_item(str(t)) != target_text]
+                deleted = mem.get("facts_deleted")
+                if isinstance(deleted, list):
+                    mem["facts_deleted"] = [t for t in deleted if _clean_item(str(t)) != target_text]
+                hashes = mem.get("facts_deleted_hashes")
+                if isinstance(hashes, list) and hashes:
+                    h = hashlib.sha1(target_text.encode("utf-8")).hexdigest()[:16]
+                    mem["facts_deleted_hashes"] = [x for x in hashes if x != h]
+            if superseded_conflicts:
+                try:
+                    audit = self.data.setdefault("permissions", {}).setdefault("audit_log", [])
+                    audit.append({
+                        "ts": now_iso(),
+                        "kind": "memory_restore_superseded_conflicts",
+                        "source": str(source or "ui_restore"),
+                        "restored": target_text,
+                        "superseded": superseded_conflicts,
+                        "turn": int(self.data.get("turn", 0) or 0),
+                    })
+                    if len(audit) > 200:
+                        self.data["permissions"]["audit_log"] = audit[-200:]
+                except Exception:
+                    pass
+            self._touch_memory()
+            return True, {
+                "restored": target_text,
+                "superseded_conflicts": superseded_conflicts,
+            }
+        except Exception as exc:  # noqa: BLE001 —— 回给 UI，不破回合
+            return False, {"error": str(exc)}
+
+    def restore_memory_item(self, *, item_id: str | None = None,
+                            bucket: str | None = None,
+                            text: str | None = None,
+                            source: str = "ui_restore") -> bool:
+        """兼容旧调用方：不处理冲突确认，只返回是否恢复成功。
+
+        UI/API 应优先用 restore_memory_item_ex，以便在冲突时二次确认。
+        """
+        ok, _ = self.restore_memory_item_ex(
+            item_id=item_id, bucket=bucket, text=text, source=source)
+        return ok
+
+    def add_memory(self, bucket: str, text: str, *, origin: str = "",
+                   skip_auto_supersede: bool = False) -> bool:
+        """兼容门面:只回「写没写进去」。要区分「重复」和「被闸拦」用 add_memory_ex。"""
+        return self.add_memory_ex(
+            bucket, text, origin=origin,
+            skip_auto_supersede=skip_auto_supersede,
+        )[0]
+
+    def add_memory_ex(self, bucket: str, text: str, *, origin: str = "",
+                      skip_auto_supersede: bool = False) -> tuple[bool, str]:
         """返回 (是否写入, 原因)。原因为空=写入成功;否则是给调用方/GM 看的拒绝理由。
 
         origin 走 dispatcher 恒等注入的 `_origin`(用户意图分流的既有约定):玩家自己的
@@ -1029,6 +1596,32 @@ class GameState(ApplyOpsMixin, RulesGameplayMixin, PendingMixin):
         if blocked:
             self._log_memory_flood_block(bucket, text, blocked, origin)
             return False, blocked
+        # 本次记忆修复:写入时顺手做确定性实体/时间标注（不调 LLM）。characters 让
+        # query_memory 的实体过滤和「按实体召回」可用；time_label 记录写入时的世界
+        # 时间，方便后续按时间窗口召回。识别不出实体时留空，不影响原文本注入。
+        _chars = self._memory_characters_for(text)
+        _time_label = str((self.data.get("world") or {}).get("time") or "").strip() or None
+        _ctx = self._memory_context_meta()
+        # 重新添加一条曾删除的事实：清掉删除 tombstone，否则它虽然回到 facts 桶，
+        # 冷归档查询仍会因 tombstone 被永久排除。
+        if bucket == "facts":
+            _deleted = self.data.setdefault("memory", {}).get("facts_deleted")
+            if isinstance(_deleted, list) and text in _deleted:
+                self.data["memory"]["facts_deleted"] = [t for t in _deleted if t != text]
+            _hashes = self.data["memory"].get("facts_deleted_hashes")
+            if isinstance(_hashes, list) and _hashes:
+                _h = hashlib.sha1(text.encode("utf-8")).hexdigest()[:16]
+                if _h in _hashes:
+                    self.data["memory"]["facts_deleted_hashes"] = [
+                        h for h in _hashes if h != _h
+                    ]
+        # 保守自动 supersede 只对 GM/史官写入的 facts 生效（玩家手写 facts 不自动取代）。
+        # 它可能重建 memory.facts 列表，所以必须在 append 前调用并重新取一次桶引用。
+        # skip_auto_supersede：显式 supersede 的 new_text 已经由那条 op 表达过意图，
+        # 不能再让它连锁取代另一条相似事实。
+        if bucket == "facts" and not skip_auto_supersede:
+            self._auto_supersede_fact(text, _chars, origin)
+            items = self.data["memory"].setdefault(bucket, [])
         items.append(text)
         # task 74：dual-write 到结构化 memory.items（旧调用方完全无感知）
         # bucket → kind 映射：当前所有旧 bucket 都标 runtime_fact（本局事实）。
@@ -1038,6 +1631,11 @@ class GameState(ApplyOpsMixin, RulesGameplayMixin, PendingMixin):
             kind="runtime_fact",
             source="legacy_add_memory",
             legacy_bucket=bucket,
+            characters=_chars or None,
+            time_label=_time_label,
+            location=_ctx.get("location"),
+            scene_id=_ctx.get("scene_id"),
+            phase_label=_ctx.get("phase_label"),
         )
         return True, ""
 
@@ -1071,6 +1669,9 @@ class GameState(ApplyOpsMixin, RulesGameplayMixin, PendingMixin):
         source: str = "gm",
         time_label: str | None = None,
         characters: list[str] | None = None,
+        location: str | None = None,
+        scene_id: str | None = None,
+        phase_label: str | None = None,
         status: str = "active",
         supersedes: list[str] | None = None,
         legacy_bucket: str | None = None,
@@ -1096,17 +1697,237 @@ class GameState(ApplyOpsMixin, RulesGameplayMixin, PendingMixin):
             item["time_label"] = time_label
         if characters:
             item["characters"] = list(characters)
+        # 本次记忆修复：写入时记录地点/场景/篇章，供 MemoryAssembler 做场景召回。
+        # 旧数据没有这些字段，召回仍按文本 gram/实体兜底，不影响兼容。
+        if location:
+            item["location"] = str(location).strip()
+        if scene_id:
+            item["scene_id"] = str(scene_id).strip()
+        if phase_label:
+            item["phase_label"] = str(phase_label).strip()
         if supersedes:
             item["supersedes"] = list(supersedes)
         if legacy_bucket:
             item["legacy_bucket"] = legacy_bucket
         items = self.data.setdefault("memory", {}).setdefault("items", [])
         items.append(item)
-        # 软上限：避免无限增长（保留最新 500 条；老 item 不删除元数据，由
-        # task 78 migration 阶段决定永久策略）
-        if len(items) > 500:
-            self.data["memory"]["items"] = items[-500:]
+        self._prune_memory_items(items)
+        self._touch_memory()
         return item["id"]  # type: ignore[return-value]
+
+    def _touch_memory(self) -> None:
+        """记忆版本号 +1（本次记忆修复）：用于 active recall 索引缓存失效。
+
+        任何会改变 items 的 active/archived/status/text/characters/location 的写路径
+        都必须调用；漏调最坏结果是索引候选偏旧，MemoryAssembler 仍会复核状态。
+        """
+        try:
+            mem = self.data.setdefault("memory", {})
+            mem["_rev"] = int(mem.get("_rev", 0) or 0) + 1
+        except Exception:
+            pass
+
+    def _bump_memory_stat(self, key: str, n: int = 1) -> None:
+        """记忆生命周期计数 +n（本次记忆修复，仅观测，不参与逻辑）。"""
+        try:
+            stats = self.data.setdefault("memory", {}).setdefault("stats", {})
+            stats[key] = int(stats.get(key, 0) or 0) + int(n)
+        except Exception:
+            pass
+
+    @staticmethod
+    def _prune_memory_items(items: list) -> None:
+        """items 软上限：只裁非 active 历史，绝不因为数量上限丢掉当前生效的记忆。
+
+        旧实现 `items[-500:]` 不看 status/archived，直接砍最旧。长局中最早被砍的
+        往往是 notes/abilities 的 active item，但 legacy 桶仍保留文本 → MemoryProvider
+        还能注入，query_memory/归档扫描却看不到，形成静默漂移。这里：
+          · active 且未归档的条目全部保留（它们是当前事实/手写记忆/持久状态）；
+          · 剩余名额按“从新到旧”保留 archived/superseded/rejected 历史；
+          · active 本身超过上限时不强裁，宁可 state 大一点，也不丢正确性。
+        """
+        if not isinstance(items, list) or len(items) <= MEMORY_ITEMS_MAX:
+            return
+        active_flags = [
+            isinstance(it, dict)
+            and (it.get("status") or "active") == "active"
+            and not it.get("archived")
+            for it in items
+        ]
+        active_count = sum(1 for f in active_flags if f)
+        history_slots = max(0, MEMORY_ITEMS_MAX - active_count)
+        keep: set[int] = set()
+        # active 全部保留；非 active 从尾部（较新）往前保留 history_slots 条。
+        for i, is_active in enumerate(active_flags):
+            if is_active:
+                keep.add(i)
+        for i in range(len(items) - 1, -1, -1):
+            if history_slots <= 0:
+                break
+            if not active_flags[i]:
+                keep.add(i)
+                history_slots -= 1
+        items[:] = [it for i, it in enumerate(items) if i in keep]
+
+    def reconcile_memory_items(self) -> dict[str, int]:
+        """对账 legacy 记忆桶与结构化 memory.items（本次记忆修复）。
+
+        背景：历史上有三条路径会造成漂移：
+          1. 旧 `set/overwrite memory.<bucket>` 直接 `_set_path`，items 没同步；
+          2. task 74 之前写入的桶条目没有 item；
+          3. 旧 items 上限直接砍最旧，可能砍掉仍 active 的 item。
+        漂移后果：legacy 桶里有、items 里没有 → 查询召回/归档扫描看不到；
+        items 里有、legacy 桶里没有 → 已被覆盖/删除的事实还能被召回（僵尸记忆）。
+
+        对账策略（用户拍板：legacy 桶是“当前生效集合”的权威）：
+          · legacy 文本缺少 active item → 补建 item（turn=0 / source=reconcile_v1，
+            不伪造时间，避免被自动归档立刻清走）；
+          · active item 的文本已不在 legacy 桶 → 标 `orphaned`（保留历史，不硬删），
+            让它立即退出召回/归档/query_memory；
+          · 顺带清洗 legacy 桶的空值、验收元信息和重复文本。
+        幂等；返回计数供 maintenance/日志观测。
+        """
+        out = {"backfilled": 0, "orphaned": 0, "deduped": 0}
+        changed = False
+        try:
+            from state.json_ops import is_acceptance_meta
+
+            mem = self.data.setdefault("memory", {})
+            items = mem.get("items")
+            if not isinstance(items, list):
+                items = []
+                mem["items"] = items
+            buckets = ("facts", "notes", "pinned", "abilities", "resources")
+            turn = int(self.data.get("turn", 0) or 0)
+            _save_id = self.data.get("_active_save_id")
+
+            # 1) 清洗 legacy 桶：去空/验收元信息/重复，保持原顺序。
+            cleaned_buckets: dict[str, list[str]] = {}
+            for bucket in buckets:
+                raw_list = mem.get(bucket)
+                if not isinstance(raw_list, list):
+                    continue
+                cleaned: list[str] = []
+                seen: set[str] = set()
+                for raw in raw_list:
+                    text = _clean_item(raw if isinstance(raw, str) else str(raw))
+                    if not text or is_acceptance_meta(text) or text in seen:
+                        out["deduped"] += 1
+                        continue
+                    seen.add(text)
+                    cleaned.append(text)
+                cleaned_buckets[bucket] = cleaned
+                if cleaned != raw_list:
+                    mem[bucket] = cleaned
+                    changed = True
+
+            # 2) active item 按 bucket+text 建索引。
+            active_keys: set[tuple[str, str]] = set()
+            duplicate_items: list[dict] = []
+            for it in items:
+                if not isinstance(it, dict):
+                    continue
+                if (it.get("status") or "active") != "active" or it.get("archived"):
+                    continue
+                # 本次记忆修复：给旧 item 回填 characters / 做别名归一，但按 20 回合
+                # 节流。旧实现每回合对每个缺 characters 的 item 重扫，关系名没变时
+                # 结果完全相同；长局里这是固定浪费。
+                _last_scan = int(it.get("characters_scanned_turn") or -1)
+                if _last_scan < 0 or turn - _last_scan >= CHARACTER_RESCAN_TURNS:
+                    _existing = [str(c) for c in (it.get("characters") or []) if str(c).strip()]
+                    _chars = _existing or self._memory_characters_for(str(it.get("text") or ""))
+                    if _chars and _save_id:
+                        try:
+                            from kb.alias import canonical_name_for_save
+                            _canon: list[str] = []
+                            for c in _chars:
+                                cc = canonical_name_for_save(_save_id, c) or c
+                                if cc not in _canon:
+                                    _canon.append(cc)
+                            _chars = _canon
+                        except Exception:
+                            pass
+                    if _chars and it.get("characters") != _chars:
+                        it["characters"] = _chars
+                        changed = True
+                    it["characters_scanned_turn"] = turn
+                b = str(it.get("legacy_bucket") or "")
+                t = _clean_item(str(it.get("text", "")))
+                if b in buckets and t:
+                    key = (b, t)
+                    if key in active_keys:
+                        # legacy 桶对文本去重，同一 (bucket,text) 最多应有一个 active item。
+                        # 历史漂移留下的重复 active item 会让“active 数量 != 桶长度”，
+                        # 也会让 query_memory/召回重复；保留第一条，其余标 orphaned。
+                        duplicate_items.append(it)
+                        changed = True
+                    else:
+                        active_keys.add(key)
+            for it in duplicate_items:
+                it["status"] = "orphaned"
+                it["orphaned_at_turn"] = turn
+                it["orphan_reason"] = "duplicate_active_item"
+                out["orphaned"] += 1
+
+            # 3) legacy 有、items 没有 → 补建 item（不进入自动 supersede/洪泛闸，
+            #    这是历史修复而非新写入，直接 add_memory_item）。
+            for bucket, texts in cleaned_buckets.items():
+                for text in texts:
+                    if (bucket, text) in active_keys:
+                        continue
+                    self.add_memory_item(
+                        text=text,
+                        kind="runtime_fact",
+                        source="reconcile_v1",
+                        time_label=None,  # 旧数据没有可信时间，不伪造
+                        characters=self._memory_characters_for(text) or None,
+                        legacy_bucket=bucket,
+                    )
+                    active_keys.add((bucket, text))
+                    out["backfilled"] += 1
+                    changed = True
+                    # 旧归档索引里如果还留着同文，必须去掉：否则 KB 会同时写
+                    # fact 和 afact，episodic 召回可能把同一条事实返回两次。
+                    if bucket == "facts":
+                        arch = mem.get("archived_facts")
+                        if isinstance(arch, list):
+                            mem["archived_facts"] = [
+                                t for t in arch if _clean_item(str(t)) != text
+                            ]
+                        deleted = mem.get("facts_deleted")
+                        if isinstance(deleted, list):
+                            mem["facts_deleted"] = [
+                                t for t in deleted if _clean_item(str(t)) != text
+                            ]
+                        hashes = mem.get("facts_deleted_hashes")
+                        if isinstance(hashes, list) and hashes:
+                            h = hashlib.sha1(text.encode("utf-8")).hexdigest()[:16]
+                            mem["facts_deleted_hashes"] = [
+                                x for x in hashes if x != h
+                            ]
+
+            # 4) items 有、legacy 没有 → orphaned（保留历史，立即退出召回）。
+            legacy_texts = {b: set(t) for b, t in cleaned_buckets.items()}
+            for it in items:
+                if not isinstance(it, dict):
+                    continue
+                if (it.get("status") or "active") != "active" or it.get("archived"):
+                    continue
+                b = str(it.get("legacy_bucket") or "")
+                if b not in buckets:
+                    continue
+                t = _clean_item(str(it.get("text", "")))
+                if t and t not in legacy_texts.get(b, set()):
+                    it["status"] = "orphaned"
+                    it["orphaned_at_turn"] = turn
+                    it["orphan_reason"] = "legacy_bucket_missing"
+                    out["orphaned"] += 1
+                    changed = True
+        except Exception:
+            return out
+        if changed:
+            self._touch_memory()
+        return out
 
     def remove_memory(self, bucket: str, index: int):
         items = self.data["memory"].get(bucket, [])
@@ -1121,26 +1942,209 @@ class GameState(ApplyOpsMixin, RulesGameplayMixin, PendingMixin):
         # 若删除仅 pop legacy bucket、不清 items，被删条目仍以 status=active 留在
         # items → 下回合注入 GM 上下文 → GM 复述 → 经 apply_ops 又写回 bucket，
         # 表现为「玩家删了笔记、点推进剧情又自动加回来」（且依赖 GM 是否复述而时
-        # 有时无）。这里把 items 中 legacy_bucket 与文本都匹配的首个 active 条目一并
-        # 硬删，让两套表示在删除时严格一致（根因修复，而非在注入侧打补丁）。
+        # 有时无）。
+        #
+        # 本次记忆修复：删除改为「按剩余出现次数」对齐 items。旧实现只删首个匹配
+        # item，遇到 legacy 桶重复文本或历史漂移（items 里同文 active 条目多于桶内
+        # 出现次数）时会留下仍 active 的 item，查询召回/归档还能把它捡回来。
         if not removed_text:
             return
         structured = self.data.get("memory", {}).get("items")
         if not isinstance(structured, list):
             return
-        for i, it in enumerate(structured):
-            if (
-                isinstance(it, dict)
+        matched = [
+            i for i, it in enumerate(structured)
+            if isinstance(it, dict)
+            and it.get("legacy_bucket") == bucket
+            and (it.get("status") or "active") == "active"
+            and _clean_item(str(it.get("text", ""))) == removed_text
+        ]
+        # 桶里还剩 N 条同文，就保留 N 个 active item；多出来的都是漂移/重复，删掉。
+        remaining = sum(1 for t in items if _clean_item(str(t)) == removed_text)
+        # 本次记忆修复：如果这条事实被彻底删除，记 tombstone，KB 冷归档/查询
+        # 不应再把它召回。只记文本，不保留 item 元数据。
+        if bucket == "facts" and remaining == 0 and removed_text:
+            mem = self.data.setdefault("memory", {})
+            deleted = mem.setdefault("facts_deleted", [])
+            if isinstance(deleted, list) and removed_text not in deleted:
+                deleted.append(removed_text)
+                if len(deleted) > 1000:
+                    del deleted[:-1000]
+            hashes = mem.setdefault("facts_deleted_hashes", [])
+            if isinstance(hashes, list):
+                h = hashlib.sha1(removed_text.encode("utf-8")).hexdigest()[:16]
+                if h not in hashes:
+                    hashes.append(h)
+                    # hash 很小，保留更多，覆盖文本 tombstone 被裁后的远期删除。
+                    if len(hashes) > 5000:
+                        del hashes[:-5000]
+        to_remove = max(0, len(matched) - remaining)
+        while to_remove > 0 and matched:
+            structured.pop(matched[0])
+            to_remove -= 1
+            # pop 后下标会前移：重新计算剩余匹配，避免跳项/越界。
+            matched = [
+                j for j, it in enumerate(structured)
+                if isinstance(it, dict)
                 and it.get("legacy_bucket") == bucket
                 and (it.get("status") or "active") == "active"
                 and _clean_item(str(it.get("text", ""))) == removed_text
-            ):
-                structured.pop(i)
-                break
+            ]
+        self._touch_memory()
+
+    def replace_memory_bucket(self, bucket: str, values, *, source: str = "gm:json") -> tuple[bool, str]:
+        """完整重写一个记忆桶，并同步结构化 items（本次记忆修复）。
+
+        背景：`set/overwrite memory.facts` 之前直接 `_set_path` 替换 legacy 列表，
+        完全绕过 add_memory 的 dual-write。被移出列表的旧条目仍以 active 留在
+        memory.items 里 → 查询召回、归档扫描、query_memory 还能把它们捡回来，
+        形成「已经删掉/覆盖掉的事实又出现在上下文」的僵尸记忆。
+
+        语义（用户拍板）：被移除的旧条目**保留历史但标记 superseded**，不硬删；
+        新列表里的文本若没有对应 active item，则补建 item。这样 legacy 桶与 items
+        在“当前生效集合”上严格一致，同时保留可追溯的旧版本。
+
+        返回 (是否成功, 给调用方/GM 看的说明)。任何异常都返回失败，不半写。
+        """
+        try:
+            bucket = str(bucket or "").strip()
+            if bucket not in {"resources", "abilities", "facts", "pinned", "notes"}:
+                return False, f"不支持的记忆桶：{bucket}"
+            from state.json_ops import is_acceptance_meta
+
+            # 1) 清洗新列表：去空、去验收元信息、保序去重。与 add_memory 的入口闸同口径。
+            cleaned: list[str] = []
+            seen: set[str] = set()
+            for raw in (values if isinstance(values, (list, tuple)) else []):
+                text = _clean_item(raw if isinstance(raw, str) else str(raw))
+                if not text or is_acceptance_meta(text) or text in seen:
+                    continue
+                seen.add(text)
+                cleaned.append(text)
+
+            mem = self.data.setdefault("memory", {})
+            # 新列表里重新出现的事实不再算“已删除”，清掉 tombstone。
+            if bucket == "facts":
+                _deleted = mem.get("facts_deleted")
+                if isinstance(_deleted, list):
+                    mem["facts_deleted"] = [t for t in _deleted if _clean_item(str(t)) not in seen]
+                _hashes = mem.get("facts_deleted_hashes")
+                if isinstance(_hashes, list) and _hashes:
+                    _cleared = {
+                        hashlib.sha1(t.encode("utf-8")).hexdigest()[:16] for t in cleaned
+                    }
+                    mem["facts_deleted_hashes"] = [h for h in _hashes if h not in _cleared]
+            structured = mem.get("items")
+            if not isinstance(structured, list):
+                structured = []
+                mem["items"] = structured
+
+            # 2) 收集该桶当前 active item（按文本索引；同文可能有多条，一起处理）。
+            active_by_text: dict[str, list[dict]] = {}
+            for it in structured:
+                if not isinstance(it, dict):
+                    continue
+                if it.get("legacy_bucket") != bucket:
+                    continue
+                if (it.get("status") or "active") != "active" or it.get("archived"):
+                    continue
+                active_by_text.setdefault(_clean_item(str(it.get("text", ""))), []).append(it)
+
+            turn = int(self.data.get("turn", 0) or 0)
+
+            # 3) 新列表里没有的 active item → 标记 superseded。按 active item 而不是
+            #    仅按 old_list 判断：如果历史漂移导致 item 在、legacy 桶不在，它们同样
+            #    不能继续 active（否则 set 之后仍会被查询召回）。旧列表文本差集只用于
+            #    兼容“只有 legacy、没有 item”的旧档，下面统一由 item 索引兜底。
+            removed_items = 0
+            for text, its in active_by_text.items():
+                if text in seen:
+                    continue
+                for it in its:
+                    it["status"] = "superseded"
+                    it["superseded_at_turn"] = turn
+                    it["superseded_by"] = ""
+                    it["supersede_reason"] = "bucket_replace"
+                    it["supersede_source"] = str(source or "gm:json")
+                    removed_items += 1
+
+            # 4) 新列表里没有 active item 的文本 → 补建 item（archived 同文则直接复活，
+            #    superseded 同文则新建，保留旧版本的 supersede 链）。
+            created = 0
+            _ctx = self._memory_context_meta()
+            for text in cleaned:
+                if active_by_text.get(text):
+                    continue
+                revived = next((
+                    it for it in structured
+                    if isinstance(it, dict)
+                    and it.get("legacy_bucket") == bucket
+                    and _clean_item(str(it.get("text", ""))) == text
+                    and it.get("archived")
+                ), None)
+                if revived is not None:
+                    revived["archived"] = False
+                    revived["status"] = "active"
+                    revived["turn"] = turn
+                    revived["source"] = str(source or "gm:json")
+                    # 复活时补上当前场景元数据（旧归档 item 可能没有）。
+                    for key in ("location", "scene_id", "phase_label"):
+                        if not revived.get(key) and _ctx.get(key):
+                            revived[key] = _ctx[key]
+                    created += 1
+                    if bucket == "facts":
+                        _arch = mem.get("archived_facts")
+                        if isinstance(_arch, list):
+                            mem["archived_facts"] = [t for t in _arch if _clean_item(str(t)) != text]
+                    continue
+                self.add_memory_item(
+                    text=text,
+                    kind="runtime_fact",
+                    source=str(source or "gm:json"),
+                    time_label=str((self.data.get("world") or {}).get("time") or "").strip() or None,
+                    characters=self._memory_characters_for(text) or None,
+                    location=_ctx.get("location"),
+                    scene_id=_ctx.get("scene_id"),
+                    phase_label=_ctx.get("phase_label"),
+                    legacy_bucket=bucket,
+                )
+                created += 1
+
+            # 5) 最后才替换 legacy 列表：即使上面某一步异常，也不会出现“桶已改、items 没改”。
+            mem[bucket] = cleaned
+
+            if removed_items or created:
+                try:
+                    audit = self.data.setdefault("permissions", {}).setdefault("audit_log", [])
+                    audit.append({
+                        "ts": now_iso(),
+                        "kind": "memory_bucket_replaced",
+                        "source": str(source or "gm:json"),
+                        "path": f"memory.{bucket}",
+                        "kept": len(cleaned),
+                        "removed": removed_items,
+                        "created": created,
+                        "turn": turn,
+                    })
+                    if len(audit) > 200:
+                        self.data["permissions"]["audit_log"] = audit[-200:]
+                except Exception:
+                    pass
+            self._touch_memory()
+            return True, (
+                f"已重写 memory.{bucket}（保留 {len(cleaned)} 条，"
+                f"取代 {removed_items} 条，新建 {created} 条）"
+            )
+        except Exception as exc:  # noqa: BLE001 —— 写入口失败要回给调用方，不破回合
+            return False, f"重写记忆桶失败：{exc}"
 
     def edit_memory(self, bucket: str, index: int, new_text: str) -> bool:
         """就地改一条玩家记忆:同步 legacy bucket + 结构化 memory.items 里匹配的 active 条目。
-        与 remove_memory 同理 —— 只改 bucket 不改 items 会导致 GM 上下文(只读 items)仍读旧文本。"""
+        与 remove_memory 同理 —— 只改 bucket 不改 items 会导致 GM 上下文(只读 items)仍读旧文本。
+
+        本次记忆修复：如果旧文本只有 legacy 桶、没有对应 item（历史漂移或旧 set 路径），
+        编辑后补建 item，避免这条被编辑过的记忆永远进不了查询召回/归档扫描。
+        """
         new_text = _clean_item(new_text)
         if not new_text:
             return False
@@ -1150,16 +2154,35 @@ class GameState(ApplyOpsMixin, RulesGameplayMixin, PendingMixin):
         old_text = _clean_item(items[index])
         items[index] = new_text
         structured = self.data.get("memory", {}).get("items")
-        if isinstance(structured, list) and old_text:
-            for it in structured:
-                if (
-                    isinstance(it, dict)
-                    and it.get("legacy_bucket") == bucket
-                    and (it.get("status") or "active") == "active"
-                    and _clean_item(str(it.get("text", ""))) == old_text
-                ):
-                    it["text"] = new_text
-                    break
+        if not isinstance(structured, list):
+            structured = []
+            self.data.setdefault("memory", {})["items"] = structured
+        if not old_text:
+            return True
+        for it in structured:
+            if (
+                isinstance(it, dict)
+                and it.get("legacy_bucket") == bucket
+                and (it.get("status") or "active") == "active"
+                and _clean_item(str(it.get("text", ""))) == old_text
+            ):
+                it["text"] = new_text
+                it["source"] = "ui_edit"
+                self._touch_memory()
+                return True
+        # 没有对应 item：补建一条 active item（turn 用当前回合，便于后续归档/召回）。
+        _ctx = self._memory_context_meta()
+        self.add_memory_item(
+            text=new_text,
+            kind="runtime_fact",
+            source="ui_edit",
+            time_label=str((self.data.get("world") or {}).get("time") or "").strip() or None,
+            characters=self._memory_characters_for(new_text) or None,
+            location=_ctx.get("location"),
+            scene_id=_ctx.get("scene_id"),
+            phase_label=_ctx.get("phase_label"),
+            legacy_bucket=bucket,
+        )
         return True
 
     # task 75：hypothesis 独立 namespace。codex §1 强调"推测不能混进事实"——
@@ -1174,12 +2197,20 @@ class GameState(ApplyOpsMixin, RulesGameplayMixin, PendingMixin):
         characters: list[str] | None = None,
     ) -> str:
         """添加一条推测/计划/草稿。返回 item id 供后续 confirm/reject 引用。"""
+        # 本次记忆修复:调用方没给 characters/time_label 时做确定性补全，和 facts
+        # 一样让实体/时间过滤可用（推测确认后也会带着这些元数据进 facts）。
+        _chars = characters or self._memory_characters_for(text)
+        _time = time_label or (str((self.data.get("world") or {}).get("time") or "").strip() or None)
+        _ctx = self._memory_context_meta()
         return self.add_memory_item(
             text=text,
             kind="hypothesis",
             source=source,
-            time_label=time_label,
-            characters=characters,
+            time_label=_time,
+            characters=_chars or None,
+            location=_ctx.get("location"),
+            scene_id=_ctx.get("scene_id"),
+            phase_label=_ctx.get("phase_label"),
         )
 
     def list_active_hypotheses(self) -> list[dict]:
@@ -1206,12 +2237,17 @@ class GameState(ApplyOpsMixin, RulesGameplayMixin, PendingMixin):
         # 双写 legacy facts: MemoryProvider 注入、面板事实列表、remove_memory 同步都以
         # legacy bucket 为准。旧实现只写 items，确认后的推测在 fact_groups 12 条窗口之外
         # 或归档之后就从 GM 上下文彻底消失（只剩摘要里一句），这是「推测确认了但 GM 仍不认」的根因。
+        _ctx = self._memory_context_meta()
         self.add_memory_item(
             text=_text,
             kind="runtime_fact",
             source=source,
-            time_label=target.get("time_label"),
-            characters=target.get("characters"),
+            time_label=target.get("time_label") or (
+                str((self.data.get("world") or {}).get("time") or "").strip() or None),
+            characters=target.get("characters") or self._memory_characters_for(_text) or None,
+            location=target.get("location") or _ctx.get("location"),
+            scene_id=target.get("scene_id") or _ctx.get("scene_id"),
+            phase_label=target.get("phase_label") or _ctx.get("phase_label"),
             supersedes=[item_id],
             legacy_bucket="facts",
         )
@@ -1228,6 +2264,7 @@ class GameState(ApplyOpsMixin, RulesGameplayMixin, PendingMixin):
         if not target or target.get("kind") != "hypothesis":
             return False
         target["status"] = "rejected"
+        self._touch_memory()
         return True
 
     def set_permission_mode(self, mode: str):
@@ -1354,12 +2391,27 @@ class GameState(ApplyOpsMixin, RulesGameplayMixin, PendingMixin):
     def update_location(self, loc: str):
         self.data["player"]["current_location"] = loc
 
-    def update_relationship(self, char: str, status: str):
+    def update_relationship(self, char: str, status: str, *, source: str = "gm"):
         # acceptance 元信息不进关系状态(人物面板可见;谓词极窄,合法状态文本不可能命中)
         from state.json_ops import is_acceptance_meta
+        if not str(char or "").strip():
+            return
         if is_acceptance_meta(status):
             return
+        prev = self.data["relationships"].get(char)
         self.data["relationships"][char] = status
+        # 本次记忆修复:记录关系变化元数据（兼容期不改字符串值，避免所有读取方一起改）。
+        # updated_turn/previous/source 供后续「关系变化时间线」「按实体召回」使用；
+        # 当前 prompt 仍只读 relationships 字符串，行为不变。
+        try:
+            meta = self.data.setdefault("relationship_meta", {})
+            meta[char] = {
+                "updated_turn": int(self.data.get("turn") or 0),
+                "previous": prev,
+                "source": str(source or "gm"),
+            }
+        except Exception:
+            pass
 
     def update_time(self, time_desc: str, source: str = "system"):
         time_desc = clean_time_value(time_desc)

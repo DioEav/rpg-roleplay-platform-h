@@ -191,7 +191,7 @@ pending_questions 选项把剧情引到完全脱离原著的世界线,玩家觉�
 
 # 结构化状态写回（JSON 协议 · 唯一推荐，必须使用）
 ⚠️ 询问玩家时，**只能**用 `{"op": "question", ...}` JSON 形式，**严禁**在正文里写 `【询问玩家：xxx】`、`【询问玩家：xxx｜选项：A、B】` 等文本标签。前端已经用 question op 渲染独立选择组件，正文里再写一遍是重复冗余。
-⚠️ 状态变化时，**只能**用 JSON ops（set/append/overwrite），**严禁**在正文里 inline 写 `【状态写入：xxx】`、`【状态追加：xxx】` 等文本标签。正文只写叙事，状态只走 JSON fence。
+⚠️ 状态变化时，**只能**用 JSON ops（set/append/overwrite/supersede），**严禁**在正文里 inline 写 `【状态写入：xxx】`、`【状态追加：xxx】` 等文本标签。正文只写叙事，状态只走 JSON fence。
 
 本轮如果导致剧情状态变化，在正文末尾追加一个 ```json fence，数组里只放真正发生的变化：
 
@@ -208,7 +208,7 @@ pending_questions 选项把剧情引到完全脱离原著的世界线,玩家觉�
 ⚠️ 上面只是**格式示例**：尖括号占位必须换成本局真实的人名/地名/时间/目标。
 示例里的名字不是本局设定，绝不可当作已存在的人物或地点写进正文。
 
-- op 可选：`set` / `append` / `overwrite` / `question` / `hypothesis` / `confirm_hypothesis` / `reject_hypothesis`
+- op 可选：`set` / `append` / `overwrite` / `question` / `supersede` / `hypothesis` / `confirm_hypothesis` / `reject_hypothesis`
 - path 是字符串；value 是字符串（list 字段用 append 逐项追加）
 - 没变化的字段不要编造条目
 - 仅 ```json fence 内的数组会被当作指令；纯叙事里的【...】不会触发写入
@@ -217,6 +217,9 @@ pending_questions 选项把剧情引到完全脱离原著的世界线,玩家觉�
   推测会单独存放，玩家或 GM 后续可用 `confirm_hypothesis`/`reject_hypothesis` 升级或弃用：
   `{"op":"confirm_hypothesis","id":"mem_xxxxxx"}` → 转 runtime_fact
   `{"op":"reject_hypothesis","id":"mem_xxxxxx"}` → 标 rejected
+- **事实取代** `supersede`：旧事实被新事实明确纠正/改写时用，旧条目保留历史但不再注入。例：
+  `{"op":"supersede","path":"memory.facts","old":"张三在码头丢了钥匙","new":"张三把钥匙交给了守卫"}`
+  只在「同一件事的新版本」时用；普通新事实用 append，不要拿 supersede 做追加。
 
 # 兼容协议（deprecated · 仅作 backward compat · 新输出禁用此格式）
 ⚠️ 下列文本标签格式已废弃，**不要在新输出中使用**。这些标签只供旧版本 parser 向后兼容解析，
@@ -563,6 +566,7 @@ class GameMaster:
         # 红线经占位注入到**三个**模板,酒馆那两个独立模板也走 _fill —— 只写进 _SYSTEM_BASE 的话
         # 酒馆里红线会消失,而酒馆恰恰是最容易出这类内容的地方。
         from agents.gm.content_policy import (
+            PLATFORM_INVARIANT,
             render_content_policy_block,
             resolve_content_policy,
         )
@@ -582,7 +586,12 @@ class GameMaster:
             # 的段落都不覆盖本段」,靠语义兜底而不是靠位置 —— 别以为把它放在模板末尾就万事大吉。
             return (template
                     .replace("{style_block}", style_block)
-                    .replace("{content_policy_block}", content_policy_block))
+                    .replace("{content_policy_block}", content_policy_block)
+                    # 本次记忆修复（既有缺陷）：三个模板都有 {platform_invariant}
+                    # 占位符，但旧 _fill 从未替换它 → 平台红线在所有模式下实际缺失
+                    # （含酒馆）。这里补上，且放在用户尺度块之后，符合“红线读在后面
+                    # 才不会被用户自定义文本顶掉”的顺序契约。
+                    .replace("{platform_invariant}", PLATFORM_INVARIANT))
         # 酒馆模式:content_pack.gm_policy.mode == "tavern_gm" → 角色扮演引擎(非 GM)。
         # 角色细节/卡内高优先级指令/persona 由 TavernCharacterProvider 经 retrieved_context 注入。
         _state = getattr(self, "_active_state", None)

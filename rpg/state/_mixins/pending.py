@@ -27,7 +27,7 @@ _log = _logging.getLogger(__name__)
 # apply_state_write_typed 的字段写入路径(这些 op 不是 path=value 字段写入)。
 _NARRATIVE_OP_PATHS = frozenset({
     "consequence", "npc_agenda", "hypothesis",
-    "confirm_hypothesis", "reject_hypothesis",
+    "confirm_hypothesis", "reject_hypothesis", "supersede",
 })
 
 
@@ -170,6 +170,17 @@ class PendingMixin:
             if hid and self.reject_hypothesis(hid):
                 return f"推测拒绝：{hid}"
             return f"推测拒绝失败（id 不存在）：{hid}"
+        if op == "supersede":
+            old_txt = str(value.get("old") or "").strip()
+            new_txt = str(value.get("new") or "").strip()
+            item_id = str(value.get("id") or "").strip()
+            ok = self.supersede_memory_item(
+                item_id=item_id or None,
+                old_text=old_txt or None,
+                new_text=new_txt or None,
+                source=src,
+            )
+            return f"事实取代：{old_txt or item_id}" if ok else f"事实取代失败：{old_txt or item_id}"
         return f"未知待审 op：{op}"
 
     def add_pending_question(self, text: str, source: str = "gm", options: list | None = None) -> bool:

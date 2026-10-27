@@ -55,6 +55,75 @@ def get_memory_settings(user_id: int):
     return MemorySettings(**clean)
 
 
+def validate_memory_settings_patch_with_errors(
+    patch: Any,
+) -> tuple[dict[str, Any], dict[str, str]]:
+    """逐字段校验 per-save memory override，返回 (合法字段, 字段→错误说明)。
+
+    与旧版的区别（本次记忆修复）：非法值不再静默丢弃，而是把原因回给 API/UI，
+    用户输入 token_budget=99 时能看到“必须 >= 200”，而不是保存后莫名其妙回弹。
+    未知字段也单独标注（不写入 effective，但提示拼写/版本问题）。
+    """
+    from schemas.memory import MemorySettings
+
+    clean: dict[str, Any] = {}
+    errors: dict[str, str] = {}
+    if not isinstance(patch, dict):
+        return clean, errors
+    model_fields = MemorySettings.model_fields
+    for k, v in patch.items():
+        if not isinstance(k, str) or k not in model_fields:
+            errors[str(k)] = "未知设置项"
+            continue
+        try:
+            ok = MemorySettings.model_validate({k: v})
+            clean[k] = getattr(ok, k)
+        except Exception as exc:
+            # pydantic 的 str(exc) 第一行是“1 validation error for …”，对用户没用；
+            # 优先取结构化 errors()[0].msg（如 “Input should be greater than or equal to 200”）。
+            msg = "取值非法"
+            try:
+                errs = exc.errors()  # type: ignore[attr-defined]
+                if errs:
+                    msg = str(errs[0].get("msg") or msg)
+            except Exception:
+                msg = str(exc).splitlines()[0].strip() or msg
+            errors[k] = msg
+    return clean, errors
+
+
+def validate_memory_settings_patch(patch: Any) -> dict[str, Any]:
+    """逐字段校验一份 per-save memory override；保留旧调用方的“只返回合法字段”语义。
+
+    与 get_memory_settings 的逐字段校验同口径，供 effective 解析共用。
+    API 写入路径用 validate_memory_settings_patch_with_errors 拿错误明细。
+    """
+    clean, _ = validate_memory_settings_patch_with_errors(patch)
+    return clean
+
+
+def get_effective_memory_settings(user_id: int | None, state_data: dict | None = None):
+    """用户全局 MemorySettings + 当前存档 override（本次记忆修复）。
+
+    per-save override 存于 state.data["memory_settings"]（只含用户改过的字段）。
+    解析顺序：全局 user_preferences → 存档 override 逐字段覆盖 → 逐字段校验。
+    MemoryProvider / memory_maintenance 都走这里，保证「本存档设置」真正生效。
+    """
+    from schemas.memory import MemorySettings
+
+    base = None
+    if user_id is not None:
+        try:
+            base = get_memory_settings(int(user_id))
+        except Exception:
+            base = None
+    if base is None:
+        base = MemorySettings()
+    raw = (state_data or {}).get("memory_settings") if isinstance(state_data, dict) else None
+    clean = validate_memory_settings_patch(raw)
+    return base.model_copy(update=clean) if clean else base
+
+
 def list_settings(user_id: int) -> dict[str, Any]:
     init_db()
     with connect() as db:

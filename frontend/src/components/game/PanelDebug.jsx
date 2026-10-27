@@ -40,6 +40,11 @@ function PanelDebug({ state }) {
             const tt = dbg.tier_tokens;
             const cp = dbg.cache_plan || {};
             const ratio = cp.estimated_cacheable_ratio;
+            // 记忆 section 明细（本次记忆修复）: MemoryProvider.debug.sections =
+            // [{id, selected, available, dropped, tokens}]，看哪一段被预算丢了。
+            const contributions = Array.isArray(dbg.contributions) ? dbg.contributions : [];
+            const memDebug = ((contributions.find((c) => c && c.provider_id === "memory") || {}).debug) || {};
+            const memSections = Array.isArray(memDebug.sections) ? memDebug.sections : [];
             return (
               <>
                 <div className="gp-row"><span className="gp-label">{t('game.debug.context_layers')}</span><span className="mono">{layerCount}</span></div>
@@ -56,6 +61,45 @@ function PanelDebug({ state }) {
                     <span className="mono">{Math.round(ratio * 100)}%</span>
                   </div>
                 )}
+                {memSections.length > 0 && (
+                  <div className="gp-row">
+                    <span className="gp-label">{t('game.debug.memory_sections', { defaultValue: '记忆分桶 (选中/可用)' })}</span>
+                    <span className="mono" style={{fontSize: 10.5, textAlign: "right"}}>
+                      {memSections.map((s) => (
+                        `${s.id} ${s.selected}/${s.available} (${s.tokens || 0}t)${s.dropped ? ` ↓${s.dropped}` : ""}`
+                      )).join(' · ')}
+                    </span>
+                  </div>
+                )}
+                {memDebug.token_budget != null && (
+                  <div className="gp-row">
+                    <span className="gp-label">{t('game.debug.memory_budget', { defaultValue: '记忆 token' })}</span>
+                    <span className="mono">{memDebug.token_used || 0} / {memDebug.token_budget}
+                      {memDebug.token_estimate_factor != null && memDebug.token_estimate_factor !== 1
+                        ? ` ×${memDebug.token_estimate_factor}` : ""}
+                    </span>
+                  </div>
+                )}
+                {memDebug.stats && Object.keys(memDebug.stats).length > 0 && (
+                  <div className="gp-row">
+                    <span className="gp-label">{t('game.debug.memory_stats', { defaultValue: '记忆生命周期' })}</span>
+                    <span className="mono" style={{fontSize: 10.5, textAlign: "right"}}>
+                      {Object.entries(memDebug.stats).map(([k, v]) => `${k} ${v}`).join(' · ')}
+                    </span>
+                  </div>
+                )}
+                {(() => {
+                  const pending = (memory.summary_pending || {});
+                  const qlen = Array.isArray(pending.queue) ? pending.queue.length : 0;
+                  const arcTurn = memory.arc_refresh_turn;
+                  if (!qlen && (arcTurn == null || arcTurn < 0)) return null;
+                  return (
+                    <div className="gp-row">
+                      <span className="gp-label">{t('game.debug.memory_queue', { defaultValue: '摘要队列 / arc' })}</span>
+                      <span className="mono">{qlen} · arc T{arcTurn ?? -1}</span>
+                    </div>
+                  );
+                })()}
                 <div className="gp-row"><span className="gp-label">turn</span><span className="mono">{(state && state.turn) ?? 0}</span></div>
               </>
             );

@@ -29,9 +29,16 @@ def test_chat_max_tokens_reads_scoped_preference():
         assert app._chat_max_tokens(_user()) == 12000
 
 
-def test_chat_max_tokens_keeps_legacy_preference_key():
+def test_chat_max_tokens_reads_legacy_key_above_min():
+    # legacy key 仍被读取；高于 MIN 时原样生效。
+    with mock.patch.object(app, "_get_user_preferences_cached", return_value={"max_tokens": 12000}):
+        assert app._chat_max_tokens(_user()) == 12000
+
+
+def test_chat_max_tokens_clamps_legacy_key_below_current_min():
+    # 旧档 2048 低于当前 CHAT_MAX_TOKENS_MIN(4096) → 按新下限夹紧，但 key 仍被读取。
     with mock.patch.object(app, "_get_user_preferences_cached", return_value={"max_tokens": 2048}):
-        assert app._chat_max_tokens(_user()) == 2048
+        assert app._chat_max_tokens(_user()) == app.CHAT_MAX_TOKENS_MIN
 
 
 def test_chat_max_tokens_clamps_only_extreme_values():

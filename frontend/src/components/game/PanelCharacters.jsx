@@ -43,7 +43,7 @@ function _entityTypeLabel(kind, source, t) {
   return "—";
 }
 
-function CharacterCard({ name, info, subtitle, avatarPath, onEditStatus, onDelete, invoked, agenda }) {
+function CharacterCard({ name, info, subtitle, avatarPath, onEditStatus, onDelete, invoked, agenda, relMeta }) {
   const { t } = useTranslation();
   // info: { tone | disposition, note?, role? }
   // 可选 props: onEditStatus(newValue)/onDelete() — 仅 relationships 区传入,
@@ -115,6 +115,14 @@ function CharacterCard({ name, info, subtitle, avatarPath, onEditStatus, onDelet
           {agenda.updated_turn ? <div>{t('game.characters.agenda_turn', { turn: agenda.updated_turn })}</div> : null}
         </div>
       ) : null}
+      {relMeta && relMeta.updated_turn ? (
+        <div className="muted-2" style={{fontSize: 11.5, lineHeight: 1.6, marginTop: 4}}>
+          {t('game.characters.relationship_updated_at', { turn: relMeta.updated_turn })}
+          {relMeta.previous
+            ? ` · ${t('game.characters.relationship_previous', { previous: relMeta.previous })}`
+            : null}
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -130,6 +138,8 @@ function PanelCharacters({ state }) {
   const encounter = (state && state.encounter) || {};
   const combatants = Array.isArray(encounter.combatants) ? encounter.combatants : [];
   const relationships = (state && state.relationships) || {};
+  // 关系变化元数据（本次记忆修复）: {name: {updated_turn, previous, source}}。
+  const relationshipMeta = (state && state.relationship_meta) || {};
   // NPC 议程(活世界柱子3):后端 state.npc_agendas,可能为空 dict 或(旧后端)undefined。
   const agendas = (state && state.npc_agendas) || {};
 
@@ -234,6 +244,7 @@ function PanelCharacters({ state }) {
             {relEntries.map(({ name, info }) => (
               <CharacterCard key={name} name={name} info={info}
                 agenda={agendas[name]}
+                relMeta={relationshipMeta[name]}
                 onEditStatus={async (status) => {
                   await window.api.game.relationshipSet({ character: name, status });
                   // 关系写入不会自动回推 state → 必须主动刷新,否则 pill 停在旧值(看起来像没保存)。

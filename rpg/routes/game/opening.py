@@ -105,7 +105,11 @@ async def api_opening(
             )
             state.set_last_retrieval(_ctx)
             _, _save_id_for_ctx = _resolve_persist_target(api_user)
-            _bundle = _build_turn_context(state, query, _ctx, script_id=script_id, save_id=_save_id_for_ctx)
+            _bundle = _build_turn_context(
+                state, query, _ctx,
+                script_id=script_id, save_id=_save_id_for_ctx,
+                user_id=api_user["id"] if api_user else None,
+            )
             return _bundle
 
         yield _sse("stage", {"phase": "building_context", "label": "组装上下文…"})

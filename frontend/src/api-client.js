@@ -1130,6 +1130,19 @@
       memoryAdd: (body) => POST(`${API_PREFIX}/memory/add`, body),
       memoryRemove: (body) => POST(`${API_PREFIX}/memory/remove`, body),
       memoryUpdate: (body) => POST(`${API_PREFIX}/memory/update`, body),
+      // 恢复归档/已取代条目（本次记忆修复）
+      memoryRestore: (body) => POST(`${API_PREFIX}/memory/restore`, body),
+      // 服务端历史分页（热归档 + KB 冷归档）
+      memoryHistoryGet: (params) => {
+        const qs = new URLSearchParams();
+        Object.entries(params || {}).forEach(([k, v]) => {
+          if (v !== undefined && v !== null && v !== "") qs.set(k, String(v));
+        });
+        return GET(`${API_PREFIX}/memory/history?${qs.toString()}`);
+      },
+      // 本存档记忆设置覆盖（本次记忆修复）
+      memorySettingsGet: () => GET(`${API_PREFIX}/memory/settings`),
+      memorySettingsSet: (body) => POST(`${API_PREFIX}/memory/settings`, body || {}),
       permissions: (body) => POST(`${API_PREFIX}/permissions`, body),
       pendingWrite: (body) => POST(`${API_PREFIX}/permissions/pending-write`, body),
       clearQuestions: (body) => POST(`${API_PREFIX}/questions/clear`, body || {}),

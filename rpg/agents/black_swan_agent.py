@@ -488,7 +488,7 @@ def _make_harness_caller(
             user_prompt=user_prompt,
             user_id=user_id,
             tool_schema=schema,  # 三通道都启用强 schema(enum 锁 NPC ID 等)
-            max_tokens=4096,
+            max_tokens=600,
             timeout_sec=20,
             agent_kind="black_swan",
             no_think=True,
@@ -610,7 +610,7 @@ def maybe_trigger(
             from state.core import _load_script_overrides
             all_overrides = _load_script_overrides()
             # 找含当前 phase 的 override
-            for key, ov in all_overrides.items():
+            for _key, ov in all_overrides.items():
                 rules = (ov.get('phase_inference') or {}).get('rules') or []
                 if any(r.get('phase') == snapshot['current_phase'] for r in rules):
                     script_overrides = ov

@@ -20,9 +20,12 @@
 from __future__ import annotations
 
 import json
+import logging
 from typing import Any
 
 from kb import live_repo, t0_seed
+
+log = logging.getLogger(__name__)
 
 # 顶层纯瞬态键:每回合重生/纯运行时指针,不是存档状态 → 不进 KB。
 _DROP_TOP = {"_active_save_id", "_turn_images_generated", "history", "relationships"}
@@ -30,6 +33,9 @@ _DROP_TOP = {"_active_save_id", "_turn_images_generated", "history", "relationsh
 _DROP_MEM = {"last_context", "last_retrieval", "last_context_agent", "last_structured_updates"}
 # worldline 子键里的瞬态。
 _DROP_WL = {"last_projection", "last_validation", "pending_projection"}
+# 本次记忆修复：state 里 archived_facts 只保留最近 1000 条；KB 用 afactc（cold）事件
+# 保存所有曾进入 state 的归档事实，永不因 state 裁剪而退役，供 query_memory 冷检索。
+ARCHIVED_FACTS_STATE_MAX = 1000
 
 
 def _setvar(db, save_id: int, commit_id: int, key: str, value: Any) -> None:
@@ -79,6 +85,16 @@ def import_state(db, save_id: int, commit_id: int, state_data: dict) -> dict[str
     mem = dict(sd.get("memory") or {})
     world = dict(sd.get("world") or {})
     _facts = list(dict.fromkeys(str(f) for f in (mem.get("facts") or []) if f is not None and str(f).strip()))
+    # 归档事实索引（本次记忆修复）: 已从 facts 桶移出的远期事实，单独用 afact 事件
+    # 写入 kb_events。facts 桶保持精简（注入只看最近 N 条），archived_facts 供
+    # episodic/远期召回；materialize 仍还原到 memory.archived_facts，不混回 facts。
+    _afacts = list(dict.fromkeys(
+        str(f) for f in (mem.get("archived_facts") or []) if f is not None and str(f).strip()))
+    # 玩家显式删除的事实（本次记忆修复）：冷归档不能把已删除事实重新召回。
+    _deleted = {str(f).strip() for f in (mem.get("facts_deleted") or []) if str(f).strip()}
+    _deleted_hashes = {
+        str(h).strip() for h in (mem.get("facts_deleted_hashes") or []) if str(h).strip()
+    }
     _kevts = list(dict.fromkeys(str(e) for e in (world.get("known_events") or []) if e is not None and str(e).strip()))
     _story_time = str(world.get("time") or "")
     from core.feature_flags import feature_enabled_for_save
@@ -89,6 +105,14 @@ def import_state(db, save_id: int, commit_id: int, state_data: dict) -> dict[str
         # 行(首次开启/回滚再开启)一次性转换后退役——代价等于一次归档重排,此后快路径。
         n_evt += _import_events_hashed(db, save_id, commit_id, "fact", _facts,
                                        "memory.facts", _story_time, cur_evt)
+        n_evt += _import_events_hashed(db, save_id, commit_id, "afact", _afacts,
+                                       "memory.archived_facts", _story_time, cur_evt)
+        # 冷存储：afactc 用内容哈希键，只写不退休。state 的 archived_facts 满 1000 后
+        # 会裁掉最旧条目（afact 事件随之退役），但 afactc 保留原文，query_memory
+        # 的 archived scope 可回退到这里检索。
+        n_evt += _import_events_hashed(db, save_id, commit_id, "afactc", _afacts,
+                                       "memory.archived_facts_cold", _story_time, cur_evt,
+                                       keep_orphans=True)
         n_evt += _import_events_hashed(db, save_id, commit_id, "kevt", _kevts,
                                        "world.known_events", _story_time, cur_evt)
     else:
@@ -102,6 +126,19 @@ def import_state(db, save_id: int, commit_id: int, state_data: dict) -> dict[str
             live_repo.record_event(db, save_id, commit_id, lk, summary=summ,
                                    story_time=_story_time, metadata={"source": "memory.facts"})
             n_evt += 1
+        for i, summ in enumerate(_afacts):
+            lk = f"afact:{i}"
+            if cur_evt.get(lk) == summ:
+                n_skip += 1
+                continue
+            live_repo.record_event(db, save_id, commit_id, lk, summary=summ,
+                                   story_time=_story_time, metadata={"source": "memory.archived_facts"})
+            n_evt += 1
+        # 冷存储（本次记忆修复）：即使 kb_hash_keys 关闭，也单独用内容哈希键写一份
+        # afactc，永不退休；legacy afact:{i} 仍按 state 列表裁剪。
+        n_evt += _import_events_hashed(db, save_id, commit_id, "afactc", _afacts,
+                                       "memory.archived_facts_cold", _story_time, cur_evt,
+                                       keep_orphans=True)
         for i, summ in enumerate(_kevts):
             lk = f"kevt:{i}"
             if cur_evt.get(lk) == summ:
@@ -115,7 +152,7 @@ def import_state(db, save_id: int, commit_id: int, state_data: dict) -> dict[str
         # 掩盖但行残留 → 回滚自愈,flag 语义才是真逃生阀。
         for lk in list(cur_evt):
             prefix, _, rest = lk.partition(":")
-            if prefix not in ("fact", "kevt"):
+            if prefix not in ("fact", "afact", "kevt"):
                 continue
             if rest.startswith("h:"):
                 live_repo.retire_event(db, save_id, commit_id, lk)
@@ -124,7 +161,34 @@ def import_state(db, save_id: int, commit_id: int, state_data: dict) -> dict[str
             if not rest.isdigit():
                 continue
             idx = int(rest)
-            if (prefix == "fact" and idx >= len(_facts)) or (prefix == "kevt" and idx >= len(_kevts)):
+            if ((prefix == "fact" and idx >= len(_facts))
+                    or (prefix == "afact" and idx >= len(_afacts))
+                    or (prefix == "kevt" and idx >= len(_kevts))):
+                live_repo.retire_event(db, save_id, commit_id, lk)
+                n_evt += 1
+
+    # 玩家明确删除的事实：退役对应的热/冷归档事件，避免冷存储/ episodic 召回
+    # 把已删除内容重新带给 GM。facts_deleted 只保留最近 1000 条，足够覆盖
+    # 长局中仍可能被检索到的窗口。
+    if _deleted or _deleted_hashes:
+        for text in _deleted:
+            # 哈希键的冷/热事件（无论当前 state 是否还包含该文本，都主动退役一次；
+            # retire 幂等，重复调用不会产生新语义）。
+            for prefix in ("afactc", "afact"):
+                lk = _event_hash_key(prefix, text)
+                if lk in cur_evt or text in _afacts:
+                    live_repo.retire_event(db, save_id, commit_id, lk)
+                    n_evt += 1
+        # 文本 tombstone 被裁后，hash tombstone 仍能让冷/热事件退役。
+        for h in _deleted_hashes:
+            for prefix in ("afactc", "afact"):
+                lk = f"{prefix}:h:{h}"
+                if lk in cur_evt:
+                    live_repo.retire_event(db, save_id, commit_id, lk)
+                    n_evt += 1
+        # legacy 位置键的 afact:{i} 用内容比对退役。
+        for lk, summ in list(cur_evt.items()):
+            if lk.startswith("afact:") and summ in _deleted:
                 live_repo.retire_event(db, save_id, commit_id, lk)
                 n_evt += 1
 
@@ -142,7 +206,8 @@ def import_state(db, save_id: int, commit_id: int, state_data: dict) -> dict[str
         if top in _DROP_TOP:
             continue
         if top == "memory":
-            val = {k: v for k, v in (val or {}).items() if k not in _DROP_MEM and k != "facts"}
+            val = {k: v for k, v in (val or {}).items()
+                   if k not in _DROP_MEM and k not in ("facts", "archived_facts")}
         elif top == "world":
             val = {k: v for k, v in (val or {}).items() if k != "known_events"}
         elif top == "worldline":
@@ -178,9 +243,14 @@ def _evt_sort_key(e: dict) -> tuple:
 
 
 def _import_events_hashed(db, save_id: int, commit_id: int, prefix: str, items: list[str],
-                          source: str, story_time: str, cur_evt: dict[str, str]) -> int:
+                          source: str, story_time: str, cur_evt: dict[str, str],
+                          *, keep_orphans: bool = False) -> int:
     """方案A 写路径:增量=只写新文本(seq=全表单调 max+1),删除=只退役被删行;
-    可见的 legacy 位置键行不在 want 集 → 随退役循环一次性清除(首次开启的自迁移)。"""
+    可见的 legacy 位置键行不在 want 集 → 随退役循环一次性清除(首次开启的自迁移)。
+
+    keep_orphans=True 用于冷存储 afactc：state 的 archived_facts 只保留最近 1000 条，
+    被裁掉的旧文本不能退役 —— 它们正是冷存储要保活的远期事实。
+    """
     writes = 0
     want: dict[str, str] = {}
     for t in items:
@@ -196,10 +266,11 @@ def _import_events_hashed(db, save_id: int, commit_id: int, prefix: str, items: 
         live_repo.record_event(db, save_id, commit_id, lk, summary=text,
                                story_time=story_time, metadata={"source": source}, seq=next_seq)
         writes += 1
-    for lk in vis:
-        if lk not in want:
-            live_repo.retire_event(db, save_id, commit_id, lk)
-            writes += 1
+    if not keep_orphans:
+        for lk in vis:
+            if lk not in want:
+                live_repo.retire_event(db, save_id, commit_id, lk)
+                writes += 1
     return writes
 
 
@@ -214,8 +285,9 @@ def materialize(db, save_id: int, commit_id: int) -> dict[str, Any]:
     # 高 index 的旧行未退役会残留 → 同一文本落在多个 logical_key 上,_newest_visible 各取一行 →
     # materialize 重复读(群反馈「事实库大量重复条目」,真库 save 268 实测 149 条仅 41 唯一)。这里按
     # summary 去重,让所有存档下次加载即干净;import_state 侧再退役孤儿根治累积(见下)。
-    facts, kevts = [], []
+    facts, afacts, kevts = [], [], []
     _seen_f: set[str] = set()
+    _seen_a: set[str] = set()
     _seen_k: set[str] = set()
     from state.json_ops import is_acceptance_meta
     for e in sorted(evts, key=_evt_sort_key):
@@ -229,12 +301,26 @@ def materialize(db, save_id: int, commit_id: int) -> dict[str, Any]:
             if summ not in _seen_f:
                 _seen_f.add(summ)
                 facts.append(summ)
+        elif src == "memory.archived_facts" or e["logical_key"].startswith("afact:"):
+            # 归档事实索引（本次记忆修复）: 还原到 memory.archived_facts，不混回 facts。
+            if summ not in _seen_a:
+                _seen_a.add(summ)
+                afacts.append(summ)
+        elif src == "memory.archived_facts_cold" or e["logical_key"].startswith("afactc:"):
+            # 冷存储只供 query_memory 回退检索，不投影回 state（否则 state 会重新
+            # 无界增长，等于把刚裁掉的历史又装回来）。
+            continue
         elif summ not in _seen_k:
             _seen_k.add(summ)
             kevts.append(summ)
+    # state 只保留最近 1000 条热归档；更早的留在 KB 冷事件里。
+    if len(afacts) > ARCHIVED_FACTS_STATE_MAX:
+        afacts = afacts[-ARCHIVED_FACTS_STATE_MAX:]
     state.setdefault("memory", {})
     if facts or "memory" in state:
         state["memory"]["facts"] = facts
+    if afacts or "memory" in state:
+        state["memory"]["archived_facts"] = afacts
     state.setdefault("world", {})
     if kevts or "world" in state:
         state["world"]["known_events"] = kevts
@@ -299,6 +385,162 @@ def materialize(db, save_id: int, commit_id: int) -> dict[str, Any]:
     # 世界树实体(运行时可见;含 T0 seed)— 供 KB 查询,不属 blob 顶层
     state["_entities_visible"] = len(live_repo._newest_visible(db, "kb_entities", save_id, commit_id, ("logical_key",)))
     return state
+
+
+def _cold_text_match(text: str, query: str) -> bool:
+    """冷归档文本匹配：与 query_memory 同口径（空格分词 AND，大小写不敏感）。"""
+    q = str(query or "").strip().lower()
+    if not q:
+        return True
+    t = str(text or "").lower()
+    return all(tok in t for tok in q.split())
+
+
+def _filter_cold_rows(rows: list[dict], query: str, exclude_texts: set[str],
+                      limit: int,
+                      exclude_hashes: set[str] | None = None) -> list[str]:
+    """纯函数：从 afactc 事件行里筛出匹配的文本（新→旧，按 summary 去重）。
+
+    单独拆出来便于单测；DB 读取在 search_archived_cold 里。
+    exclude_hashes 对应 memory.facts_deleted_hashes（文本 tombstone 被裁后仍能
+    阻止已删除事实从冷存储复活）。
+    """
+    import hashlib
+
+    _ex_hashes = set(exclude_hashes or set())
+    out: list[str] = []
+    seen: set[str] = set()
+    for r in sorted(rows or [], key=lambda x: int(x.get("seq") or 0), reverse=True):
+        lk = str((r or {}).get("logical_key") or "")
+        src = ((r or {}).get("metadata") or {}).get("source")
+        if not (lk.startswith("afactc:") or src == "memory.archived_facts_cold"):
+            continue
+        text = str((r or {}).get("summary") or "").strip()
+        if not text or text in seen or text in exclude_texts:
+            continue
+        if _ex_hashes:
+            h = hashlib.sha1(text.encode("utf-8")).hexdigest()[:16]
+            if h in _ex_hashes:
+                continue
+        if not _cold_text_match(text, query):
+            continue
+        seen.add(text)
+        out.append(text)
+        if len(out) >= max(1, int(limit)):
+            break
+    return out
+
+
+def _fetch_cold_rows_sql(db, save_id: int, commit_id: int, query: str,
+                         fetch_limit: int) -> list[dict]:
+    """按 save+谱系+afactc 前缀拉冷事件（本次记忆修复）。
+
+    旧实现用 _newest_visible 读取整表再 Python 过滤，长局冷事件几万条时每次
+    GM 查询都要全扫。这里把 save_id / born_commit 谱系 / logical_key 前缀
+    下推到 SQL，利用 idx_kb_events_key(save_id, logical_key, born_commit)。
+    """
+    from kb.live_repo import _ANCESTRY
+
+    tokens = [t for t in str(query or "").split() if t][:4]
+    params: dict[str, Any] = {
+        "commit": int(commit_id),
+        "save": int(save_id),
+        "fetch": max(1, min(int(fetch_limit), 2000)),
+    }
+    extra = ""
+    for i, tok in enumerate(tokens):
+        # psycopg 命名参数 + ILIKE；token 里的 %/_ 作为宽匹配可接受（先粗筛后 Python 精筛）。
+        params[f"q{i}"] = f"%{tok}%"
+        extra += f" and summary ilike %(q{i})s"
+    sql = _ANCESTRY + f"""
+    , live as (
+        select distinct on (summary) logical_key, summary, metadata, seq
+        from kb_events
+        where save_id = %(save)s
+          and born_commit in (select cid from ancestry)
+          and retired_at_commit is null
+          and logical_key like 'afactc:%%'
+          and coalesce(summary, '') <> ''
+          {extra}
+        order by summary, seq desc
+    )
+    select logical_key, summary, metadata, seq
+    from live
+    order by seq desc
+    limit %(fetch)s
+    """
+    rows = db.execute(sql, params).fetchall() or []
+    return [dict(r) for r in rows]
+
+
+def search_archived_cold(save_id: int, commit_id: int, query: str = "", *,
+                         limit: int = 100,
+                         exclude_texts: set[str] | None = None,
+                         exclude_hashes: set[str] | None = None) -> list[str]:
+    """检索 KB 冷归档事实（本次记忆修复）。
+
+    state 的 memory.archived_facts 只保留最近 1000 条；更早的原文以 afactc 事件
+    永久保存在 kb_events。query_memory(scope="archived"/"all") 在热结果不足时
+    回退到这里，避免“归档满了以后，早期事实从所有检索入口消失”。
+
+    优先走 SQL 下推；fake DB/旧库不支持 ILIKE/命名参数时回退
+    live_repo._newest_visible（行为不变）。任何 DB 失败都返回 []，不阻塞 GM。
+    """
+    if not save_id or not commit_id:
+        return []
+    try:
+        from platform_app.db import connect, init_db
+        init_db()
+        with connect() as db:
+            rows = _fetch_cold_rows_sql(
+                db, int(save_id), int(commit_id), query,
+                max(200, int(limit) * 4),
+            )
+    except Exception:
+        try:
+            from kb import live_repo
+            from platform_app.db import connect, init_db
+            init_db()
+            with connect() as db:
+                rows = live_repo._newest_visible(
+                    db, "kb_events", int(save_id), int(commit_id),
+                    ("logical_key", "summary", "metadata", "seq"),
+                )
+        except Exception as exc:
+            log.debug("[save_kb] cold archived search skipped: %s", exc)
+            return []
+    return _filter_cold_rows(
+        list(rows or []), query, set(exclude_texts or set()),
+        max(1, int(limit)), set(exclude_hashes or set()))
+
+
+def count_archived_cold(save_id: int, commit_id: int) -> int:
+    """当前分支可见的冷归档事实条数（按 summary 去重，本次记忆修复）。
+
+    永久保留策略下需要容量指标；只在历史面板/调试主动查询时调用，不进每回合热路径。
+    """
+    if not save_id or not commit_id:
+        return 0
+    try:
+        from kb.live_repo import _ANCESTRY
+        from platform_app.db import connect, init_db
+        init_db()
+        with connect() as db:
+            row = db.execute(
+                _ANCESTRY + """
+                select count(distinct summary) as n
+                from kb_events
+                where save_id = %(save)s
+                  and born_commit in (select cid from ancestry)
+                  and retired_at_commit is null
+                  and logical_key like 'afactc:%%'
+                  and coalesce(summary, '') <> ''
+                """,
+                {"commit": int(commit_id), "save": int(save_id)},
+            ).fetchone()
+        return int((row or {}).get("n") or 0)
+    except Exception:
+        return 0
 
 
 def seed_full_t0(db, save_id: int, script_id: int, *, commit_id: int | None = None,

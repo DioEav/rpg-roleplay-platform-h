@@ -13,10 +13,18 @@ from __future__ import annotations
 
 import logging
 import re
+import time
+from collections import OrderedDict
 
 log = logging.getLogger(__name__)
 
 _EMBED_BATCH = 16  # 每次后处理最多补嵌入多少条(防一回合事件过多拖慢)
+# query embedding 短 TTL 缓存（本次记忆修复）：episodic 默认开后，正常剧情每回合
+# 都可能走一次 vector 路径；同一 query 的重试/调试/多 provider 调用不应重复打
+# 外部 embedding API。只缓存成功结果，最多 128 条，5 分钟过期。
+_QUERY_EMBED_TTL_SEC = 300
+_QUERY_EMBED_CACHE_MAX = 128
+_QUERY_EMBED_CACHE: OrderedDict[tuple[str, str], tuple[float, list]] = OrderedDict()
 
 # ── 确定性关键词召回(无 embedder 时的主路径) ──────────────────────────
 _CJK_RUN = re.compile(r"[一-鿿]{2,}")
@@ -105,7 +113,7 @@ def _score_events(query_text: str, events: list[dict]) -> list[tuple[int, dict]]
     if not rare:
         return []
     scored: list[tuple[int, dict]] = []
-    for t, e in zip(texts, events):
+    for t, e in zip(texts, events, strict=True):
         hit = [g for g in rare if g in t]
         if not hit:
             continue
@@ -316,6 +324,34 @@ def retrieve_episodic_merged(
     return out
 
 
+def _cached_embed_query(query_text: str, user_id: int | None) -> list | None:
+    """查询向量短 TTL 缓存；失败/空结果不缓存，避免一次故障把后续 5 分钟钉死。"""
+    q = (query_text or "").strip()[:400]
+    if not q:
+        return None
+    key = (str(user_id if user_id is not None else ""), q)
+    now = time.monotonic()
+    hit = _QUERY_EMBED_CACHE.get(key)
+    if hit is not None:
+        ts, vec = hit
+        if now - ts <= _QUERY_EMBED_TTL_SEC:
+            _QUERY_EMBED_CACHE.move_to_end(key)
+            return vec
+        _QUERY_EMBED_CACHE.pop(key, None)
+    try:
+        from platform_app.knowledge.embedding import embed_query
+        vec = embed_query(q, user_id)
+    except Exception:
+        return None
+    if not vec:
+        return None
+    _QUERY_EMBED_CACHE[key] = (now, vec)
+    _QUERY_EMBED_CACHE.move_to_end(key)
+    while len(_QUERY_EMBED_CACHE) > _QUERY_EMBED_CACHE_MAX:
+        _QUERY_EMBED_CACHE.popitem(last=False)
+    return vec
+
+
 def _retrieve_vector(
     save_id: int, commit_id: int, user_id: int | None, query_text: str, *, k: int = 5,
 ) -> list[dict]:
@@ -334,11 +370,7 @@ def _retrieve_vector(
         ).fetchone()
     if not _has_vec:
         return []
-    try:
-        from platform_app.knowledge.embedding import embed_query
-        qv = embed_query(query_text, user_id)
-    except Exception:
-        qv = None
+    qv = _cached_embed_query(query_text, user_id)
     if not qv:
         return []
     sql = _ANCESTRY + _DEDUP_BY_SUMMARY.format(

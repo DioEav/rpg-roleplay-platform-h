@@ -22,7 +22,10 @@ GC = (_ROOT / "frontend" / "src" / "entries" / "game-console.jsx").read_text(enc
 
 class RetryRollbackOffByOneGuard(unittest.TestCase):
     def test_failed_draft_sets_unpersisted_flag(self):
-        m = re.search(r"const restoreFailedDraft = \(\) => \{(.{0,900}?)\n    \};", GC, re.S)
+        m = re.search(
+            r"const restoreFailedDraft = \([^)]*\) => \{(.{0,6000}?)\n    \};",
+            GC, re.S,
+        )
         self.assertIsNotNone(m, "restoreFailedDraft 函数体应存在")
         self.assertIn("lastRunFailedUnpersisted = true", m.group(1),
             "restoreFailedDraft 必须置失败轮未落库标记(off-by-one 防线①)")

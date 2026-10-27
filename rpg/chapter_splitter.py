@@ -1025,14 +1025,34 @@ class ChapterSplitter:
 
 
 def _regex_timeout_probe(pattern: str, timeout_sec: float = 0.3) -> bool:
-    """子进程跑一次对抗性匹配，超时即 unsafe。"""
-    import multiprocessing
-    # 构造对抗输入：长 `a` + 让 backtrack 触发的尾字符
+    """跑一次对抗性匹配，超时即 unsafe。
+
+    本次修复：Windows 没有 multiprocessing 'fork'，旧实现直接
+    get_context("fork") 抛 ValueError，导致所有自定义正则被误判失败。这里优先
+    用 requirements 里的 `regex` 模块原生 timeout（跨平台、无进程启动开销）；
+    不可用时再走 fork/spawn 子进程。
+    """
     payloads = [
         ("a" * 60) + "!",
         ("ab" * 30) + "x",
         ("(" * 20) + "y",
     ]
+
+    # 首选：regex 模块原生超时。
+    try:
+        import regex as _regex_mod
+        comp = _regex_mod.compile(pattern, _regex_mod.MULTILINE)
+        for s in payloads:
+            comp.match(s, timeout=timeout_sec)
+        return True
+    except TimeoutError:
+        return False
+    except Exception:
+        # 编译错误/不支持 timeout 等：继续走进程探测；若进程探测也不可用，
+        # 不要因为环境差异误禁自定义正则。
+        pass
+
+    import multiprocessing
 
     def _worker(p, samples, q):
         import re as _re
@@ -1044,16 +1064,27 @@ def _regex_timeout_probe(pattern: str, timeout_sec: float = 0.3) -> bool:
         except Exception as e:
             q.put(f"err:{e}")
 
-    ctx = multiprocessing.get_context("fork") if hasattr(multiprocessing, "get_context") else multiprocessing
-    q = ctx.Queue()
-    proc = ctx.Process(target=_worker, args=(pattern, payloads, q))
-    proc.start()
-    proc.join(timeout=timeout_sec)
-    if proc.is_alive():
-        proc.terminate()
-        proc.join(timeout=0.5)
-        return False
-    return not q.empty()
+    try:
+        try:
+            ctx = multiprocessing.get_context("fork")
+            _timeout = timeout_sec
+        except (ValueError, AttributeError):
+            # Windows/macOS spawn 启动本身可能超过 0.3s，给进程启动留时间，
+            # 否则正常正则会被误判成“超时”。
+            ctx = multiprocessing.get_context("spawn")
+            _timeout = max(timeout_sec, 3.0)
+        q = ctx.Queue()
+        proc = ctx.Process(target=_worker, args=(pattern, payloads, q))
+        proc.start()
+        proc.join(timeout=_timeout)
+        if proc.is_alive():
+            proc.terminate()
+            proc.join(timeout=0.5)
+            return False
+        return not q.empty()
+    except Exception:
+        # 无法创建隔离进程时 fail-open，真正执行时仍受后续错误处理保护。
+        return True
 
 
 chapter_splitter = ChapterSplitter()

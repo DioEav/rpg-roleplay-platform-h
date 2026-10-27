@@ -58,6 +58,8 @@ _SYSTEM_OPS = """\
 - "append":   追加进列表字段（memory.resources / memory.facts / world.known_events 等）
 - "overwrite": 整体覆盖列表（少用）
 - "question": GM 在叙事里向玩家提问（玩家需要选择）
+- "supersede": 新事实明确取代同一条旧事实（旧事实保留历史但不再注入）。字段 old/new，
+  或 id/text（id 来自 query_memory）。只在叙事明确改写/纠正旧事实时用，不要拿它做普通追加。
 
 可写字段（严格）：
 - player.role / player.background / player.current_location（注意：**绝不写 player.name**——
@@ -163,13 +165,13 @@ def _build_system_prompt(tasks: frozenset[str], consequence_enabled: bool = Fals
     # 输出格式说明
     schema_fields: list[str] = []
     if "ops" in tasks:
-        _kinds = "set|append|overwrite|question"
+        _kinds = "set|append|overwrite|question|supersede"
         if consequence_enabled:
             _kinds += "|consequence"
         if agenda_enabled:
             _kinds += "|agenda"
         _extra = ',"due_turns":4' if consequence_enabled else ""
-        schema_fields.append('"ops": [{"op":"%s","path":"player.xxx","value":"..."%s}]' % (_kinds, _extra))
+        schema_fields.append('"ops": [{"op":"%s","path":"player.xxx","value":"..."%s}]' % (_kinds, _extra))  # noqa: UP031 — JSON 大括号与 .format 冲突，保留 % 更安全
     if "anchors" in tasks:
         schema_fields.append('"reached": [{"anchor_key":"<来自列表>","drift_score":0.0}]')
         schema_fields.append('"current_chapter": <章号整数 或 null>')
@@ -352,7 +354,7 @@ def _build_tool_schema(tasks: frozenset[str], acceptance_clauses: list[str] | No
     required: list[str] = []
 
     if "ops" in tasks:
-        _op_enum = ["set", "append", "overwrite", "question",
+        _op_enum = ["set", "append", "overwrite", "question", "supersede",
                     "hypothesis", "confirm_hypothesis", "reject_hypothesis"]
         _op_item_props: dict[str, Any] = {
             "op": {
@@ -364,7 +366,9 @@ def _build_tool_schema(tasks: frozenset[str], acceptance_clauses: list[str] | No
             "question": {"type": "string", "description": "op=question 时用"},
             "options": {"type": "array", "items": {"type": "string"}, "description": "op=question 时用"},
             "text": {"type": "string", "description": "op=hypothesis/consequence 时用"},
-            "id": {"type": "string", "description": "op=confirm_hypothesis/reject_hypothesis 时用"},
+            "id": {"type": "string", "description": "op=confirm_hypothesis/reject_hypothesis/supersede 时用"},
+            "old": {"type": "string", "description": "op=supersede:被取代的旧事实原文"},
+            "new": {"type": "string", "description": "op=supersede:取代后的新事实（可省，省则只标旧事实失效）"},
             "characters": {"type": "array", "items": {"type": "string"}, "description": "op=hypothesis 时用"},
             "time_label": {"type": "string", "description": "op=hypothesis 时可选"},
         }

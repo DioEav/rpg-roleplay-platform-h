@@ -361,6 +361,36 @@ class ApplyOpsMixin:
                         _log_op_parse_error("question op 缺 'question' 或 'text' 字段", op)
                         updates.append(f"JSON op 忽略（询问缺文本）：{op}")
                     continue
+                if kind == "supersede":
+                    # 显式事实取代（本次记忆修复）:旧事实 → superseded，保留 item 历史，
+                    # 旧文本移出 facts 桶；new 非空时顺手写入新事实。权限模式与其它叙事
+                    # 记忆 op 一致（read_only/default 入 pending，不直写）。
+                    old_txt = str(op.get("old") or op.get("old_text") or "").strip()
+                    new_txt = str(op.get("new") or op.get("new_text") or op.get("text") or "").strip()
+                    item_id = str(op.get("id") or "").strip()
+                    if not old_txt and not item_id:
+                        _log_op_parse_error("supersede op 缺 'old' 或 'id' 字段", op)
+                        updates.append(f"JSON op 忽略（取代缺旧事实）：{op}")
+                        continue
+                    if self._gm_narrative_needs_pending():
+                        updates.append(self.add_pending_narrative_op(
+                            "supersede",
+                            {"old": old_txt, "new": new_txt, "id": item_id},
+                            source="gm:json",
+                            display=f"事实取代：{old_txt or item_id}",
+                        ))
+                    else:
+                        ok = self.supersede_memory_item(
+                            item_id=item_id or None,
+                            old_text=old_txt or None,
+                            new_text=new_txt or None,
+                            source="gm:json",
+                        )
+                        updates.append(
+                            f"事实取代：{old_txt or item_id}"
+                            if ok else f"事实取代失败（未找到旧事实）：{old_txt or item_id}"
+                        )
+                    continue
                 # 后果账本 v1（docs/design/consequence_ledger_v1.md）：登记一条待兑现的
                 # 后果。触发扫描/注入在 context provider 侧做，这里只负责写入登记。
                 if kind == "consequence":
@@ -728,7 +758,17 @@ class ApplyOpsMixin:
             # 列表里同时出现矛盾的两条。
             is_full_list_replacement = isinstance(value, (list, tuple)) and not append
             if overwrite or is_full_list_replacement:
-                _set_path(self.data, path, items)
+                bucket = path.split(".", 1)[1] if path.startswith("memory.") else ""
+                if bucket in _MEMORY_BUCKETS:
+                    # 本次记忆修复：记忆桶的完整替换必须走统一写入口，不能 _set_path
+                    # 直接改 legacy 列表 —— 否则被移除的旧 item 仍 active，查询召回/
+                    # 归档扫描会把它捡回来（僵尸事实）。replace_memory_bucket 会把
+                    # 被移除条目标 superseded，并为新文本补建 item。
+                    ok, why = self.replace_memory_bucket(bucket, items, source=source)
+                    if not ok:
+                        return f"状态写入失败：{why}"
+                else:
+                    _set_path(self.data, path, items)
             elif path.startswith("memory.") and path.split(".", 1)[1] in _MEMORY_BUCKETS:
                 # 记忆桶的追加**一律回到 add_memory**(单点根闸)。这里原本手写 append,
                 # 于是 dispatcher 路由失败 fall-through 到老路径时,既跳过了 memory.items
@@ -752,13 +792,19 @@ class ApplyOpsMixin:
                 for item in items:
                     if item and item not in target:
                         target.append(item)
+                # 本次记忆修复:known_events 统一硬上限。工具路径早已 cap 100，
+                # JSON ops/史官 append 路径此前没有 → 同样的事件走不同通道，长局无界增长。
+                if path == "world.known_events":
+                    from state.core import KNOWN_EVENTS_MAX
+                    if len(target) > KNOWN_EVENTS_MAX:
+                        del target[:-KNOWN_EVENTS_MAX]
         elif kind == "relationship":
             name = path.split(".", 1)[1].strip()
             # 空名守卫:`/set relationships.=X`(force 路径绕过 dispatcher)会让 name=""
             # 写入一条空 key 关系,注入成"· ：X"无主体噪声。与 set_relationship 工具的
             # `if not ch` 守卫对齐,空名直接跳过。
             if name:
-                self.update_relationship(name, value)
+                self.update_relationship(name, value, source=str(source or "gm:json"))
         elif kind == "user_variable":
             key = path.split(".", 2)[2]
             self.set_user_variable(key, value, source=source)

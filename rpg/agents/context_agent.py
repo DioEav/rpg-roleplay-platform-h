@@ -407,6 +407,7 @@ def run_context_agent(
         # v1.82.0: 预算来自**主 GM** 的模型窗口(不是 curator 的)——这份 bundle 进的是
         # 主 GM 的 prompt。拿不到窗口时 caller 传 None,求解跳过,行为与改动前一致。
         budget_chars=budget_chars,
+        user_id=user_id,
     )
     cache = bundle["debug"].get("cache_plan", {})
     yield step(

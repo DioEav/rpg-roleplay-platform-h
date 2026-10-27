@@ -4,6 +4,7 @@
 (测试环境无 REDIS_URL → redis_bus.get_sync_client() 返 None)。
 """
 import unittest
+from unittest import mock
 
 from platform_app import auth
 
@@ -11,6 +12,12 @@ from platform_app import auth
 class VerifyBruteforceGuard(unittest.TestCase):
     def setUp(self):
         self.email = "victim@example.com"
+        # 本次修复：全量测试里其他用例可能已初始化 Redis client，并残留
+        # verify:victim@example.com 的锁；本测试覆盖的是进程内 fallback 路径，
+        # 必须显式把 redis 客户端 patch 成 None，否则 test_not_locked_initially
+        # 会受到测试顺序污染。
+        self._redis_patch = mock.patch("redis_bus.get_sync_client", return_value=None)
+        self._redis_patch.start()
         # 清理进程内状态,避免测试间污染
         with auth._FAIL_LOCK:
             auth._VERIFY_FAIL_BUCKETS.pop(self.email, None)
@@ -20,6 +27,7 @@ class VerifyBruteforceGuard(unittest.TestCase):
         with auth._FAIL_LOCK:
             auth._VERIFY_FAIL_BUCKETS.pop(self.email, None)
             auth._VERIFY_LOCKED_UNTIL.pop(self.email, None)
+        self._redis_patch.stop()
 
     def test_not_locked_initially(self):
         self.assertFalse(auth._verify_locked(self.email))

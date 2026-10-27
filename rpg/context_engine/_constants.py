@@ -101,6 +101,9 @@ _LAYER_MIN_CHARS = {
     "user_input": 2400,
     # 有意义的下限:低于它这层就没有信息价值,宁可整层丢弃也别留半句。
     "state": 1200,
+    # 本次记忆修复: memory 层此前没有显式下限，模型窗口紧张时会被压到 30% 甚至丢弃。
+    # 记忆是长局连贯性的底座，给 1200 字符下限（预算宽裕时仍按 want=4000 走）。
+    "memory": 1200,
     "anchor_pending": 1500,
     "episodic_recall": 1500,
     "novel_retrieval": 2000,

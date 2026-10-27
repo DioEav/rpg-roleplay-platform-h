@@ -36,7 +36,7 @@ _FEATURES: dict[str, tuple[str, str]] = {
     "rag_gate": ("RPG_RAG_GATE", "1"),              # 司命 RAG 检索闸
     "kb_state": ("RPG_KB_STATE", "1"),              # 存档知识库 DB 化
     "anchor_pace": ("RPG_ANCHOR_PACE", "1"),        # 锚点节奏(限速/窗口/intro/死亡失效)
-    "episodic_recall": ("RPG_EPISODIC_RECALL", "0"),  # 永恒记忆·对玩家游戏历史语义召回(默认关,验后开)
+    "episodic_recall": ("RPG_EPISODIC_RECALL", "1"),  # 永恒记忆·对玩家游戏历史语义召回(默认开，可关)
     "consequence_ledger": ("RPG_CONSEQUENCE_LEDGER", "0"),  # 后果账本(承诺/欠债到期回响,默认关,验后开)
     "world_heartbeat": ("RPG_WORLD_HEARTBEAT", "0"),  # 世界心跳(玩家不在场时的世界侧小事,默认关,验后开)
     "channel_fallback": ("RPG_CHANNEL_FALLBACK", "0"),  # 跨渠道 fallback(主渠道重试耗尽切备用凭据渠道,默认关,验后开)
@@ -57,7 +57,7 @@ _ACCESS_GATED: frozenset[str] = frozenset({
 _USER_TOGGLABLE: frozenset[str] = frozenset({
     "ctx_tiered", "recorder_unified", "narrator_slim", "rag_gate", "kb_state",
     "anchor_pace", "consequence_ledger", "world_heartbeat", "channel_fallback",
-    "npc_agenda",
+    "npc_agenda", "episodic_recall",
 })
 
 _FALSY = ("0", "false", "no", "off", "")

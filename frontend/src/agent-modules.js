@@ -89,6 +89,8 @@ export const FEATURES = [
   // 世界模拟与历史
   { key: "anchor_pace",      group: "world", i18nKey: "anchor_pace" },      // 世界线锚点节奏
   { key: "kb_state",         group: "world", i18nKey: "kb_state" },         // 存档知识库 DB 化
+  // 本次记忆修复: 长局「相关往事」语义召回。后端 env 默认开、可在设置里关。
+  { key: "episodic_recall",  group: "world", i18nKey: "episodic_recall" },
   { key: "consequence_ledger", group: "world", i18nKey: "consequence_ledger", defaultOff: true }, // 后果账本(承诺到期回响;env 默认关)
   { key: "world_heartbeat",    group: "world", i18nKey: "world_heartbeat",    defaultOff: true }, // 世界心跳(玩家不在场时的世界侧小事;env 默认关)
   { key: "channel_fallback",  group: "world", i18nKey: "channel_fallback",  defaultOff: true },  // 跨渠道自动备援(主渠道故障切备用凭据;env 默认关)

@@ -1662,10 +1662,12 @@ def _build_turn_context(
     script_id: int | None = None,
     book_id: int | None = None,
     save_id: int | None = None,  # task 107E: 给 runtime_phase_digests provider
+    user_id: int | None = None,  # 本次记忆修复：fallback provider 的用户级记忆设置
 ) -> dict[str, Any]:
     bundle = build_context_bundle(
         state, message, retrieved_context,
         script_id=script_id, book_id=book_id, save_id=save_id,
+        user_id=user_id,
     )
     state.set_last_context(bundle["debug"])
     return bundle

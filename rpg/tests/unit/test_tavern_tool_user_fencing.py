@@ -88,9 +88,18 @@ def _foreign_script(owner_not: int):
         from platform_app.db import connect, init_db
         init_db()
         with connect() as db:
+            # 本次修复：全量测试里其他用例可能给 attacker 订阅过某剧本；
+            # script_readable 允许 owner ∪ subscription，所以这里必须排除
+            # attacker 已订阅的剧本，才能保证它确实是“不可读的他人剧本”。
             row = db.execute(
-                "select id from scripts where owner_id <> %s order by id limit 1",
-                (owner_not,),
+                "select s.id from scripts s "
+                "where s.owner_id <> %s "
+                "  and not exists ("
+                "    select 1 from user_script_subscriptions u "
+                "    where u.script_id = s.id and u.user_id = %s"
+                "  ) "
+                "order by s.id limit 1",
+                (owner_not, owner_not),
             ).fetchone()
         return int(row["id"]) if row else None
     except Exception:

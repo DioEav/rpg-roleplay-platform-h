@@ -1,10 +1,10 @@
 """chat_pipeline.memory_summary — 归档摘要 LLM 精修（真摘要压缩第二步）。
 
 分工：
-  第一步（context_providers.memory._maybe_auto_archive，注入同步路径）——
-    归档时剥桶 + 写一条**机械保底摘要**进 memory.summaries，并把原始全文
-    记入 memory.summary_pending 任务。同步路径永不调 LLM（每回合都跑，
-    不能背秒级延迟和故障面）。
+  第一步（chat_pipeline.memory_maintenance → context_providers.memory._maybe_auto_archive，
+  回合后维护路径）—— 归档时剥桶 + 写机械保底摘要进 memory.summaries，并把原始全文
+  记入 memory.summary_pending 任务（多块归档时用 queue 排队）。同步路径永不调 LLM
+  （每回合都跑，不能背秒级延迟和故障面）。归档已从读 provider 移出（本次记忆修复）。
   第二步（本模块）——读任务 → 调 LLM 把原始全文生成连贯精细摘要 → **覆盖**
     保底 → 清任务。接线有两处：
     · 生产默认：gm.py 的 async 路径（create_task 起、两个 return 前 await）——
@@ -37,6 +37,32 @@ _SUMMARY_MAX_CHARS = 600
 _MIN_SUMMARY_CHARS = 10
 
 
+def _promote_next_pending(mem: dict) -> None:
+    """处理完队首 pending 后，把 queue 里的下一个提升为队首（本次记忆修复）。
+
+    多块归档摘要共用 summary_pending 队列；每回合只精修一条，避免一次大归档触发
+    多次 LLM 调用。没有 queue 时清空，保持旧行为（现有测试全部按 dict 空值断言）。
+    """
+    cur = mem.get("summary_pending")
+    if not isinstance(cur, dict) or not cur:
+        mem["summary_pending"] = {}
+        return
+    queue = cur.get("queue")
+    if isinstance(queue, list) and queue:
+        nxt = queue.pop(0)
+        if isinstance(nxt, dict):
+            # 把剩余的队列挂到新的队首任务上，否则 promote 一次就丢掉后面的块。
+            if queue:
+                nxt["queue"] = queue
+            else:
+                nxt.pop("queue", None)
+            mem["summary_pending"] = nxt
+        else:
+            mem["summary_pending"] = {}
+    else:
+        mem["summary_pending"] = {}
+
+
 def refine_pending_summary(state, user_id: int | None, *, timeout_sec: int = 25) -> bool:
     """处理 memory.summary_pending：LLM 精修成功返回 True。
 
@@ -52,14 +78,16 @@ def refine_pending_summary(state, user_id: int | None, *, timeout_sec: int = 25)
         if not isinstance(pending, dict) or not pending:
             return False
 
-        from platform_app.settings import get_memory_settings
+        from platform_app.settings import get_effective_memory_settings
         from schemas.memory import MemorySettings
         ms = None
-        if user_id is not None:
-            try:
-                ms = get_memory_settings(int(user_id))
-            except Exception:
-                ms = None
+        try:
+            ms = get_effective_memory_settings(
+                int(user_id) if user_id is not None else None,
+                getattr(state, "data", None),
+            )
+        except Exception:
+            ms = None
         if ms is None:
             ms = MemorySettings()
         if not ms.summary_llm_enabled:
@@ -70,7 +98,8 @@ def refine_pending_summary(state, user_id: int | None, *, timeout_sec: int = 25)
         attempts = int(pending.get("attempts", 0) or 0)
         if attempts >= _MAX_ATTEMPTS:
             log.info("[memory_summary] attempts=%d 超限,放弃精修,保底摘要即终稿", attempts)
-            mem["summary_pending"] = {}
+            # 队首放弃后继续处理 queue 里的下一块摘要；没有队列则清空（旧行为）。
+            _promote_next_pending(mem)
             return False
         pending["attempts"] = attempts + 1
 
@@ -122,7 +151,8 @@ def refine_pending_summary(state, user_id: int | None, *, timeout_sec: int = 25)
             summaries[idx] = refined  # 覆盖保底
         else:
             summaries.append(refined)  # 下标失配(理论不可达)兜底,不丢精修结果
-        mem["summary_pending"] = {}  # 成功 → 清任务
+        # 成功：覆盖保底后，把 queue 里的下一块提升为队首（没有队列则清空）。
+        _promote_next_pending(mem)
         log.info("[memory_summary] turn_range=%s 精修完成(%d 字)",
                  pending.get("turn_range"), len(refined))
         return True
