@@ -3,7 +3,7 @@
   "type": "module",
   "version": "1.0.0",
   "private": true,
-  "description": "Meadhall / Meadhall 使用文档站 (docs.stellatrix.icu)",
+  "description": "Meduseld 使用文档站 (docs.stellatrix.icu)",
   "scripts": {
     "dev": "astro dev",
     "build": "astro build",

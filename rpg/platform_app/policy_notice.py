@@ -299,29 +299,29 @@ def _build_email(
         effective_display = effective_at_str
 
     if is_zh:
-        subject = f"[Meadhall RPG] {name_zh}变更通知（{new_version}）"
+        subject = f"[Meduseld RPG] {name_zh}变更通知（{new_version}）"
         body = (
             f"你好,\n\n"
-            f"Meadhall RPG 即将更新{name_zh}({new_version})。\n\n"
+            f"Meduseld RPG 即将更新{name_zh}({new_version})。\n\n"
             f"变更摘要:\n{summary}\n\n"
             f"生效时间: {effective_display}\n\n"
             f"查看完整政策: {url}\n\n"
             f"---\n"
-            f"[EN] Meadhall RPG is updating its {name_en} ({new_version}).\n"
+            f"[EN] Meduseld RPG is updating its {name_en} ({new_version}).\n"
             f"Summary: {summary}\n"
             f"Effective: {effective_display}\n"
             f"Full policy: {url}"
         )
     else:
-        subject = f"[Meadhall RPG] {name_en} Update ({new_version})"
+        subject = f"[Meduseld RPG] {name_en} Update ({new_version})"
         body = (
             f"Hello,\n\n"
-            f"Meadhall RPG is updating its {name_en} ({new_version}).\n\n"
+            f"Meduseld RPG is updating its {name_en} ({new_version}).\n\n"
             f"Summary of changes:\n{summary}\n\n"
             f"Effective date: {effective_display}\n\n"
             f"Read the full policy: {url}\n\n"
             f"---\n"
-            f"[ZH] Meadhall RPG 即将更新{name_zh}({new_version})。\n"
+            f"[ZH] Meduseld RPG 即将更新{name_zh}({new_version})。\n"
             f"变更摘要: {summary}\n"
             f"生效时间: {effective_display}\n"
             f"完整政策: {url}"

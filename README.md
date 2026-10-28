@@ -1,6 +1,6 @@
 <div align="center">
 
-# Meadhall
+# Meduseld
 
 **Self-hostable LLM RPG engine that turns a novel into a playable world.**
 
@@ -13,7 +13,7 @@
 
 </div>
 
-![Meadhall — live game console](./docs/assets/hero.png)
+![Meduseld — live game console](./docs/assets/hero.png)
 
 ---
 
@@ -21,7 +21,7 @@
 
 **Every reader who plays your story plays a different one.**
 
-Meadhall drops a long-form novel into a self-hosted, LLM-driven RPG runtime: branching saves, retrieval over the original text, agent-driven scenes, and all the boring scaffolding — dice, provider routing, token accounting, cards, worldbook — is already wired up. Originally written to host one 4.85-million-character novel as a playable world; now any author or GM can point it at their own.
+Meduseld drops a long-form novel into a self-hosted, LLM-driven RPG runtime: branching saves, retrieval over the original text, agent-driven scenes, and all the boring scaffolding — dice, provider routing, token accounting, cards, worldbook — is already wired up. Originally written to host one 4.85-million-character novel as a playable world; now any author or GM can point it at their own.
 
 ## What works today
 
@@ -222,9 +222,9 @@ Seven reusable pieces were extracted from this repo and published standalone und
 We love SillyTavern. It's an incredible character-card playground. But it answers a different question:
 
 - **SillyTavern** = *"I have a character card. Let me chat with it."*
-- **Meadhall** = *"I have a million-character novel. Let me play **inside** it."*
+- **Meduseld** = *"I have a million-character novel. Let me play **inside** it."*
 
-| Concern | SillyTavern / Risu | Meadhall |
+| Concern | SillyTavern / Risu | Meduseld |
 |---|---|---|
 | Primary unit | Character card | Novel + setting bible |
 | Long-form retrieval | Extension required | Built-in: BM25 + pgvector over the original text |
@@ -235,7 +235,7 @@ We love SillyTavern. It's an incredible character-card playground. But it answer
 | Stack | Node, plain HTML/CSS | Python + FastAPI + pgvector + React |
 | Tests | Mostly ad-hoc | ~2700 pytest cases |
 
-Use SillyTavern when your story is a character. Use Meadhall when your story is a *world*. The two import the same V2 card format, so moving sideways is trivial.
+Use SillyTavern when your story is a character. Use Meduseld when your story is a *world*. The two import the same V2 card format, so moving sideways is trivial.
 
 ## Configuration
 
@@ -309,7 +309,7 @@ This is an open-source project — contributions welcome. For now, please file i
 
 Licensed under the **GNU Affero General Public License v3.0 or later** (AGPL-3.0-or-later). See [LICENSE](./LICENSE) and [NOTICE](./NOTICE). The license covers the **entire** repository — server, web frontend, desktop shell, and the native iOS client under `ios/`.
 
-**Why AGPL?** Meadhall is a server-side application. AGPL ensures any operator running it as a public service must also make their modified source available to users — keeping the engine open even when used as a SaaS.
+**Why AGPL?** Meduseld is a server-side application. AGPL ensures any operator running it as a public service must also make their modified source available to users — keeping the engine open even when used as a SaaS.
 
 **Commercial / closed-source use** is available under a separate dual-license. Contact <chaosai31@gmail.com>.
 

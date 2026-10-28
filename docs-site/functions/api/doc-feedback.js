@@ -1,5 +1,5 @@
 // CF Pages Function:接收文档站「这对我有帮助」反馈(同源,免 CORS),转发到
-// Meadhall 的匿名反馈接口 /api/feedback/anon(免登录 + NSFW 预审 + IP 限流)。
+// Meduseld 的匿名反馈接口 /api/feedback/anon(免登录 + NSFW 预审 + IP 限流)。
 const CENTRAL = 'https://rpg-roleplay.stellatrix.icu/api/feedback/anon';
 
 export async function onRequestPost(context) {

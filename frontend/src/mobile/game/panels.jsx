@@ -7,7 +7,7 @@ import { useTranslation } from 'react-i18next';
 import i18n from '../../i18n';
 import { Icon } from '../icons.jsx';
 import { lsGet } from '../../lib/storage.js';
-import { anchorStatuses, convergenceLabelKey } from '../../lib/timeline-status.js';
+import { anchorStatuses, convergenceLabelSpec } from '../../lib/timeline-status.js';
 // /set 强制设定管理(列出 + 逐条删 + 清空)复用电脑端同一组件:单一来源(worldline.remove + 配对 pinned +
 // game-state-refresh),移动端 MobileGame 复用 game-console run-loop,故 __confirm/__apiToast/刷新事件都可用。
 import { ForcedSetSection, WorldbookOverlaySection } from '../../game-panels.jsx';
@@ -253,13 +253,19 @@ function TimelinePanel({ s }) {
         <KV k={t('game.timeline.chapter_label', { chapter: currentChapter })} v={currentChapter} />
       </Sec>
       <Sec title={t('game.timeline.expected')} count={scriptAnchors.length}>
+        {/* 两条轴分开:位置轴(章节走到哪) vs 收束轴(锚点是否真的发生)。 */}
+        {scriptAnchors.length > 0 && (
+          <div style={{fontSize: 11, color: 'var(--muted-2)', padding: '0 2px 6px'}}>
+            {t('game.timeline.axis_legend')}
+          </div>
+        )}
         {scriptAnchors.length === 0 ? (
           <Empty>{t('game.timeline.no_anchors')}</Empty>
         ) : scriptAnchors.slice(0, 60).map((a, i) => {
           const chMin = a.chapter_min;
           const chMax = a.chapter_max != null ? a.chapter_max : a.chapter_min;
           // 与桌面 PanelTimeline 共用 anchorStatuses:锚点区间允许嵌套重叠,「当前」只能有一条
-          // (群反馈「世界线有三个当前」);包住当前章的外层弧标「进行中」。
+          // (群反馈「世界线有三个当前」);包住当前章的外层弧标「覆盖当前章」。
           const st = anchorStatus_[i];
           const mainTitle = a.story_time_label || a.phase_label
             || (chMin != null ? t('game.timeline.chapter_label', { chapter: chMin }) : '');
@@ -267,13 +273,14 @@ function TimelinePanel({ s }) {
             ? `${t('game.timeline.chapter_label', { chapter: chMin })}${chMax != null && chMax !== chMin ? `–${chMax}` : ''}`
             : '';
           const statusLabel = st === 'current' ? t('game.timeline.current_pill')
-            : st === 'ongoing' ? t('game.timeline.in_progress_pill')
+            : st === 'ongoing' ? t('game.timeline.span_in_progress')
             : st === 'done' ? t('game.timeline.done_label')
             : t('game.timeline.pending_label');
           // 收束轴(与位置轴分开):后端 save_anchor_states 聚合状态。
-          // 位置轴仍负责唯一的「当前」;这里只补充真实收束程度。
-          const convergenceKey = convergenceLabelKey(a.status);
-          const convergenceLabel = convergenceKey ? t(convergenceKey) : '';
+          // superseded_count>0 时显示「含绕过 N」,避免把「没有 pending」误读成
+          // 「全部实际演过」。
+          const convergenceSpec = convergenceLabelSpec(a.status, a.superseded_count);
+          const convergenceLabel = convergenceSpec ? t(convergenceSpec.key, convergenceSpec.params) : '';
           return (
             <div key={i} className="mp-tl">
               <span className="mp-tl-dot" />

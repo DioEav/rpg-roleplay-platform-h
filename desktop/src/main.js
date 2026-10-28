@@ -25,7 +25,7 @@ function createTray() {
     let img = nativeImage.createFromPath(path.join(__dirname, 'tray.png'));
     if (!img.isEmpty()) img = img.resize({ width: 18, height: 18 });
     tray = new Tray(img.isEmpty() ? nativeImage.createEmpty() : img);
-    tray.setToolTip('蜜酒厅控制台');
+    tray.setToolTip('Meduseld 控制台');
     const menu = Menu.buildFromTemplate([
       { label: '打开控制台', click: showPanel },
       { label: '打开应用', click: () => openAppWindow() },
@@ -50,7 +50,7 @@ if (!app.requestSingleInstanceLock()) {
 function createPanel() {
   panelWin = new BrowserWindow({
     width: 820, height: 640, minWidth: 600, minHeight: 480,
-    title: '蜜酒厅控制台',
+    title: 'Meduseld 控制台',
     icon: path.join(__dirname, 'tray.png'),
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
@@ -83,7 +83,7 @@ async function openAppWindow() {
   if (appWin && !appWin.isDestroyed()) { appWin.loadURL(url); appWin.focus(); return url; }
   appWin = new BrowserWindow({
     width: 1280, height: 860, minWidth: 900, minHeight: 600,
-    title: 'Meadhall',
+    title: 'Meduseld',
     webPreferences: { partition: 'persist:meadhall', contextIsolation: true, nodeIntegration: false },
   });
   appWin.loadURL(url);
@@ -474,7 +474,7 @@ function wireIpc() {
     const c = cfg.load();
     const recent = supervisor.recentLogs().slice(-50).map((l) => `${new Date(l.ts).toISOString()} [${l.src}] ${l.line}`).join('\n');
     clipboard.writeText([
-      `Meadhall ${app.getVersion()}`,
+      `Meduseld ${app.getVersion()}`,
       `platform: ${process.platform} ${process.arch} / os ${require('os').release()}`,
       `electron: ${process.versions.electron} / node ${process.versions.node}`,
       `mode: ${c.mode} / state: ${supervisor.state} / backend: ${supervisor.backendPort} / pg: ${supervisor.pgPort}`,
@@ -493,7 +493,7 @@ function wireIpc() {
     let firewallCmd;
     if (process.platform === 'win32') {
       firewallCmd = port
-        ? `netsh advfirewall firewall add rule name="Meadhall ${port}" dir=in action=allow protocol=TCP localport=${port}`
+        ? `netsh advfirewall firewall add rule name="Meduseld ${port}" dir=in action=allow protocol=TCP localport=${port}`
         : '启动服务后显示(需要端口)';
     } else if (process.platform === 'darwin') {
       // macOS 自带防火墙是「按程序」而非「按端口」,且默认多为关闭。无需端口命令。

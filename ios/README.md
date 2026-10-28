@@ -1,6 +1,6 @@
-# Meadhall — 原生 iOS 客户端(SwiftUI)
+# Meduseld — 原生 iOS 客户端(SwiftUI)
 
-一个**通用对话客户端**:连接官方服务器或用户自建/他人自建的同款后端（Meadhall）平台。
+一个**通用对话客户端**:连接官方服务器或用户自建/他人自建的同款后端（Meduseld）平台。
 登录后用酒馆(Tavern)对话接口:对话列表 / 新建 / 打开历史 / 流式收发 / 沉浸式拟人开关。
 
 > 定位是「BYO-server 工具」——内容由所连服务器/LLM 负责,客户端只是管道。这点对 App Store
@@ -28,7 +28,7 @@ ios/
   scripts/archive.sh       # 一键 archive + 导出 ipa(供上传)
 ```
 
-后端契约(已对齐线上 Meadhall):
+后端契约(已对齐线上 Meduseld):
 - `POST /api/auth/login {username,password}` → 写 `rpg_session` cookie
 - `GET  /api/auth/me` → 启动探活(已登录则跳过登录页)
 - `GET  /api/tavern/chats` / `POST /api/tavern/chats` / `POST /api/tavern/chats/{id}/activate`

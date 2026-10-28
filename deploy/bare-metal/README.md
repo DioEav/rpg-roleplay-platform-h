@@ -270,7 +270,7 @@ sudo chmod 750 /opt/rpg-roleplay
 ```bash
 sudo tee /etc/systemd/system/rpg-backend.service <<'EOF'
 [Unit]
-Description=Meadhall Backend (uvicorn/FastAPI)
+Description=Meduseld Backend (uvicorn/FastAPI)
 After=network.target postgresql.service redis-server.service pgbouncer.service
 Requires=postgresql.service redis-server.service
 

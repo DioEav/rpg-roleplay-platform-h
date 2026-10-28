@@ -75,7 +75,7 @@ struct QRConnectView: View {
         VStack(spacing: 14) {
             Image(systemName: "camera.fill").font(.system(size: 40)).foregroundStyle(.white.opacity(0.7))
             Text(loc: "需要相机权限才能扫码").font(Theme.ui(15, .medium)).foregroundStyle(.white)
-            Text(loc: "请在「设置 → Meadhall → 相机」开启,或手动输入服务器地址。")
+            Text(loc: "请在「设置 → Meduseld → 相机」开启,或手动输入服务器地址。")
                 .font(Theme.ui(12.5)).foregroundStyle(.white.opacity(0.6)).multilineTextAlignment(.center).padding(.horizontal, 40)
             Button { UIApplication.shared.open(URL(string: UIApplication.openSettingsURLString)!) } label: {
                 Text(loc: "打开设置").font(Theme.ui(15, .semibold)).foregroundStyle(Theme.onAccent)

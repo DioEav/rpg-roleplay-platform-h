@@ -28,7 +28,7 @@ struct LoginView: View {
                     VStack(spacing: 12) {
                         Image(systemName: "bubble.left.and.bubble.right.fill")
                             .font(.system(size: 46)).foregroundStyle(Theme.accent)
-                        (Text("Meadhall").foregroundStyle(Theme.text)
+                        (Text("Meduseld").foregroundStyle(Theme.text)
                          + Text(".").foregroundStyle(Theme.accent))
                             .font(Theme.serif(36, .semibold))
                         // 登录前先选服务器(在线 / 自部署),登录请求即发往所选服务器,不串数据。

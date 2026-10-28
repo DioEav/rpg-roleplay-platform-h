@@ -86,7 +86,7 @@ struct LargeScreenShell: View {
                 Image(systemName: "sparkles")
                     .font(.system(size: 16, weight: .semibold))
                     .foregroundStyle(Theme.accent)
-                Text("Meadhall")
+                Text("Meduseld")
                     .font(.system(size: 17, weight: .bold))
                     .foregroundStyle(.primary)
             }

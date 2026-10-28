@@ -57,19 +57,31 @@ export function anchorStatuses(anchors, currentChapter) {
   return list.map((a, i) => anchorStatus(a, i, currentChapter, idx));
 }
 
-/** 后端 save_anchor_states 聚合的「收束轴」状态 → i18n key;unknown/缺省 → ''。
+/** 后端 save_anchor_states 聚合的「收束轴」状态 → i18n key + 插值参数。
  *
  * 与上面的 anchorStatus(位置轴)分开:
  *   · 位置轴回答「当前章落在剧本期望线的哪一段」,「当前」必须唯一(anchorStatuses);
  *   · 收束轴回答「这一段里的锚点实际发生/绕过/待发生到什么程度」,数据来自
- *     routes/timeline._build_script_anchors 的 status 字段。
+ *     routes/timeline._build_script_anchors 的 status/superseded_count。
  * 之前后端算了 status 但两端都没消费,于是上半期望线按章节区间说「已度过」、
  * 下半锚点区按真实状态机说还有 pending —— 玩家看到两套互相矛盾的结论。
  * 这里保留位置轴的唯一「当前」高亮,另挂收束徽标,两者不抢语义。
+ *
+ * done 且 superseded_count>0 时用带「含绕过 N」的 key:done 只表示「没有 pending」,
+ * 其中可能包含被自动/手动绕过的锚点,不能让它看起来像「全部实际演过」。
  */
+export function convergenceLabelSpec(status, supersededCount = 0) {
+  if (status === 'done') {
+    return Number(supersededCount) > 0
+      ? { key: 'game.timeline.convergence_done_with_skipped', params: { count: Number(supersededCount) } }
+      : { key: 'game.timeline.convergence_done' };
+  }
+  if (status === 'current') return { key: 'game.timeline.convergence_current' };
+  if (status === 'pending') return { key: 'game.timeline.convergence_pending' };
+  return null;
+}
+
+/** 兼容旧调用/测试:只要 key,不带插值参数。 */
 export function convergenceLabelKey(status) {
-  if (status === 'done') return 'game.timeline.convergence_done';
-  if (status === 'current') return 'game.timeline.convergence_current';
-  if (status === 'pending') return 'game.timeline.convergence_pending';
-  return '';
+  return convergenceLabelSpec(status)?.key || '';
 }

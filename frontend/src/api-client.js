@@ -1,5 +1,5 @@
 /* ============================================================
- *  Meadhall · Frontend API Client
+ *  Meduseld · Frontend API Client
  *  -----------------------------------------------------------
  *  Browser-side wrapper around the FastAPI backend.
  *  - Cookie-based session (rpg_session) via credentials: "include"

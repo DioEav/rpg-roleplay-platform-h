@@ -3,7 +3,7 @@ title: Account
 description: How to register, sign in, recover your password, use magic links, and join via invite link — covering both hosted and self-hosted deployments.
 ---
 
-This page covers the full account lifecycle in Meadhall: creating an account, signing in, recovering a forgotten password, passwordless magic links, and invite-link registration for self-hosted LAN deployments.
+This page covers the full account lifecycle in Meduseld: creating an account, signing in, recovering a forgotten password, passwordless magic links, and invite-link registration for self-hosted LAN deployments.
 
 ---
 
@@ -96,7 +96,7 @@ This endpoint returns 404 on standard server deployments; it is only active in `
 
 **Landing-page magic link:**
 
-Meadhall's landing site can generate magic links of the form `/Login.html?magic=TOKEN&email=EMAIL`. When the login page loads with these parameters, it calls `POST /api/auth/magic-consume` to validate and exchange the token for a session cookie — direct login, no OTP step.
+Meduseld's landing site can generate magic links of the form `/Login.html?magic=TOKEN&email=EMAIL`. When the login page loads with these parameters, it calls `POST /api/auth/magic-consume` to validate and exchange the token for a session cookie — direct login, no OTP step.
 
 ---
 

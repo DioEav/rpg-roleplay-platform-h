@@ -2,7 +2,7 @@
 import React from 'react';
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { anchorStatuses, convergenceLabelKey } from '../../lib/timeline-status.js';
+import { anchorStatuses, convergenceLabelSpec } from '../../lib/timeline-status.js';
 
 // task 136h: 世界线收束·锚点 子组件 — 嵌入 PanelTimeline 底部
 // 从 /api/saves/:id/anchors 拉取, 跟 timeline 数据互相独立。
@@ -12,7 +12,6 @@ function WorldlineAnchorsSection({ saveId, refreshKey = 0, onAnchorSatisfied, di
   const [data, setData] = useState(null);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
-  const [expandedPhase, setExpandedPhase] = useState({});
   const [satisfying, setSatisfying] = useState("");  // 正在标记的 anchor_key(禁用按钮)
   const lastFetchKey = useRef(null);
   // 确认弹窗可能开着时回合才开始生成:用 ref 读最新 disabled,确认后再拦一次。
@@ -164,21 +163,20 @@ function WorldlineAnchorsSection({ saveId, refreshKey = 0, onAnchorSatisfied, di
       {byPhase.length > 0 && (
         <div className="gp-section">
           <div className="section-head"><h3>{t('game.timeline.by_phase')}</h3></div>
+          {/* by_phase 只有聚合计数(total/pending/occurred/variant/superseded/
+              fatal_pending/avg_drift/pressure),没有个体锚点。这里刻意不做
+              「点击展开」——旧实现的 ▲/▼ 只切换 state 但不渲染任何内容,是假箭头。
+              要看具体事件,用下方「待发生锚点 / 已发生锚点」列表。 */}
           <div className="gp-track">
             {byPhase.map((ph, i) => {
               const pressure = ph.convergence_pressure || 0;
               const pressureColor = pressure >= 0.6 ? "var(--danger)" :
                                     pressure >= 0.3 ? "var(--warn)" : "var(--ok)";
-              const expanded = !!expandedPhase[ph.phase_label];
               return (
                 <div key={i} className="gp-anchor">
                   <div className="gp-anchor-dot" style={{background: pressureColor, border: "2px solid var(--line)"}} />
                   <div className="gp-anchor-body">
-                    <div
-                      className="gp-anchor-label"
-                      style={{cursor: "pointer"}}
-                      onClick={() => setExpandedPhase(prev => ({...prev, [ph.phase_label]: !prev[ph.phase_label]}))}
-                    >
+                    <div className="gp-anchor-label">
                       {ph.phase_label || t('game.timeline.no_phase')}
                       <span className="muted-2" style={{marginLeft: 6, fontSize: 10}}>
                         {t('game.timeline.convergence_label', { done: ph.occurred + ph.variant, total: ph.total })}
@@ -191,7 +189,6 @@ function WorldlineAnchorsSection({ saveId, refreshKey = 0, onAnchorSatisfied, di
                     </div>
                     <div className="gp-anchor-phase" style={{color: "var(--muted-2)", fontSize: 11}}>
                       {t('game.timeline.drift_pressure', { drift: Number(ph.avg_drift || 0).toFixed(2), pressure: Math.round(pressure * 100) })}
-                      {expanded ? " · ▲" : " · ▼"}
                     </div>
                   </div>
                   {i < byPhase.length - 1 && <div className="gp-anchor-line" />}
@@ -431,6 +428,13 @@ function PanelTimeline({ state, running = false }) {
           <h3>{t('game.timeline.expected')}</h3>
           <span className="muted-2 mono" style={{fontSize: 11}}>{t('game.timeline.anchors_count', { count: scriptAnchors.length })}</span>
         </div>
+        {/* 两条轴分开说清楚:位置轴(章节走到哪) vs 收束轴(锚点是否真的发生)。
+            没有这行时「已度过 + 收束未开始」看起来像自相矛盾。 */}
+        {scriptAnchors.length > 0 && (
+          <p className="muted-2" style={{fontSize: 11, margin: "2px 0 6px"}}>
+            {t('game.timeline.axis_legend')}
+          </p>
+        )}
         {scriptAnchors.length === 0 ? (
           <p className="muted-2" style={{fontSize: 12.5, margin: "4px 0 0"}}>{t('game.timeline.no_anchors')}</p>
         ) : (
@@ -446,7 +450,9 @@ function PanelTimeline({ state, running = false }) {
               // 收束轴(与上面的位置轴分开):后端按 save_anchor_states 聚合出的
               // done/current/pending 状态。位置轴仍负责唯一的「当前」高亮;这里只挂
               // 一个弱徽标,避免上半期望线说「已度过」、下半锚点区却还有大量 pending。
-              const convergenceKey = convergenceLabelKey(a.status);
+              // superseded_count>0 时显示「含绕过 N」,避免把「没有 pending」误读成
+              // 「全部实际演过」。
+              const convergenceSpec = convergenceLabelSpec(a.status, a.superseded_count);
               const chMin = a.chapter_min;
               const chMax = a.chapter_max != null ? a.chapter_max : a.chapter_min;
               const isDone    = st === 'done';
@@ -485,13 +491,13 @@ function PanelTimeline({ state, running = false }) {
                     }}>
                       {mainTitle}
                       {isCurrent && <span className="pill" style={{marginLeft: 6, fontSize: 10, background: "var(--accent)", color: "#fff"}}>{t('game.timeline.current_pill')}</span>}
-                      {isOngoing && <span className="muted-2" style={{marginLeft: 6, fontSize: 10}}>{t('game.timeline.in_progress_pill')}</span>}
+                      {isOngoing && <span className="muted-2" style={{marginLeft: 6, fontSize: 10}}>{t('game.timeline.span_in_progress')}</span>}
                       {isDone && <span className="muted-2" style={{marginLeft: 6, fontSize: 10}}>{t('game.timeline.done_label')}</span>}
                       {isPending && <span className="muted-2" style={{marginLeft: 6, fontSize: 10}}>{t('game.timeline.pending_label')}</span>}
-                      {convergenceKey && (
+                      {convergenceSpec && (
                         <span className="pill" style={{marginLeft: 6, fontSize: 10,
                           background: "var(--panel-3)", color: "var(--muted-2)"}}>
-                          {t(convergenceKey)}
+                          {t(convergenceSpec.key, convergenceSpec.params)}
                         </span>
                       )}
                     </div>

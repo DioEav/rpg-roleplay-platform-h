@@ -8,7 +8,7 @@ import httpx
 
 RESEND_API_KEY: str = os.environ.get("RESEND_API_KEY", "")
 RESEND_FROM: str = os.environ.get(
-    "RESEND_FROM", "Meadhall Labs <noreply@stellatrix.icu>"
+    "RESEND_FROM", "Meduseld Labs <noreply@stellatrix.icu>"
 )
 
 
@@ -129,8 +129,8 @@ def _render_email(
                   <div class="sr-mark" style="width:42px;height:42px;border-radius:8px;background:#282623;border:1px solid #36322d;color:#c96442;text-align:center;font:700 18px/42px Georgia,serif;">R</div>
                 </td>
                 <td valign="top">
-                  <div class="sr-brand" style="color:#ebe7df;font-family:Georgia,serif;font-size:25px;line-height:1.2;font-weight:600;">蜜酒厅 Meadhall</div>
-                  <div class="sr-muted" style="color:#968f85;font-size:13px;line-height:1.65;">Meadhall Labs</div>
+                  <div class="sr-brand" style="color:#ebe7df;font-family:Georgia,serif;font-size:25px;line-height:1.2;font-weight:600;">Meduseld</div>
+                  <div class="sr-muted" style="color:#968f85;font-size:13px;line-height:1.65;">Meduseld Labs</div>
                 </td>
               </tr>
             </table>
@@ -189,14 +189,14 @@ def build_verification_email(code: str, lang: str = "zh-CN") -> tuple[str, str, 
     subject = (
         "你的注册验证码 / Your verification code"
         if is_zh
-        else "Your verification code — Meadhall"
+        else "Your verification code — Meduseld"
     )
     text = (
-        f"你的蜜酒厅验证码是：{code}\n\n"
+        f"你的 Meduseld 验证码是：{code}\n\n"
         "10 分钟内有效。\n"
         "如非你本人操作，请忽略此邮件。\n\n"
         "---\n"
-        f"Your Meadhall verification code: {code}\n\n"
+        f"Your Meduseld verification code: {code}\n\n"
         "Valid for 10 minutes. Ignore if you did not request this."
     )
     lead = (
@@ -240,14 +240,14 @@ def build_login_code_email(code: str, lang: str = "zh-CN") -> tuple[str, str, st
     subject = (
         "你的登录验证码 / Your login code"
         if is_zh
-        else "Your login code — Meadhall"
+        else "Your login code — Meduseld"
     )
     text = (
-        f"你的蜜酒厅登录验证码是：{code}\n\n"
+        f"你的 Meduseld 登录验证码是：{code}\n\n"
         "10 分钟内有效。\n"
         "如非你本人操作，请忽略此邮件。\n\n"
         "---\n"
-        f"Your Meadhall login code: {code}\n\n"
+        f"Your Meduseld login code: {code}\n\n"
         "Valid for 10 minutes. Ignore if you did not request this."
     )
     lead = (
@@ -265,8 +265,8 @@ def build_login_code_email(code: str, lang: str = "zh-CN") -> tuple[str, str, st
     secondary = """
       <div style="height:18px;line-height:18px;">&nbsp;</div>
       <div class="sr-muted" style="color:#968f85;font-size:13px;line-height:1.65;">
-        该验证码只能用于登录蜜酒厅，请不要转发给任何人。<br>
-        This code only signs in to Meadhall. Never forward it to anyone.
+        该验证码只能用于登录 Meduseld，请不要转发给任何人。<br>
+        This code only signs in to Meduseld. Never forward it to anyone.
       </div>
     """
     html = _render_email(
@@ -289,12 +289,12 @@ def send_login_code_email(to: str, code: str, lang: str = "zh-CN") -> None:
 def build_password_reset_email(to: str, token: str, lang: str = "zh-CN") -> tuple[str, str, str]:
     is_zh = lang.lower().startswith("zh")
     link = f"{_public_base_url()}/Login.html#reset?token={token}"
-    subject = "重置你的密码 / Reset your password" if is_zh else "Reset your password — Meadhall"
+    subject = "重置你的密码 / Reset your password" if is_zh else "Reset your password — Meduseld"
     text = (
-        f"点击以下链接重置你的蜜酒厅密码（30 分钟内有效）：\n{link}\n\n"
+        f"点击以下链接重置你的 Meduseld 密码（30 分钟内有效）：\n{link}\n\n"
         "如果这不是你本人的操作，请忽略此邮件。你的密码不会被更改。\n\n"
         "---\n"
-        f"Click the link below to reset your Meadhall password (valid for 30 minutes):\n{link}\n\n"
+        f"Click the link below to reset your Meduseld password (valid for 30 minutes):\n{link}\n\n"
         "If you did not request this, ignore this email. Your password will not be changed."
     )
     lead = (
@@ -316,7 +316,7 @@ def build_password_reset_email(to: str, token: str, lang: str = "zh-CN") -> tupl
       </div>
     """
     html = _render_email(
-        preheader="蜜酒厅密码重置链接" if is_zh else "Meadhall password reset link",
+        preheader="Meduseld 密码重置链接" if is_zh else "Meduseld password reset link",
         eyebrow="Password Reset",
         title="重置你的密码" if is_zh else "Reset your password",
         lead_html=lead,
@@ -342,40 +342,40 @@ def build_policy_notice_email(
     is_zh: bool,
 ) -> tuple[str, str, str]:
     subject = (
-        f"[蜜酒厅] {name_zh}变更通知（{new_version}）"
+        f"[Meduseld] {name_zh}变更通知（{new_version}）"
         if is_zh
-        else f"[Meadhall] {name_en} Update ({new_version})"
+        else f"[Meduseld] {name_en} Update ({new_version})"
     )
     if is_zh:
         text = (
             f"你好,\n\n"
-            f"蜜酒厅即将更新{name_zh}({new_version})。\n\n"
+            f"Meduseld 即将更新{name_zh}({new_version})。\n\n"
             f"变更摘要:\n{summary}\n\n"
             f"生效时间: {effective_display}\n\n"
             f"查看完整政策: {url}\n\n"
             f"---\n"
-            f"[EN] Meadhall is updating its {name_en} ({new_version}).\n"
+            f"[EN] Meduseld is updating its {name_en} ({new_version}).\n"
             f"Summary: {summary}\n"
             f"Effective: {effective_display}\n"
             f"Full policy: {url}"
         )
         title = f"{name_zh}变更通知"
-        lead = f"蜜酒厅即将更新 <strong style=\"color:#ebe7df;\">{escape(name_zh)}</strong>。"
+        lead = f"Meduseld 即将更新 <strong style=\"color:#ebe7df;\">{escape(name_zh)}</strong>。"
     else:
         text = (
             f"Hello,\n\n"
-            f"Meadhall is updating its {name_en} ({new_version}).\n\n"
+            f"Meduseld is updating its {name_en} ({new_version}).\n\n"
             f"Summary of changes:\n{summary}\n\n"
             f"Effective date: {effective_display}\n\n"
             f"Read the full policy: {url}\n\n"
             f"---\n"
-            f"[ZH] 蜜酒厅即将更新{name_zh}({new_version})。\n"
+            f"[ZH] Meduseld 即将更新{name_zh}({new_version})。\n"
             f"变更摘要: {summary}\n"
             f"生效时间: {effective_display}\n"
             f"完整政策: {url}"
         )
         title = f"{name_en} Update"
-        lead = f"Meadhall is updating its <strong style=\"color:#ebe7df;\">{escape(name_en)}</strong>."
+        lead = f"Meduseld is updating its <strong style=\"color:#ebe7df;\">{escape(name_en)}</strong>."
 
     main = f"""
       <table role="presentation" width="100%" cellpadding="0" cellspacing="0" class="sr-panel" style="width:100%;background:#1a1817;border:1px solid #36322d;border-radius:8px;">
@@ -411,7 +411,7 @@ def build_feedback_reply_email(
     subject = (
         "你的反馈有回复了 / We replied to your feedback"
         if is_zh
-        else "We replied to your feedback — Meadhall"
+        else "We replied to your feedback — Meduseld"
     )
     preview = (feedback_preview or "").strip()
     preview_short = preview[:160] + ("…" if len(preview) > 160 else "")

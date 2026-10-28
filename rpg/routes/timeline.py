@@ -152,6 +152,7 @@ def _build_script_anchors(db, save_id, script_id):
             select phase_label,
                    sum(case when status in ('occurred','variant','superseded') then 1 else 0 end) as done_n,
                    sum(case when status = 'pending' then 1 else 0 end) as pending_n,
+                   sum(case when status = 'superseded' then 1 else 0 end) as superseded_n,
                    count(*) as total_n
               from save_anchor_states
              where save_id = %s
@@ -163,10 +164,16 @@ def _build_script_anchors(db, save_id, script_id):
             anchor_status_by_phase[r["phase_label"] or ""] = {
                 "done": int(r["done_n"] or 0),
                 "pending": int(r["pending_n"] or 0),
+                # 供前端「锚点已完成（含绕过 N）」用:done 里可能包含被自动/手动
+                # superseded 的锚点,不区分会让玩家误以为都实际演过。
+                "superseded": int(r["superseded_n"] or 0),
                 "total": int(r["total_n"] or 0),
             }
     for a in script_anchors:
         agg = anchor_status_by_phase.get(a["phase_label"])
+        # 供前端「锚点已完成（含绕过 N）」用:done 里可能包含被自动/手动
+        # superseded 的锚点,不区分会让玩家误以为都实际演过。
+        a["superseded_count"] = int((agg or {}).get("superseded") or 0)
         if not agg or agg["total"] == 0:
             # 该 phase 无对应 save_anchor_states 记录(未 seed / 剧本无细锚点)——
             # 无真实状态机数据可用,标 unknown,前端回退章号估算展示(不新增判定)。

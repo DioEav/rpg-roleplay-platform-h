@@ -47,7 +47,7 @@ struct ChatListView: View {
                     .frame(width: 38, height: 38)
             }
             VStack(alignment: .leading, spacing: 3) {
-                (Text("Meadhall").foregroundStyle(Theme.text)
+                (Text("Meduseld").foregroundStyle(Theme.text)
                  + Text(".").foregroundStyle(Theme.accent))
                     .font(Theme.serif(27, .semibold))
                 Text("在故事里,和他们对话").font(Theme.ui(11.5)).foregroundStyle(Theme.muted)

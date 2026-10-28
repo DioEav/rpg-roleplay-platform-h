@@ -178,7 +178,7 @@ def effective_auth_required() -> bool:
 
 # ── 应用标题 ─────────────────────────────────────────────────────────────
 def app_title() -> str:
-    return os.getenv("RPG_APP_TITLE", "Meadhall")
+    return os.getenv("RPG_APP_TITLE", "Meduseld")
 
 # ── 运行时 backend ───────────────────────────────────────────────────────
 def runtime_backend() -> str:

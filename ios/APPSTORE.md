@@ -1,4 +1,4 @@
-# Meadhall iOS — App Store 提审 Runbook
+# Meduseld iOS — App Store 提审 Runbook
 
 Bundle ID: `icu.stellatrix.chat` · Team: `YOUR_TEAM_ID` · 版本: `1.0.0 (1)` · 最低 iOS 17.0 · iPhone + iPad
 
@@ -11,7 +11,7 @@ Bundle ID: `icu.stellatrix.chat` · Team: `YOUR_TEAM_ID` · 版本: `1.0.0 (1)` 
 - [x] 真机架构 Release 编译通过(`xcodebuild -destination 'generic/platform=iOS' -configuration Release CODE_SIGNING_ALLOWED=NO build`)
 - [x] `DEVELOPMENT_TEAM = YOUR_TEAM_ID`、自动签名
 - [x] `ITSAppUsesNonExemptEncryption = false`(免出口合规弹窗)
-- [x] AppIcon 1024 集 + 显示名 Meadhall
+- [x] AppIcon 1024 集 + 显示名 Meduseld
 - [x] iPad 大屏适配(NavigationSplitView)+ 全方向;iPhone 竖屏
 - [x] PhotosPicker 用 PHPicker(进程外),**无需** NSPhotoLibraryUsageDescription
 

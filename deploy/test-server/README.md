@@ -1,4 +1,4 @@
-# Meadhall 测试服 — ECS06 部署 Runbook
+# Meduseld 测试服 — ECS06 部署 Runbook
 
 > **仅限测试服（Docker on ECS06）。**
 > 寻找裸机生产部署指引？见 [../bare-metal/README.md](../bare-metal/README.md)。

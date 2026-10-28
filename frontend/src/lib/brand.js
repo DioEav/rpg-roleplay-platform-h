@@ -8,11 +8,11 @@
  * .env 与 nginx conf —— 三处默认值需保持一致。
  */
 
-export const BRAND_EN = 'Meadhall';
-export const BRAND_ZH = '蜜酒厅';
-export const BRAND_LABS = 'Meadhall Labs';
+export const BRAND_EN = 'Meduseld';
+export const BRAND_ZH = 'Meduseld';
+export const BRAND_LABS = 'Meduseld Labs';
 
-// 按界面语言取品牌名(zh 系语言 → 中文,其余 → 英文)。
+// 中英文界面统一使用同一个品牌名 Meduseld;保留该函数以兼容现有调用点。
 // 品牌字符串不进 i18n 语言包 —— 仍以本文件为唯一出口(见文件头注释),
 // 组件侧用 brandNameForLang(i18n.language) 取用。
 export function brandNameForLang(lang) {

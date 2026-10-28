@@ -15,7 +15,7 @@
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'fs';
 import { resolve } from 'path';
-import { anchorStatuses, convergenceLabelKey, pickCurrentAnchorIndex } from '../lib/timeline-status.js';
+import { anchorStatuses, convergenceLabelKey, convergenceLabelSpec, pickCurrentAnchorIndex } from '../lib/timeline-status.js';
 
 // 生产真实形状(script 322 前 12 条的区间)
 const PROD_322 = [
@@ -119,13 +119,35 @@ describe('convergenceLabelKey — 收束轴与位置轴分开', () => {
   });
 });
 
+describe('convergenceLabelSpec — done 里区分“含绕过”', () => {
+  it('done 且 superseded_count>0 → 带插值参数', () => {
+    expect(convergenceLabelSpec('done', 3)).toEqual({
+      key: 'game.timeline.convergence_done_with_skipped',
+      params: { count: 3 },
+    });
+  });
+
+  it('done 且没有绕过 → 普通已完成', () => {
+    expect(convergenceLabelSpec('done', 0)).toEqual({
+      key: 'game.timeline.convergence_done',
+    });
+  });
+
+  it('current / pending / unknown', () => {
+    expect(convergenceLabelSpec('current').key).toBe('game.timeline.convergence_current');
+    expect(convergenceLabelSpec('pending').key).toBe('game.timeline.convergence_pending');
+    expect(convergenceLabelSpec('unknown')).toBeNull();
+    expect(convergenceLabelSpec(undefined)).toBeNull();
+  });
+});
+
 describe('桌面 ↔ 移动 同缝(奇偶守卫)', () => {
   it('两端都必须 import lib/timeline-status,不准各写一份区间谓词', () => {
     const desktop = readFileSync(resolve(__dirname, '../components/game/PanelTimeline.jsx'), 'utf-8');
     const mobile = readFileSync(resolve(__dirname, '../mobile/game/panels.jsx'), 'utf-8');
     for (const [name, src] of [['PanelTimeline', desktop], ['mobile/panels', mobile]]) {
       expect(src, `${name} 未使用共享缝`).toMatch(/anchorStatuses/);
-      expect(src, `${name} 未使用收束轴共享缝`).toMatch(/convergenceLabelKey/);
+      expect(src, `${name} 未使用收束轴共享缝`).toMatch(/convergenceLabelSpec/);
       // 不准再出现「chapter_min <= currentChapter」这类各自为政的判定
       expect(src, `${name} 又手写了区间包含谓词`).not.toMatch(/chapter_min\s*<=\s*currentChapter/);
     }

@@ -263,6 +263,12 @@ class M10ScriptAnchorsStatusFromSaveAnchorStates(unittest.TestCase):
         self.assertIn("status in ('occurred','variant','superseded')", query)
         self.assertIn("status = 'pending'", query)
 
+    def test_superseded_count_exposed_for_frontend_badge(self):
+        # done 可能包含 superseded;前端要能用「含绕过 N」避免把「没有 pending」
+        # 误读成「全部实际演过」。
+        self.assertIn("superseded_n", self.body)
+        self.assertIn('"superseded_count"', self.body)
+
     def test_no_pure_chapter_arithmetic_added_for_status(self):
         # 状态判定不能靠拿 chapter_min/chapter_max 跟某个 current_chapter 比较
         # (那正是 M10 里前端的双源病灶,后端不应重蹈)

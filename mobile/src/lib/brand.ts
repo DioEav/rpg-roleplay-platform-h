@@ -6,9 +6,9 @@
  * 与 frontend/src/lib/brand.js、后端 rpg 的默认值保持一致。
  */
 
-export const BRAND_EN = "Meadhall";
-export const BRAND_ZH = "蜜酒厅";
-export const BRAND_LABS = "Meadhall Labs";
+export const BRAND_EN = "Meduseld";
+export const BRAND_ZH = "Meduseld";
+export const BRAND_LABS = "Meduseld Labs";
 
 // 落地页(公测预约 + /legal 法律文档正本)
 export const LANDING_BASE =

@@ -162,7 +162,7 @@ struct MeView: View {
     private var aboutGroup: some View {
         VStack(spacing: 0) {
             infoRow("版本", "1.0.0")
-            rowDivider; infoRow("应用", "Meadhall")
+            rowDivider; infoRow("应用", "Meduseld")
         }
         .background(RoundedRectangle(cornerRadius: 14).fill(Theme.panel))
         .overlay(RoundedRectangle(cornerRadius: 14).stroke(Theme.line, lineWidth: 1))

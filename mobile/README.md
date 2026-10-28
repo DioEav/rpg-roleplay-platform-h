@@ -1,6 +1,6 @@
-# 蜜酒厅（Meadhall）— Android 客户端(BYO-server)
+# Meduseld— Android 客户端(BYO-server)
 
-Expo / React Native 0.85 原生 Android 客户端,连接你自己部署的蜜酒厅后端
+Expo / React Native 0.85 原生 Android 客户端,连接你自己部署的 Meduseld 后端
 (与仓库里 `ios/` 的 BYO-server 定位一致)。由社区贡献(PR #58,@dragonjay-lyj),
 主仓维护。
 
