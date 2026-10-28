@@ -56,3 +56,20 @@ export function anchorStatuses(anchors, currentChapter) {
   const idx = pickCurrentAnchorIndex(list, currentChapter);
   return list.map((a, i) => anchorStatus(a, i, currentChapter, idx));
 }
+
+/** 后端 save_anchor_states 聚合的「收束轴」状态 → i18n key;unknown/缺省 → ''。
+ *
+ * 与上面的 anchorStatus(位置轴)分开:
+ *   · 位置轴回答「当前章落在剧本期望线的哪一段」,「当前」必须唯一(anchorStatuses);
+ *   · 收束轴回答「这一段里的锚点实际发生/绕过/待发生到什么程度」,数据来自
+ *     routes/timeline._build_script_anchors 的 status 字段。
+ * 之前后端算了 status 但两端都没消费,于是上半期望线按章节区间说「已度过」、
+ * 下半锚点区按真实状态机说还有 pending —— 玩家看到两套互相矛盾的结论。
+ * 这里保留位置轴的唯一「当前」高亮,另挂收束徽标,两者不抢语义。
+ */
+export function convergenceLabelKey(status) {
+  if (status === 'done') return 'game.timeline.convergence_done';
+  if (status === 'current') return 'game.timeline.convergence_current';
+  if (status === 'pending') return 'game.timeline.convergence_pending';
+  return '';
+}

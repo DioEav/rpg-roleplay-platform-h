@@ -45,11 +45,15 @@ function GameSettingsModal({ open, onClose, saveTitle, saveId }) {
   const [keepFailedTurn, setKeepFailedTurnState] = useStateA(_readKeepFailedTurn);
   // null = 尚未从后端拉到本档真实值;加载期不高亮任何档,避免先闪默认「软引导」再跳真值(被误读成"自己回跳")
   const [steerStrength, setSteerStrength] = useStateA(null);
+  // 自动节奏推进(存档级):on=发散/日常也按叙事节奏缓慢推进;off=纯聊天不自动涨章。
+  // null 同样表示尚未拉到真值,避免先闪 on/off 再跳。
+  const [autoPace, setAutoPace] = useStateA(null);
   // acceptance 改写建议开关(用户级 user_preferences['acceptance_ab.enabled'],默认开)。行者无疆诉求:可手动关。
   const [abEnabled, setAbEnabled] = useStateA(true);
   // 两个后端保存项各加一个 in-flight 闸:防止快速连点导致「旧请求失败回滚覆盖新请求结果」。
   const [abBusy, setAbBusy] = useStateA(false);
   const [steerBusy, setSteerBusy] = useStateA(false);
+  const [autoPaceBusy, setAutoPaceBusy] = useStateA(false);
 
   // sync density state with external RPG_setDensity calls
   useEffectA(() => {
@@ -65,7 +69,12 @@ function GameSettingsModal({ open, onClose, saveTitle, saveId }) {
     fetch(`${base}/api/saves/${saveId}/settings`, { credentials: 'include' })
       .then(r => r.ok ? r.json() : null)
       // 成功就落定真值(缺字段才回退默认),失败保持 null 不假装默认 → 不会误显回跳
-      .then(d => { if (d?.ok && d.settings) setSteerStrength(d.settings.steering_strength || "guided"); })
+      .then(d => {
+        if (!d?.ok || !d.settings) return;
+        setSteerStrength(d.settings.steering_strength || "guided");
+        // auto_pace_advance 是存档级 on/off 字符串;缺省 = on(保持既有行为)。
+        setAutoPace(d.settings.auto_pace_advance === "off" ? "off" : "on");
+      })
       .catch(() => {});
   }, [open, saveId]);
 
@@ -157,6 +166,29 @@ function GameSettingsModal({ open, onClose, saveTitle, saveId }) {
     }).finally(() => setSteerBusy(false));
   };
 
+  // 自动节奏推进开关:只控制「发散/日常 play 的 pace 兜底」。
+  // off 后锚点到达、叙事估章、玩家手动跳章仍会推进;不是冻结整个进度系统。
+  const handleAutoPace = (v) => {
+    if (autoPaceBusy || saveId == null) return;
+    const prev = autoPace;
+    setAutoPace(v);
+    setAutoPaceBusy(true);
+    const base = (window.__API_BASE || '');
+    fetch(`${base}/api/saves/${saveId}/settings`, {
+      method: 'PATCH', credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ updates: { auto_pace_advance: v } }),
+    }).then(async (r) => {
+      const j = await r.json().catch(() => ({}));
+      const rejected = j && j.rejected && j.rejected.auto_pace_advance;
+      if (!r.ok || j.ok === false || rejected) throw new Error(rejected || j.error || j.detail || `HTTP ${r.status}`);
+    }).catch((e) => {
+      // 失败回滚:否则界面显示已关,后端仍在按旧值自动推进。
+      setAutoPace((cur) => (cur === v ? prev : cur));
+      window.__apiToast?.(t('game.app.settings.save_failed'), { kind: 'danger', detail: e?.message });
+    }).finally(() => setAutoPaceBusy(false));
+  };
+
   if (!open) return null;
 
   // PERM_OPT/currentPerm:写入权限只读展示已隐藏(2026-10-15),恢复展示时一并解注释。
@@ -182,6 +214,10 @@ function GameSettingsModal({ open, onClose, saveTitle, saveId }) {
     { id: "rail",    label: t('game.app.settings.steer_rail') },
     { id: "guided",  label: t('game.app.settings.steer_guided') },
     { id: "free",    label: t('game.app.settings.steer_free') },
+  ];
+  const AUTO_PACE_OPTS = [
+    { id: "on",  label: t('game.app.settings.on') },
+    { id: "off", label: t('game.app.settings.off') },
   ];
 
   const rowStyle = {
@@ -320,6 +356,25 @@ function GameSettingsModal({ open, onClose, saveTitle, saveId }) {
                           disabled={steerBusy}
                           onClick={() => handleSteerStrength(s.id)}>
                     {s.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* ── 自动节奏推进（存档级） ── */}
+          {saveId != null && (
+            <div style={rowStyle}>
+              <div style={labelStyle}>
+                <div>{t('game.app.settings.auto_pace_label')}</div>
+                <div style={sublabelStyle}>{t('game.app.settings.auto_pace_desc')}</div>
+              </div>
+              <div className="seg" style={{flexShrink: 0}}>
+                {AUTO_PACE_OPTS.map(o => (
+                  <button key={o.id} className={autoPace === o.id ? "active" : ""}
+                          disabled={autoPaceBusy}
+                          onClick={() => handleAutoPace(o.id)}>
+                    {o.label}
                   </button>
                 ))}
               </div>

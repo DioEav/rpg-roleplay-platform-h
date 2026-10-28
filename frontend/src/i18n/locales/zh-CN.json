@@ -454,7 +454,7 @@
       "effort_medium": "中 (medium)",
       "effort_high": "高 (high)",
       "max_tokens": "最大输出 Tokens",
-      "max_tokens_desc": "主 GM / 控制台的单轮输出预算（最小 4096；子代理使用各自固定预算）；思考开启时后端会额外预留。",
+      "max_tokens_desc": "主 GM / 控制台 / 开场的单轮输出预算（最小 4096；子代理使用各自固定预算）；思考开启时后端会额外预留。",
       "context_size": "上下文窗口",
       "context_size_desc": "只影响上下文占用圆环的分母，不会截断实际请求上下文；实际上下文由模型原生窗口与上下文引擎决定。",
       "seed": "随机种子（Seed）",
@@ -2894,6 +2894,10 @@
         "rail": "贴原著（强力收束）",
         "guided": "软引导（默认·温和）",
         "free": "自由发挥（不注入引导）"
+      },
+      "auto_pace_advance": {
+        "on": "开启（发散/日常也缓慢推进）",
+        "off": "关闭（纯聊天不自动涨章）"
       }
     },
     "branches": {
@@ -3424,6 +3428,9 @@
       "phases_count": "{{count}} 阶段",
       "no_footprint": "暂无足迹，开始游玩积累历史",
       "in_progress_pill": "进行中",
+      "convergence_done": "收束完成",
+      "convergence_current": "收束中",
+      "convergence_pending": "收束未开始",
       "collapse_events": "▲ 收起",
       "expand_events": "▼ {{count}} 个关键事件",
       "anchors_section": "世界线收束·锚点",
@@ -3850,6 +3857,8 @@
         "keep_failed_desc": "当本轮无回复或生成失败时,保留你的发言并显示「重试」,而不是自动撤回",
         "steering_label": "剧情引导强度",
         "steering_desc": "贴原著=强力锚点;软引导=默认温和;自由=不注入",
+        "auto_pace_label": "自动节奏推进",
+        "auto_pace_desc": "开启后发散/日常对话也会按叙事节奏缓慢推进(约 3 个正常推进回合 +1 章);关闭后只有命中锚点、叙事估章或手动跳章才推进,纯聊天不会自动涨章。",
         "steer_rail": "贴原著",
         "steer_guided": "软引导",
         "steer_free": "自由",
@@ -5212,7 +5221,7 @@
         "freq_penalty_desc": "按词频降权（OpenAI 风格）",
         "presence_penalty_desc": "鼓励引入新话题（OpenAI 风格）",
         "max_tokens": "最大生成 token",
-        "max_tokens_desc": "主 GM / 控制台的单轮输出预算（最小 4096；子代理使用各自固定预算）",
+        "max_tokens_desc": "主 GM / 控制台 / 开场的单轮输出预算（最小 4096；子代理使用各自固定预算）",
         "context_size": "上下文大小",
         "context_size_desc": "只影响上下文占用圆环的分母，不会截断实际请求上下文",
         "seed": "随机种子 (Seed)",

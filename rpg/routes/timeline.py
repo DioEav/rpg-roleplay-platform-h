@@ -40,12 +40,13 @@ async def api_saves_timeline(
     if not current_chapter or current_chapter < 1:
         current_chapter = 1
     current_chapter = max(1, int(current_chapter))
+    current_phase_index = _resolve_current_phase_index(save_phases, active_phase_index)
 
     return json_response({
         "ok": True,
         "script_anchors": script_anchors,
         "save_phases": save_phases,
-        "current_phase_index": active_phase_index,
+        "current_phase_index": current_phase_index,
         "current_chapter": current_chapter,
     })
 
@@ -73,6 +74,39 @@ def _verify_ownership(db, save_id, user_id):
     script_id = save_row["script_id"]
     active_phase_index = save_row.get("active_phase_index") or 0
     return script_id, active_phase_index
+
+
+def _resolve_current_phase_index(save_phases: list[dict], active_phase_index: int | None) -> int:
+    """解析「实际足迹线」当前 phase 序号,对失效的 active_phase_index 兜底。
+
+    病根:game_saves.active_phase_index 是 save_phase_digests 的序号,但回滚/压缩/
+    重 seed 后可能指向根本不存在的行(生产 save 268 实证:index=2,表里只有 0/1)。
+    旧实现直接把它返回给前端 → `isCurrent = phase_index === current_phase_index && open`
+    恒 false,面板不亮任何「当前」。
+
+    回退顺序:
+      1. active_phase_index 在现存 phase 里 → 用它(正常路径,行为不变);
+      2. 否则取最大的 open phase(当前正在写的足迹段);
+      3. 全 closed → 取最大 phase_index(最后一段足迹;前端仍按 isOpen 决定是否挂「进行中」);
+      4. 无 phase → 0。
+    """
+    phases = [p for p in (save_phases or []) if p.get("phase_index") is not None]
+    valid = {int(p["phase_index"]) for p in phases}
+    try:
+        ai = int(active_phase_index) if active_phase_index is not None else None
+    except (TypeError, ValueError):
+        ai = None
+    if ai is not None and ai in valid:
+        return ai
+    open_indices = [
+        int(p["phase_index"]) for p in phases
+        if (p.get("status") or "open") == "open"
+    ]
+    if open_indices:
+        return max(open_indices)
+    if valid:
+        return max(valid)
+    return 0
 
 
 def _build_script_anchors(db, save_id, script_id):

@@ -52,6 +52,7 @@ def test_source_guard_set_escape_valve_writes_floor():
     i = src.index("advance_story_progress 失败: 无 active save")
     window = src[i:i + 1500]
     assert "set_user_progress_floor" in window, "/set 显式跳章必须写 user_progress_floor(逃生阀)"
+    assert "reset_pace_accum" in window, "显式跳章必须清零旧位置的节奏累计点"
 
 
 def test_source_guard_floor_key_sticky():

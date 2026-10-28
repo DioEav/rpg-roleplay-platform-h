@@ -326,6 +326,23 @@ def _audit_anchors_on_phase_close(save_id: int, closed_phase_index: int) -> None
                     log.info(f"[anchor_audit] save={save_id} phase={closed_phase_index} "
                              f"pace: 玩家尚无任何到达锚点,phase 关闭不自动绕过(避免误退役)")
                 else:
+                    # 节奏兜底/估章可能把 progress_chapter 推到 reached 之前。收束阈值
+                    # 取 max(reached, progress) - 回看宽限,而不是只看 reached —— 否则
+                    # 进度已越过但没命中新锚点时,这些锚点永远不会被 superseded
+                    # (save=205:progress 被 pace 推走、reached 不动 → 旧锚点永远 pending)。
+                    prog_row = db.execute(
+                        "select coalesce((worldline->>'progress_chapter')::int, 1) as pc "
+                        "from game_sessions where save_id = %s",
+                        (save_id,),
+                    ).fetchone()
+                    progress = int(prog_row["pc"]) if prog_row and prog_row.get("pc") is not None else 1
+                    from agents.anchor_seed_agent import (
+                        ANCHOR_BEHIND_GRACE_CHAPTERS,
+                        anchor_lookback_chapter_min,
+                    )
+                    max_reached = max(reached, progress)
+                    threshold = anchor_lookback_chapter_min(
+                        max_reached, ANCHOR_BEHIND_GRACE_CHAPTERS) or 1
                     res = db.execute(
                         """
                         update save_anchor_states
@@ -341,14 +358,15 @@ def _audit_anchors_on_phase_close(save_id: int, closed_phase_index: int) -> None
                         returning id
                         """,
                         (
-                            f"phase '{phase_label}' 已结束 (turn {turn_end}),玩家已推进过第 {reached} 章,"
-                            f"本 phase 中更早未触发的锚点自动绕过",
-                            save_id, phase_label, reached,
+                            f"phase '{phase_label}' 已结束 (turn {turn_end}),玩家进度到第 {max_reached} 章,"
+                            f"本 phase 中早于第 {threshold} 章(回看宽限 {ANCHOR_BEHIND_GRACE_CHAPTERS} 章)"
+                            f"的未触发非关键锚点自动绕过",
+                            save_id, phase_label, threshold,
                         ),
                     ).fetchall()
                     log.info(f"[anchor_audit] save={save_id} phase={closed_phase_index} "
-                             f"pace 章感知: 绕过 {len(res)} 个早于第 {reached} 章的 non-fatal 锚点"
-                             f"(未来/当前位置锚点保留 pending)")
+                             f"pace 章感知: 绕过 {len(res)} 个早于第 {threshold} 章的 non-fatal 锚点"
+                             f"(回看宽限 {ANCHOR_BEHIND_GRACE_CHAPTERS} 章内的锚点保留 pending)")
             elif non_fatal:
                 db.execute(
                     """

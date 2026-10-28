@@ -27,6 +27,13 @@ SETTINGS_SCHEMA: list[dict] = [
      "help": "rail=贴原著(强力锚点):把下一个待发生锚点当成必须推进的下一拍,GM 主动收束、"
              "偏离 1-3 轮内拉回(仍允许合理变体);guided=软引导(默认温和):软目标朝锚点自然推进;"
              "free=自由:不注入引导。"},
+    # 自动节奏推进(2026-10-28):治「纯聊天被 pace 兜底自动涨章」。
+    # 只控制 anchor_reconcile._apply_pace_fallback(发散/日常 play 的节奏兜底);
+    # 锚点到达、叙事估章、玩家手动跳章都不受影响。默认 on 保持既有行为,玩家可逐档关掉。
+    {"key": "auto_pace_advance", "label": "自动节奏推进", "type": "enum", "default": "on",
+     "options": ["on", "off"], "locked_after_create": False, "step": 4,
+     "help": "on=发散/日常对话也按叙事节奏缓慢推进章节(约 3 个正常推进回合 +1 章);"
+             "off=只有命中原著锚点、叙事估章或手动跳章才推进,纯聊天不会自动涨章。"},
 ]
 
 _DEFAULTS = {s["key"]: s["default"] for s in SETTINGS_SCHEMA}
@@ -93,6 +100,27 @@ def read_settings(db, save_id: int) -> dict:
     return out
 
 
+def auto_pace_advance_enabled(db, save_id: int) -> bool:
+    """存档级「自动节奏推进」开关(默认 on)。
+
+    只影响 anchor_reconcile._apply_pace_fallback:关掉后纯聊天/发散 play 不再
+    按 progress_motion 累计涨章;锚点到达、叙事估章、玩家手动跳章仍会推进。
+    读不到/异常 → True(保持既有行为,绝不因设置读取失败停掉兜底)。
+    """
+    try:
+        row = db.execute(
+            "select worldline->>'auto_pace_advance' as v "
+            "from game_sessions where save_id = %s",
+            (save_id,),
+        ).fetchone()
+        v = row.get("v") if row else None
+        return str(v if v is not None else "on").strip().lower() not in (
+            "off", "0", "false", "no",
+        )
+    except Exception:
+        return True
+
+
 def apply_settings(db, save_id: int, updates: dict[str, Any], *, is_create: bool = False) -> dict:
     """写设置(存 game_sessions.worldline)。建档后锁死项拒改。返回 {applied, rejected}。"""
     from psycopg.types.json import Jsonb
@@ -142,6 +170,23 @@ def set_user_progress_floor(db, save_id: int, chapter: int) -> None:
     )
 
 
+def reset_pace_accum(db, save_id: int) -> None:
+    """清零节奏兜底累计点(progress_pace_accum)。
+
+    只用于【显式跳章 / 回退】:这些路径把时间线整体移动了,旧位置累计的推进点
+    不再属于新时间线,留着会让下一章早 1-2 回合到达。锚点到达/估章/节奏兜底
+    本身的增量推进不要调用它(那会把正常累计清掉)。
+
+    与 progress_chapter 同用 jsonb_set 原子写,避免 workers=2 下读-改-写丢更新。
+    """
+    _ensure_session(db, save_id)
+    db.execute(
+        "update game_sessions set worldline = jsonb_set(coalesce(worldline, '{}'::jsonb), "
+        "'{progress_pace_accum}', to_jsonb(0), true), updated_at = now() where save_id = %s",
+        (save_id,),
+    )
+
+
 def realign_progress_signals(db, save_id: int, target_chapter: int) -> int:
     """回退方向的进度信号族对齐(同事务原子)。矩阵审计 M1-M4 收口。
 
@@ -151,15 +196,18 @@ def realign_progress_signals(db, save_id: int, target_chapter: int) -> int:
     progress 顶回去 = 玩家的回退被静默撤销,防剧透闸按回退前高进度继续泄漏后期设定。
     所有回退路径必须走本函数:
       A: progress_chapter 显式设 target(可降) + user_progress_floor clamp 到 ≤target;
+      D: progress_pace_accum 清零(否则回退前的推进点会带进新时间线,让下一章早到);
       C: source_chapter > target 的 occurred/variant 锚点重锁回 pending;
       frontier(flag on): 删 >target 前沿行 + recompute_visible_set。
     返回重锁锚点数。异常向外传播(调用方事务整体回滚,防信号族半对齐脱节)。"""
     _ensure_session(db, save_id)
     t = max(1, int(target_chapter))
     db.execute(
-        "update game_sessions set worldline = jsonb_set(jsonb_set(coalesce(worldline,'{}'::jsonb), "
+        "update game_sessions set worldline = jsonb_set(jsonb_set(jsonb_set("
+        "coalesce(worldline,'{}'::jsonb), "
         "'{progress_chapter}', to_jsonb(%s::int), true), "
         "'{user_progress_floor}', to_jsonb(least(coalesce((worldline->>'user_progress_floor')::int, 0), %s)), true), "
+        "'{progress_pace_accum}', to_jsonb(0), true), "
         "updated_at = now() where save_id=%s",
         (t, t, save_id),
     )

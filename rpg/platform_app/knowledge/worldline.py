@@ -37,8 +37,9 @@ def set_worldline_variable(user_id: int, save_id: int, key: str, value: str, sou
         variables = worldline.setdefault("user_variables", {})
         variables[key] = {"value": value, "source": source, "locked": True}
         db.execute(
-            # worldline 整列写入时叠加保留玩家设置键(见 _session_repo._PRESERVE_SETTINGS_SQL),
-            # 否则设/删世界线变量会顺手抹掉 steering_strength 等设置。
+            # worldline 整列写入时叠加保留跨回合键(玩家设置 + 进度累计器,
+            # 见 _session_repo._PRESERVE_SETTINGS_SQL),否则设/删世界线变量会顺手
+            # 抹掉 steering_strength 等设置或 progress_pace_accum。
             "update game_sessions set state = %s, "
             "worldline = %s || " + _PRESERVE_SETTINGS_SQL + ", "
             "updated_at = now(), row_version = row_version + 1 where id = %s",
@@ -59,8 +60,9 @@ def remove_worldline_variable(user_id: int, save_id: int, key: str) -> dict[str,
         variables = worldline.setdefault("user_variables", {})
         variables.pop(key, None)
         db.execute(
-            # worldline 整列写入时叠加保留玩家设置键(见 _session_repo._PRESERVE_SETTINGS_SQL),
-            # 否则设/删世界线变量会顺手抹掉 steering_strength 等设置。
+            # worldline 整列写入时叠加保留跨回合键(玩家设置 + 进度累计器,
+            # 见 _session_repo._PRESERVE_SETTINGS_SQL),否则设/删世界线变量会顺手
+            # 抹掉 steering_strength 等设置或 progress_pace_accum。
             "update game_sessions set state = %s, "
             "worldline = %s || " + _PRESERVE_SETTINGS_SQL + ", "
             "updated_at = now(), row_version = row_version + 1 where id = %s",

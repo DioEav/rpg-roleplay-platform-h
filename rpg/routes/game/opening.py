@@ -16,16 +16,20 @@ from fastapi import Depends
 from fastapi.responses import StreamingResponse
 
 from chat_pipeline._common import _bridge_sync_generator_to_async
+from core.logging import get_logger
 from routes._deps_fastapi import get_current_user
 from state.parsers import _extract_trailing_markdown_options
 
 from ._shared import _client_safe_error, _note_channel_health_failure, router
 
+log = get_logger(__name__)
+
 # ── 游戏流水线 · 开场策略(rail 知识只住游戏层,不进底层 GMAgent)──────────────
 # 反馈#73:开了「贴原著」开局仍脱离原著、原著开篇人物(张杰/雇佣兵等)流失。原因:开场默认
-# 提示词强制 150-250 字 + max_tokens=600,把已注入的原著开场压成极短原创、丢人物。
+# 提示词强制固定字数 + 固定小预算,把已注入的原著开场压成极短原创、丢人物。
 # 修复边界:底层 generate_opening 通用化(只收 prompt+预算);这里——游戏这条流水线——按
-# steering_strength 决定 rail 时用"忠实重现原著开篇"的提示 + 更大预算。酒馆/编辑器不调此处,零影响。
+# steering_strength 决定 rail 时用"忠实重现原著开篇"的提示;预算统一取设置页
+# 「最大输出 Tokens」(_chat_max_tokens),不再写死 600/1600。酒馆/编辑器不调此处,零影响。
 _RAIL_OPENING_INSTRUCTION = """\
 玩家选择了【贴原著】引导强度。请基于【本轮上下文包】中的「锚点章节原文 · 贴原著档」段,
 忠实重现原著的开场场景,作为玩家进入故事的起点。
@@ -43,16 +47,33 @@ _RAIL_OPENING_INSTRUCTION = """\
 尽量贴合该意图(场景细节/切入角度),但不得删改原著开场的主要人物与关键事件。
 
 结尾留一个可行动的悬念或选择,不要替玩家做决定。
-字数:500-900字(开场需足够篇幅容纳原著登场人物与场景,不要压缩成极短)。
+篇幅按原著开场内容自然展开,不要为了压缩字数省略人物或事件。
 """
 
 
-def _game_opening_policy(steering_strength: str) -> tuple[str | None, int]:
-    """游戏流水线的开场策略。rail(贴原著)→(忠实重现提示, 1600);其它 →(None=底层默认开场, 600)。
-    返回 (prompt 覆盖 | None, max_tokens)。底层据此生成,但不认识 rail 本身。"""
+def _game_opening_policy(steering_strength: str, max_tokens: int) -> tuple[str | None, int]:
+    """游戏流水线的开场策略。rail(贴原著)→ 忠实重现提示;所有档位共用调用方给的输出预算
+    (设置页「最大输出 Tokens」)。返回 (prompt 覆盖 | None, max_tokens)。底层据此生成,
+    但不认识 rail 本身。"""
+    budget = max(1, int(max_tokens))
     if steering_strength == "rail":
-        return (_RAIL_OPENING_INSTRUCTION, 1600)
-    return (None, 600)
+        return (_RAIL_OPENING_INSTRUCTION, budget)
+    return (None, budget)
+
+
+def _opening_hit_max_tokens(gm: Any, open_tokens: int) -> int | None:
+    """开场是否撞了 max_tokens。命中返回实际预算(给玩家提示),否则 None。
+
+    与主聊天 app.py 的 finish_reason 检查同口径;独立成函数是为了让「截断检查」可单测,
+    不用起完整 SSE/DB 链路。
+    """
+    last_usage = getattr(getattr(gm, "_backend", None), "last_usage", {}) or {}
+    if str(last_usage.get("finish_reason") or "") != "length":
+        return None
+    try:
+        return int(last_usage.get("max_tokens") or open_tokens)
+    except (TypeError, ValueError):
+        return int(open_tokens)
 
 
 @router.post("/api/opening")
@@ -62,6 +83,7 @@ async def api_opening(
     from app import (
         _active_script_id,
         _build_turn_context,
+        _chat_max_tokens,
         _ensure_loaded,
         _get_gm,
         _payload_sse,
@@ -114,8 +136,11 @@ async def api_opening(
 
         yield _sse("stage", {"phase": "building_context", "label": "组装上下文…"})
         bundle = await asyncio.to_thread(_retrieve_and_build)
-        # 游戏层决定开场策略:读该存档引导强度,rail→忠实重现原著开篇提示+大预算(#73)。
+        # 游戏层决定开场策略:读该存档引导强度,rail→忠实重现原著开篇提示(#73)。
+        # 输出预算统一取设置页「最大输出 Tokens」(_chat_max_tokens),开场与主 GM 共用同一
+        # 用户可调上限;不再写死 600/1600。
         _steering = "guided"
+        _sid_steer = None
         try:
             _, _sid_steer = _resolve_persist_target(api_user)
             if _sid_steer:
@@ -129,7 +154,7 @@ async def api_opening(
                     _steering = _row_steer["ss"]
         except Exception:
             _steering = "guided"
-        _open_prompt, _open_tokens = _game_opening_policy(_steering)
+        _open_prompt, _open_tokens = _game_opening_policy(_steering, _chat_max_tokens(api_user))
         yield _sse("status", _payload_sse(api_user))
         yield _sse("stage", {"phase": "generating", "label": "GM 构思开场中…"})
         text = ""
@@ -139,8 +164,14 @@ async def api_opening(
             _opening_stop = threading.Event()
             # 流式 ops 围栏抑制(与 chat 主循环同一 StreamFenceGuard):开场同样是
             # 「裸转发 + 落库前清洗」,半截 ```json 会漏给玩家。text 累积不受影响。
-            from state import StreamFenceGuard
+            # tool guard 再兜一层:开场没有工具循环,模型若照搬"每轮先查锚点"发
+            # <<TOOL_CALL>>…<<END_TOOL_CALL>>,整段协议不能逐字转发给玩家。
+            # DSML guard:DeepSeek 等模型可能改吐原生 <|DSML|…> 标记,同样不能外发。
+            from agents.gm.backends._dsml import DsmlStreamFilter
+            from state import StreamFenceGuard, StreamToolCallGuard
             _fence_guard = StreamFenceGuard()
+            _dsml_guard = DsmlStreamFilter()
+            _tool_guard = StreamToolCallGuard(hold_meta_preamble=True)
             # 流式重试(与 chat 主循环同一包装器):首个非空 chunk 之前的 upstream/
             # ratelimit 失败静默重试(裸字符串流,不发 notice 事件防混入正文)。
             from agents.gm.stream_retry import opening_chunk_commits, stream_with_pretoken_retry
@@ -159,19 +190,84 @@ async def api_opening(
                 text += chunk
                 _fence_fw = _fence_guard.feed(chunk)
                 if _fence_fw:
-                    yield _sse("token", {"text": _fence_fw})
+                    _dsml_fw = _dsml_guard.feed(_fence_fw)
+                    if _dsml_fw:
+                        _tool_fw = _tool_guard.feed(_dsml_fw)
+                        if _tool_fw:
+                            yield _sse("token", {"text": _tool_fw})
             _fence_tail = _fence_guard.flush()
             if _fence_tail:
-                yield _sse("token", {"text": _fence_tail})
+                _dsml_fw = _dsml_guard.feed(_fence_tail)
+                if _dsml_fw:
+                    _tool_fw = _tool_guard.feed(_dsml_fw)
+                    if _tool_fw:
+                        yield _sse("token", {"text": _tool_fw})
+            _dsml_tail = _dsml_guard.finish()
+            if _dsml_tail:
+                _tool_fw = _tool_guard.feed(_dsml_tail)
+                if _tool_fw:
+                    yield _sse("token", {"text": _tool_fw})
+            if _dsml_guard.seen:
+                log.warning("[opening] model emitted DSML tool calls; ignored (no tool loop)")
+            _tool_tail = _tool_guard.flush()
+            if _tool_tail:
+                yield _sse("token", {"text": _tool_tail})
+            # 截断检查(与主聊天 app.py 的 finish_reason 检查同口径):开场是单次生成,
+            # 撞 max_tokens 会停在一句话中间。不要把半截文本当正常开场落库 —— 区分
+            # "模型只写了工具调用"(opening_empty) 与 "写到一半被截断"(opening_truncated),
+            # 让玩家知道该去设置页调高「最大输出 Tokens」后重试。
+            _hit_max = _opening_hit_max_tokens(gm, _open_tokens)
+            if _hit_max:
+                log.warning(
+                    "[opening] GM output hit max_tokens=%s user_id=%s save_id=%s model=%s",
+                    _hit_max,
+                    (api_user or {}).get("id") or "?",
+                    _sid_steer or "?",
+                    getattr(getattr(gm, "_backend", None), "model_name", "") or "?",
+                )
+                yield _sse("error", {
+                    "message": (
+                        f"开场输出达到最大输出 Tokens 上限（{_hit_max}）被截断。"
+                        "请在设置页调高「最大输出 Tokens」后重试。"
+                    ),
+                    "kind": "opening_truncated",
+                    "max_tokens": _hit_max,
+                })
+                return
             opening = text
-            yield _sse("stage", {"phase": "done", "label": ""})
             opening_for_history, opening_options = _extract_trailing_markdown_options(opening)
             # 剥掉 ops JSON 围栏 / 工具元叙述 / 泄漏脚手架,得到给玩家看 + 落历史的干净正文。
             # 复用 chat 路径同一套 stripper(chat_pipeline 落库前也这么洗);结构化解析仍用含 ops
             # 的 opening_for_history(见下方 apply_structured_updates)。根因:开场原先直接存原文,
             # ```json ops 块漏给玩家(基准测出多档开场命中 leak)。
-            from state import strip_json_state_ops, strip_leaked_scaffold, strip_meta_tool_preamble
-            opening_visible = strip_leaked_scaffold(strip_meta_tool_preamble(strip_json_state_ops(opening_for_history)))
+            # 本次新增 strip_tool_call_markup:开场无工具循环,模型照搬"每轮先查锚点"时会把
+            # <<TOOL_CALL>>…<<END_TOOL_CALL>> 连同"我先查看…"的幕后旁白一起吐进正文。
+            from agents.gm.backends._dsml import strip_dsml
+            from state import (
+                strip_json_state_ops,
+                strip_leaked_scaffold,
+                strip_meta_tool_preamble,
+                strip_tool_call_markup,
+            )
+            opening_clean = strip_dsml(opening_for_history)
+            opening_visible = strip_leaked_scaffold(strip_meta_tool_preamble(
+                strip_json_state_ops(strip_tool_call_markup(opening_clean))))
+            # 极端兜底:整段都是工具调用/元叙述,剥完没有可读正文。不要落一条空 assistant
+            # 进 history(前端会以为开场成功),发 error 让前端走既有的失败提示/重试路径。
+            if not opening_visible.strip():
+                _raw_head = (opening_for_history or "").strip()[:500]
+                log.warning("[opening] no narrative after strip; raw_head=%r", _raw_head)
+                _only_tool = "<<TOOL_CALL>>" in (opening_for_history or "")
+                yield _sse("error", {
+                    "message": (
+                        "开场生成没有产出叙事正文（模型只输出了工具调用）。请重试。"
+                        if _only_tool else
+                        "开场生成没有产出叙事正文（模型没有返回可读内容）。请重试或换模型。"
+                    ),
+                    "kind": "opening_empty",
+                })
+                return
+            yield _sse("stage", {"phase": "done", "label": ""})
             state.data["history"].append({"role": "assistant", "content": opening_visible})
             # 让开场也走结构化解析,把【询问玩家】+JSON ops 解析进 pending_questions / state
             before_questions = len((state.data.get("permissions") or {}).get("pending_questions") or [])

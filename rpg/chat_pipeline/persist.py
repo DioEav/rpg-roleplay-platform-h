@@ -5,7 +5,12 @@ from __future__ import annotations
 from collections.abc import AsyncIterator, Callable
 from typing import Any
 
-from state import strip_json_state_ops, strip_leaked_scaffold, strip_meta_tool_preamble
+from state import (
+    strip_json_state_ops,
+    strip_leaked_scaffold,
+    strip_meta_tool_preamble,
+    strip_tool_call_markup,
+)
 
 from ._common import PipelineContext, SSEEvent, log
 
@@ -41,7 +46,8 @@ async def persist_turn_phase(
     gm = ctx.gm
     updates = getattr(ctx, "_updates", []) or []
 
-    visible_response = strip_json_state_ops(response)
+    visible_response = strip_tool_call_markup(response)
+    visible_response = strip_json_state_ops(visible_response)
     # 确定性兜底:剥掉 GM 在 native tool_use 前泄漏进正文的英文"工具预告"元叙述
     # (例:"Let me mark the anchors that have been satisfied...")。不依赖 GM 听提示词。
     visible_response = strip_meta_tool_preamble(visible_response)

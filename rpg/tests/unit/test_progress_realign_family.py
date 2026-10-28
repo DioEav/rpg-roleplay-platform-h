@@ -20,6 +20,7 @@ def test_realign_covers_full_signal_family():
     body = _func(SETTINGS, "realign_progress_signals")
     assert "'{progress_chapter}', to_jsonb(%s::int)" in body, "A:progress 显式设(可降)"
     assert "least(coalesce((worldline->>'user_progress_floor')" in body, "A:floor clamp 到 ≤target(M3)"
+    assert "'{progress_pace_accum}', to_jsonb(0)" in body, "D:回退清零节奏累计器(不让旧位置的点带进新时间线)"
     assert "status='pending'" in body and "source_chapter > %s" in body, "C:未来章锚点重锁"
     assert "variant_description=''" in body, "列 NOT NULL default '',置 null 违约(e2e 实锤 500)"
     assert "recompute_visible_set" in body, "frontier 收缩(flag on)"

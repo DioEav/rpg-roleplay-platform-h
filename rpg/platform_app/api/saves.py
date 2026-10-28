@@ -428,6 +428,7 @@ async def api_save_anchors(save_id: int, user=Depends(require_user)):
             return json_response({"ok": False, "error": "无权访问该存档"}, status_code=403)
     try:
         from agents.anchor_seed_agent import (
+            anchor_lookback_chapter_min,
             drift_by_phase,
             get_progress_window,
             list_pending_for_phase,
@@ -444,8 +445,12 @@ async def api_save_anchors(save_id: int, user=Depends(require_user)):
             _ch_min, _ch_max = _win.get("chapter_min"), _win.get("chapter_max")
         except Exception:
             _ch_min, _ch_max = None, None
+        # 回看宽限:进度被节奏兜底/估章推过早期锚点后,宽限内的锚点仍要出现在
+        # 「待发生锚点」里,玩家才能点「标记已到达」补标。超过宽限的由
+        # anchor_reconcile.expire_behind_anchors 自动收束,不会长期堆在这。
+        _pending_min = anchor_lookback_chapter_min(_ch_min)
         recent_pending = list_pending_for_phase(
-            save_id, None, limit=12, chapter_min=_ch_min, chapter_max=_ch_max,
+            save_id, None, limit=12, chapter_min=_pending_min, chapter_max=_ch_max,
         )
         with connect() as db:
             occ_rows = db.execute(
@@ -528,7 +533,9 @@ async def api_save_anchor_satisfy(save_id: int, anchor_key: str, user=Depends(re
       · 仅允许 status='pending' 的锚点(已 occurred/variant/superseded → 明确提示)
       · 拒绝 is_fatal(关键命运/死亡锚点须在剧情中由 GM 触发)
       · 防剧透:锚点必须落在【该存档当前进度窗口】内(get_progress_window),
-        不允许玩家跳到远未来锚点提前剧透
+        不允许玩家跳到远未来锚点提前剧透;下界再放宽 ANCHOR_BEHIND_GRACE_CHAPTERS
+        章,让进度刚被节奏兜底/估章越过的早期锚点仍可回头补标(超过宽限的
+        已由 expire_behind_anchors 自动 superseded)
     """
     user_id = int(user["id"])
     anchor_key = (anchor_key or "").strip()
@@ -570,7 +577,10 @@ async def api_save_anchor_satisfy(save_id: int, anchor_key: str, user=Depends(re
             # 防剧透:锚点必须落在当前进度窗口 [chapter_min, chapter_max] 内。
             # get_progress_window 单独连库(已 init_db),与本事务读的是同一权威表,
             # 在锁内调用安全(它只读不写)。
-            from agents.anchor_seed_agent import get_progress_window
+            from agents.anchor_seed_agent import (
+                anchor_lookback_chapter_min,
+                get_progress_window,
+            )
             win = get_progress_window(save_id, script_id=None)
             src_ch = row.get("source_chapter")
             win_min = win.get("chapter_min")
@@ -580,11 +590,15 @@ async def api_save_anchor_satisfy(save_id: int, anchor_key: str, user=Depends(re
                     {"ok": False,
                      "error": f"该锚点在第 {src_ch} 章,超出当前进度窗口,暂不能提前标记(防剧透)。"},
                     status_code=409)
-            # 对称下界:早于当前进度窗口起点的锚点不应手动标记(原读了 win_min 却从未使用 → 漏判)。
-            if isinstance(src_ch, int) and isinstance(win_min, int) and src_ch < win_min:
+            # 下界带「回看宽限」:进度被节奏兜底/估章推过早期锚点后,宽限内的锚点
+            # 仍允许玩家回头补标;超过宽限的已被 expire_behind_anchors 自动 superseded。
+            # 原实现用了未加宽限的 win_min,导致这些锚点既看不到也点不了。
+            lookback_min = anchor_lookback_chapter_min(win_min)
+            if isinstance(src_ch, int) and isinstance(lookback_min, int) and src_ch < lookback_min:
                 return json_response(
                     {"ok": False,
-                     "error": f"该锚点在第 {src_ch} 章,早于当前进度窗口起点,无法手动标记。"},
+                     "error": f"该锚点在第 {src_ch} 章,早于当前进度窗口的回看宽限"
+                              f"(第 {lookback_min} 章),无法手动标记。"},
                     status_code=409)
 
             # 当前最大 turn(与 _t_mark_anchor_satisfied 一致默认)

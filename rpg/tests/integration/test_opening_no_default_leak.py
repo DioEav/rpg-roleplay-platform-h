@@ -110,6 +110,9 @@ class OpeningRetrievalNoDefaultLeak(unittest.TestCase):
             _backend = _B()
             def generate_opening(self, state, retrieved_context=""):
                 return "（测试存根开场：雾港码头雾色未散。）"
+            def generate_opening_stream(self, state, retrieved_context="", *, stop_event=None,
+                                        prompt=None, max_tokens=5000):
+                yield "（测试存根开场：雾港码头雾色未散。）"
             def respond_stream_with_tools(self, *a, **kw):
                 if False:
                     yield {}

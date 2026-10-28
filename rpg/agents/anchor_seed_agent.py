@@ -339,6 +339,36 @@ def _derive_must_preserve(summary: str, participants: list[Any]) -> list[str]:
 # ────────────────────────────────────────────────────────────
 
 
+# 进度推进越过早期锚点后的「回看宽限」(章)。
+#
+# 病根:节奏兜底/叙事估章会把 progress_chapter 推到 pending 锚点之前。此后
+# get_progress_window 的 chapter_min = progress_chapter,那些更早的 pending 锚点
+# 既不在史官候选窗口、也不在面板 recent_pending,手动 satisfy 还会被下界拒绝 ——
+# 它们会永远停在 pending,把世界线收束统计拖成「怎么都收不干净」的假象
+# (生产 save=205 有 1.1 万 pending,节奏兜底一推进就会踩到)。
+#
+# 规则:
+#   · 进度越过某锚点的章数 <= 宽限 → 锚点仍可见、仍可手动补标(玩家回头演了还来得及);
+#   · 超过宽限 → 由 expire_behind_anchors 自动标 superseded(非 fatal),统计收敛。
+# 宽限只放宽「锚点可见/可补标」的下界,不改 get_progress_window 的 chapter_min ——
+# 那个值同时喂 retrieval/steering/reveal,放宽会改变剧情检索与防剧透语义。
+ANCHOR_BEHIND_GRACE_CHAPTERS = 5
+
+
+def anchor_lookback_chapter_min(chapter_min: int | None,
+                                grace: int | None = None) -> int | None:
+    """锚点可见/可补标窗口的下界 = 权威进度窗口起点 - 回看宽限。
+
+    仅用于锚点相关消费者(史官候选、面板 recent_pending、手动 satisfy);
+    不要把它塞回 get_progress_window 的 chapter_min(见上方常量注释)。
+    chapter_min 为 None 时返回 None(调用方沿用「无法定位」的旧语义)。
+    """
+    if chapter_min is None:
+        return None
+    g = ANCHOR_BEHIND_GRACE_CHAPTERS if grace is None else max(0, int(grace))
+    return max(1, int(chapter_min) - g)
+
+
 def get_progress_window(save_id: int, world_time_label: str | None = None,
                         script_id: int | None = None, *,
                         window_size: int = 50) -> dict[str, Any]:
@@ -530,6 +560,56 @@ def list_pending_for_phase(
             "metadata": r["metadata"] or {},
         })
     return out
+
+
+def expire_behind_anchors(db, save_id: int, progress_chapter: int,
+                          grace: int | None = None, limit: int = 500) -> int:
+    """把进度已越过回看宽限、仍未触发的非 fatal 锚点自动标 superseded。
+
+    背景:progress_chapter 可能被节奏兜底/估章推到 pending 锚点之前。宽限内
+    (source_chapter >= progress - grace)的锚点仍可被史官看到、玩家仍可手动补标;
+    超过宽限的锚点如果一直留 pending,会让「世界线收束」统计永远不收敛,而且
+    它们既不在候选窗口也不在 recent_pending,事实上已经被遗弃。
+
+    规则:
+      · 只处理 is_fatal=false 的 pending 锚点(fatal 必须留给剧情/GM,不能自动绕过);
+      · 阈值 = progress_chapter - grace;source_chapter < 阈值才收束;
+      · 单次最多收束 limit 个(默认 500),避免首次上线/大存档一次 UPDATE 锁太多行;
+        剩余的下回合继续(幂等,已 superseded 的不会再命中);
+      · 返回本次收束的锚点数。调用方负责事务;异常向外抛,由上层吞掉(不破回合)。
+    """
+    if not db or not save_id:
+        return 0
+    g = ANCHOR_BEHIND_GRACE_CHAPTERS if grace is None else max(0, int(grace))
+    progress = max(1, int(progress_chapter or 1))
+    threshold = progress - g
+    if threshold < 1:
+        return 0
+    rows = db.execute(
+        """
+        update save_anchor_states
+        set status = 'superseded',
+            variant_description = %s,
+            drift_score = 1.0,
+            updated_at = now()
+        where id in (
+            select id from save_anchor_states
+            where save_id = %s
+              and status = 'pending'
+              and is_fatal = false
+              and source_chapter < %s
+            order by source_chapter asc
+            limit %s
+        )
+        returning id
+        """,
+        (
+            f"进度已推进到第 {progress} 章,超过第 {threshold} 章回看宽限,"
+            f"未触发的非关键锚点自动绕过",
+            int(save_id), int(threshold), max(1, int(limit)),
+        ),
+    ).fetchall()
+    return len(rows or [])
 
 
 def drift_by_phase(save_id: int) -> list[dict[str, Any]]:

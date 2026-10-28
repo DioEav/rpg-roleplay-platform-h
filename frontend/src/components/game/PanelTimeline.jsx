@@ -2,7 +2,7 @@
 import React from 'react';
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { anchorStatuses } from '../../lib/timeline-status.js';
+import { anchorStatuses, convergenceLabelKey } from '../../lib/timeline-status.js';
 
 // task 136h: 世界线收束·锚点 子组件 — 嵌入 PanelTimeline 底部
 // 从 /api/saves/:id/anchors 拉取, 跟 timeline 数据互相独立。
@@ -443,6 +443,10 @@ function PanelTimeline({ state, running = false }) {
               //   包含当前章的锚点里只有最贴切(最窄)的一条算「当前」,其余标「进行中」。
               //   移动端 mobile/game/panels.jsx 用同一个缝,两端不会再各判各的。
               const st = anchorStatus_[i];
+              // 收束轴(与上面的位置轴分开):后端按 save_anchor_states 聚合出的
+              // done/current/pending 状态。位置轴仍负责唯一的「当前」高亮;这里只挂
+              // 一个弱徽标,避免上半期望线说「已度过」、下半锚点区却还有大量 pending。
+              const convergenceKey = convergenceLabelKey(a.status);
               const chMin = a.chapter_min;
               const chMax = a.chapter_max != null ? a.chapter_max : a.chapter_min;
               const isDone    = st === 'done';
@@ -484,6 +488,12 @@ function PanelTimeline({ state, running = false }) {
                       {isOngoing && <span className="muted-2" style={{marginLeft: 6, fontSize: 10}}>{t('game.timeline.in_progress_pill')}</span>}
                       {isDone && <span className="muted-2" style={{marginLeft: 6, fontSize: 10}}>{t('game.timeline.done_label')}</span>}
                       {isPending && <span className="muted-2" style={{marginLeft: 6, fontSize: 10}}>{t('game.timeline.pending_label')}</span>}
+                      {convergenceKey && (
+                        <span className="pill" style={{marginLeft: 6, fontSize: 10,
+                          background: "var(--panel-3)", color: "var(--muted-2)"}}>
+                          {t(convergenceKey)}
+                        </span>
+                      )}
                     </div>
                     <div className="gp-anchor-phase" style={{color: "var(--muted-2)"}}>
                       {chMin != null

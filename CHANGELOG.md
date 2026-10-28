@@ -9,6 +9,10 @@ Version scheme: **SemVer** `MAJOR.MINOR.PATCH[-channel.N][+build]` since `v0.5.0
 
 ## [Unreleased]
 
+### Fixed
+- **开场变成「我先查看待发生锚点和存档历史…」+ 原始 `<<TOOL_CALL>>` 标记，没有剧情。** 开场走 `generate_opening_stream` 裸流，没有工具循环，但 system prompt 始终带着「每轮先扫待发生锚点 / `list_recent_history` 每轮开始前调一次」和 `<<TOOL_CALL>>` 协议；弱模型（线上 mimo-v2.6-flash / deepseek-v4.1-flash）照搬后，marker 被逐字转发并落进 history。修：① `generate_opening(_stream)` 改用 `_build_system(include_tool_protocol=False)`，把「世界线收束」工具清单、`<<TOOL_CALL>>` 格式和「每轮检查待发生锚点」契约整段删掉（只追加"没有工具"后缀压不住 flash 模型），末尾再保留「开场生成模式」硬约束；② 新增 `strip_tool_call_markup`（完整/未闭合 marker + 紧邻中文旁白）接入开场落库链、chat 落库链与 TXT 导出；③ 开场流式新增 `StreamToolCallGuard`，marker 与首段「我先查看…」不转发给玩家；④ 剥完无正文时发 `opening_empty` error 并记录 raw_head，不落空 assistant 消息，前端走既有重试路径。
+- **开场预算写死 600/1600，设置页「最大输出 Tokens」管不到；长输出模型开场写到一半被截断。** `/api/opening` 原先固定 guided=600 / rail=1600，而设置页的 max_tokens 只作用于主 GM/控制台。`deepseek-v4.1-flash` 写 349 字 ≈ 600 token，开场停在「那」。修：① 开场统一取 `_chat_max_tokens`（设置页值，4096~65536），rail/guided 共用；② 移除开场 prompt 的 150-250 / 500-900 固定字数限制，改为按内容自然展开；③ 开场路由增加 `finish_reason == "length"` 检查，命中时记 warning、发 `opening_truncated` error 并提示调高「最大输出 Tokens」，不再把半截文本当正常开场落库。
+
 ### Added
 - **OpenAI Responses 协议支持（按 provider/凭据 opt-in）。** 新增 `api_format`（`chat_completions` 默认 / `responses`），优先级为凭据覆盖 > 目录默认 > chat，只作用于 OpenAI 家族，`kind` 与旧调用路径不变。
   - 新增 `agents/gm/backends/responses.py`：实现 `call/call_structured/stream/stream_with_mcp_loop/probe/last_usage`，默认 `store=False` 无状态，工具续跑用 `function_call_output` + `call_id`，思考控制映射为 `reasoning.effort`。

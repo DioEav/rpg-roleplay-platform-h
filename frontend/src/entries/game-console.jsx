@@ -554,7 +554,7 @@ function App() {
                   // 另一个回调不得提前 finalize(否则会把重试路径吞掉)。
                   let openingFinalized = false;
                   let openingRetryScheduled = false;
-                  const finishOpeningFailure = (allowRetry) => {
+                  const finishOpeningFailure = (allowRetry, detail) => {
                     if (openingFinalized || openingRetryScheduled) return;
                     // G9: 断线重试 — 未收到任何 token 时自动重试一次
                     if (allowRetry && !openingText && !openingRetried) {
@@ -585,8 +585,10 @@ function App() {
                     setRunState((r) => ({ ...r, running: false, publicStage: null, label: '', detail: '' }));
                     // 错误条(标题「生成失败」+ 重试按钮)接管恢复入口;onRetry 会识别
                     // openingFailedRef 走「重新生成开场」而不是重发玩家输入。
-                    setHasError(t('game.console.opening.failed'));
-                    const note = t('game.console.run.disconnected_incomplete');
+                    // detail = 后端 error.message(如「调高最大输出 Tokens」/「开场截断」),
+                    // 比通用文案更能告诉玩家下一步怎么做。
+                    setHasError(detail || t('game.console.opening.failed'));
+                    const note = detail || t('game.console.run.disconnected_incomplete');
                     // 就地更新既有占位气泡:旧 on_error 在已有部分文本时会再 push 一条
                     // 「同文本 + 断线提示」→ 开场正文出现两份。onClose 原本的“只在没有文本时
                     // 什么都不做”也改为给占位补一条失败说明,避免停在“正在拉开帷幕…”。
@@ -681,9 +683,9 @@ function App() {
                         } catch (_) {}
                       }, 300);
                     },
-                    on_error: () => {
+                    on_error: (d) => {
                       runRef.current.sse = null;
-                      finishOpeningFailure(true);
+                      finishOpeningFailure(true, d && d.message);
                     },
                     onClose: () => {
                       runRef.current.sse = null;

@@ -156,5 +156,66 @@ class TestDeriveMustPreserve(unittest.TestCase):
         self.assertEqual(result_dict_empty, [])
 
 
+class TestBehindGraceAnchors(unittest.TestCase):
+    """回看宽限:锚点可见下界 + 超过宽限自动收束。"""
+
+    def test_lookback_min_subtracts_grace(self):
+        from agents.anchor_seed_agent import (
+            ANCHOR_BEHIND_GRACE_CHAPTERS,
+            anchor_lookback_chapter_min,
+        )
+        self.assertEqual(
+            anchor_lookback_chapter_min(20), 20 - ANCHOR_BEHIND_GRACE_CHAPTERS)
+        self.assertEqual(anchor_lookback_chapter_min(2, grace=5), 1)
+        self.assertIsNone(anchor_lookback_chapter_min(None))
+        self.assertEqual(anchor_lookback_chapter_min(20, grace=0), 20)
+
+    def test_expire_threshold_and_sql(self):
+        from agents.anchor_seed_agent import (
+            ANCHOR_BEHIND_GRACE_CHAPTERS,
+            expire_behind_anchors,
+        )
+
+        class _Result:
+            def __init__(self, rows):
+                self._rows = rows
+
+            def fetchall(self):
+                return self._rows
+
+        class _DB:
+            def __init__(self):
+                self.calls = []
+
+            def execute(self, sql, params=None):
+                self.calls.append((" ".join(sql.split()), params))
+                return _Result([{"id": 1}, {"id": 2}])
+
+        db = _DB()
+        n = expire_behind_anchors(db, 7, 20)
+        self.assertEqual(n, 2)
+        sql, params = db.calls[-1]
+        self.assertIn("status = 'superseded'", sql)
+        self.assertIn("is_fatal = false", sql)
+        self.assertIn("source_chapter <", sql)
+        self.assertEqual(params[1:3], (7, 20 - ANCHOR_BEHIND_GRACE_CHAPTERS))
+        self.assertEqual(params[3], 500, "单次收束要有上限,避免首轮锁太多行")
+
+    def test_expire_noop_when_progress_within_grace(self):
+        from agents.anchor_seed_agent import expire_behind_anchors
+
+        class _DB:
+            def __init__(self):
+                self.calls = []
+
+            def execute(self, sql, params=None):
+                self.calls.append((sql, params))
+                raise AssertionError("progress <= grace 时不应执行 UPDATE")
+
+        db = _DB()
+        self.assertEqual(expire_behind_anchors(db, 7, 3), 0)
+        self.assertEqual(db.calls, [])
+
+
 if __name__ == "__main__":
     unittest.main()

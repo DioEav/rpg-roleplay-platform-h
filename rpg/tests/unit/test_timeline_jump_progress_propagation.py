@@ -18,6 +18,7 @@ def test_timeline_jump_advances_progress_and_floor():
     b = _step5()
     assert "advance_progress" in b, "跳转成功必须推进 worldline.progress_chapter(面板/锚点窗口/揭示天花板同源)"
     assert "set_user_progress_floor" in b, "显式跳转=玩家权威地板,揭示钳制须放行"
+    assert "reset_pace_accum" in b, "显式跳章整体移动时间线,旧位置节奏累计点必须清零"
     # 推进用锚点起始章,且 state 侧同步(persist 前内存一致)
     assert '_anchor["chapter_min"]' in b
     assert '"progress_chapter"' in b.replace("'", '"')

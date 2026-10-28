@@ -84,7 +84,9 @@ class M11CurrentChapterPrefersProgressWindow(unittest.TestCase):
     def test_return_shape_unchanged(self):
         self.assertIn('"script_anchors": script_anchors', TIMELINE_PY)
         self.assertIn('"save_phases": save_phases', TIMELINE_PY)
-        self.assertIn('"current_phase_index": active_phase_index', TIMELINE_PY)
+        # 值从裸 active_phase_index 改为经 _resolve_current_phase_index 兜底,
+        # 但返回字段名/形状不变(前端契约不动)。
+        self.assertIn('"current_phase_index": current_phase_index', TIMELINE_PY)
         self.assertIn('"current_chapter": current_chapter', TIMELINE_PY)
 
 

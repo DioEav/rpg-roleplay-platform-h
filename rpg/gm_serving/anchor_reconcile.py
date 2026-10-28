@@ -43,7 +43,12 @@ import os
 from collections.abc import Callable
 from typing import Any
 
-from agents.anchor_seed_agent import get_progress_window, list_pending_for_phase
+from agents.anchor_seed_agent import (
+    anchor_lookback_chapter_min,
+    expire_behind_anchors,
+    get_progress_window,
+    list_pending_for_phase,
+)
 from core.json_parse import parse_llm_json
 from core.logging import get_logger
 
@@ -315,7 +320,7 @@ drift_score(偏离度 0.0-1.0):0.0=完全按原著;0.3=核心保留但过程/场
 仅输出一个 JSON 对象,以 `{` 开头、以 `}` 结尾。不要 markdown 围栏、不要解释:
   {"reached": [{"anchor_key":"<来自列表>","drift_score":<0.0-1.0>}], "current_chapter": <章号整数 或 null>, "progress_motion": <0|1|2>}
 没有锚点到达 → reached 为 []。无法定位章节 → current_chapter 为 null。
-progress_motion(必答,本回合叙事推进度):0=原地/回忆无推进,1=正常推进一拍,2=重大跨越。发散局脱离原著也要答,与 current_chapter 无关(供进度节奏兜底 pace fallback 用)。
+progress_motion(必答,本回合叙事推进度):0=同一场景内的对话/日常/等待/环境描写/纯关系升温但无不可逆变化;1=场景/目标/冲突实质推进或关系不可逆变化;2=重大跨越。玩家明确只想聊天/不推进时给 0。发散局脱离原著也要答,与 current_chapter 无关(供进度节奏兜底 pace fallback 用)。
 """
 
 
@@ -554,6 +559,11 @@ def _apply_pace_fallback(db: Any, save_id: int, motion: int | None) -> int:
 
     只在 _do 里「本回合估章未推进进度」时调用(估章正常推进=贴原著play,不重复兜底)。
     返回新进度(未推进返 0)。
+
+    ⚠️ 持久化不变量:累计器存在 worldline.progress_pace_accum,state 快照里没有它。
+    每回合 record_context_run → ensure_game_session 会整列重写 game_sessions.worldline
+    (只叠加 _PRESERVE_SETTINGS_SQL 白名单)。该键必须留在白名单里,否则累计器每回合
+    被清零 → motion=1 永远攒不到 3 点,进度卡死(生产 save=205 的根因)。
     """
     if motion is None or motion <= 0:
         return 0
@@ -576,6 +586,8 @@ def _apply_pace_fallback(db: Any, save_id: int, motion: int | None) -> int:
         from gm_serving.settings import advance_progress
         advance_progress(db, save_id, new_progress)  # max-only,单调
     # 持久化累计器(无论是否推进,点数都要留住)。
+    # ⚠️ 该键必须同时在 knowledge/_session_repo._PRESERVE_SETTINGS_SQL 白名单里:
+    # 下一回合 _db_upsert_game_session 会整列重写 worldline,不在白名单的键会被静默抹掉。
     db.execute(
         "update game_sessions set worldline = jsonb_set(coalesce(worldline, '{}'::jsonb), "
         "'{progress_pace_accum}', to_jsonb(%s::int), true) where save_id = %s",
@@ -587,6 +599,22 @@ def _apply_pace_fallback(db: Any, save_id: int, motion: int | None) -> int:
             save_id, prev, new_progress, motion, accum,
         )
     return new_progress
+
+
+def _read_progress_chapter(db: Any, save_id: int) -> int:
+    """读当前权威进度(progress_chapter),供回看宽限收束算阈值。
+
+    失败返回 1(最保守:阈值 1-grace < 1 → 不收束),绝不让收束逻辑误伤。
+    """
+    try:
+        row = db.execute(
+            "select coalesce((worldline->>'progress_chapter')::int, 1) as pc "
+            "from game_sessions where save_id = %s",
+            (save_id,),
+        ).fetchone()
+        return max(1, int(row["pc"])) if row and row.get("pc") is not None else 1
+    except Exception:
+        return 1
 
 
 def _load_estimate_context(save_id: int) -> dict[str, Any] | None:
@@ -702,6 +730,12 @@ def _reconcile_impl(
     win = get_progress_window(save_id)
     ch_min = win.get("chapter_min")
     ch_max = win.get("chapter_max")
+    # 回看宽限:进度可能已被节奏兜底/估章推到 pending 锚点之前。把候选窗口下界
+    # 往前放宽 ANCHOR_BEHIND_GRACE_CHAPTERS,让「刚被越过、仍在宽限内」的早期锚点
+    # 还能被史官看到并补标;超过宽限的由 expire_behind_anchors 自动收束。
+    # 注意:这里放宽的只是【锚点候选】窗口,不改 get_progress_window 的 chapter_min
+    # (那个值同时喂 retrieval/steering/reveal,放宽会改变剧情检索/防剧透语义)。
+    _pending_min = anchor_lookback_chapter_min(ch_min)
     # 候选窗口放宽到 lookahead:让【快进/自插入玩家】正在跨的远章锚点也能进候选、被史官看到
     # (原 _MARK_WINDOW=4 窄窗把它们挡在门外 → 快进玩家在 ch16、候选只到 ch11 → 他正跨的锚点
     #  永远标不上、进度只能靠 pace 慢爬 = 行者无疆卡章的结构性一环)。
@@ -714,7 +748,7 @@ def _reconcile_impl(
     pending = list_pending_for_phase(
         save_id, None,
         limit=_MAX_PENDING_PER_TURN,
-        chapter_min=ch_min, chapter_max=ch_max,
+        chapter_min=_pending_min, chapter_max=ch_max,
         order_by_chapter=True,
     )
     # 窗口内 pending 的 anchor_key → 后续校验命中合法性(防越界/编造)。
@@ -873,10 +907,33 @@ def _reconcile_impl(
             estimate_advanced = _apply_estimate(conn, save_id, _ep, int(estimated_chapter))
         # 估章未推进(对不上原著章号/发散play)→ 用 progress_motion 确定性兜底推进。
         # 估章已推进=贴原著play,不再叠加兜底(避免双推进)。
-        if do_pace and not estimate_advanced:
-            _apply_pace_fallback(conn, save_id, progress_motion)
+        # 本回合已命中锚点(marked>0)同样不再叠加:锚点落库已通过 advance_progress
+        # 推进过进度,再叠 pace 会在锚点章之上多跳 1 章(累计器修好后这条路径会真正触发)。
+        if do_pace and not estimate_advanced and not marked:
+            # 存档级「自动节奏推进」开关(默认 on):off 时只停这条节奏兜底。
+            # 锚点到达 / 叙事估章 / 玩家手动跳章不经过这里,仍会正常推进。
+            from gm_serving.settings import auto_pace_advance_enabled
+            if auto_pace_advance_enabled(conn, save_id):
+                _apply_pace_fallback(conn, save_id, progress_motion)
         if do_death:
             _invalidate_dead_entity_anchors(conn, save_id, text)
+        # 回看宽限收束:进度越过早期 pending 锚点超过 ANCHOR_BEHIND_GRACE_CHAPTERS
+        # 后,把非 fatal 的自动标 superseded。否则它们既不在候选窗口、也不在面板
+        # recent_pending,手动 satisfy 还会被下界拒绝 → 永远 pending,把「世界线收束」
+        # 统计拖成永远收不干净的假象(生产 save=205 的 1.1 万 pending 会踩到)。
+        # 只在有 pending 候选时跑;单档万级 pending 的一次索引 UPDATE 可接受。
+        if pending:
+            try:
+                _expired = expire_behind_anchors(
+                    conn, save_id, _read_progress_chapter(conn, save_id),
+                )
+                if _expired:
+                    log.info(
+                        "[anchor_reconcile] 回看宽限收束 save=%s 锚点=%d",
+                        save_id, _expired,
+                    )
+            except Exception as _exp_exc:
+                log.warning("[anchor_reconcile] 回看宽限收束失败(已吞): %s", _exp_exc)
         # 可观测性(268 实锤:验收器 1300+ 回合零标记但日志全静默,不可诊断):
         # 每回合一行,标记数>0 或候选非空才打(空转不刷屏)。
         if valid_hits or pending:

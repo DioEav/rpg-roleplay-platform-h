@@ -324,12 +324,17 @@ async def apply_player_directives_phase(
                                 advance_progress as _adv_jump,
                             )
                             from gm_serving.settings import (
+                                reset_pace_accum as _pace_reset,
+                            )
+                            from gm_serving.settings import (
                                 set_user_progress_floor as _floor_jump,
                             )
                             from platform_app.db import connect as _conn_jump
                             with _conn_jump() as _db_jump:
                                 _adv_jump(_db_jump, int(_early_active_save_id), int(_anchor["chapter_min"]))
                                 _floor_jump(_db_jump, int(_early_active_save_id), int(_anchor["chapter_min"]))
+                                # 显式跳章整体移动时间线:旧位置累计的节奏点作废。
+                                _pace_reset(_db_jump, int(_early_active_save_id))
                             _wl_jump = state.data.setdefault("worldline", {})
                             try:
                                 _wl_jump["progress_chapter"] = max(

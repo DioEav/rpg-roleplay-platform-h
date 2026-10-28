@@ -22,11 +22,13 @@ from state.extractors import (
 )
 from state.json_ops import (
     StreamFenceGuard,
+    StreamToolCallGuard,
     _extract_json_state_ops,
     dedupe_json_ops,
     strip_json_state_ops,
     strip_leaked_scaffold,
     strip_meta_tool_preamble,
+    strip_tool_call_markup,
 )
 from state.labels import _risk_label, _validation_label
 from state.parsers import (
@@ -67,7 +69,9 @@ __all__ = [
     "strip_json_state_ops",
     "strip_leaked_scaffold",
     "strip_meta_tool_preamble",
+    "strip_tool_call_markup",
     "StreamFenceGuard",
+    "StreamToolCallGuard",
     "dedupe_json_ops",
     "_extract_json_state_ops",
     "_clean_item",

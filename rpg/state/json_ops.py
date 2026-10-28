@@ -340,6 +340,42 @@ def strip_leaked_scaffold(text: str) -> str:
     return result if result.strip() else text
 
 
+# === 文本形态工具调用标记 ===
+# 主聊天有工具循环会消费 <<TOOL_CALL>>…<<END_TOOL_CALL>>；开场/无工具路径没有循环，
+# 弱模型照着 system prompt 的"每轮先查锚点/历史"发 marker 时，整段协议会原样漏给玩家
+# （线上 mimo-v2.6-flash 实测：开场只剩"我先查看待发生锚点…"+原始 JSON）。这些 marker
+# 是后台协议，玩家永远不该看到；完整块整段剥，未闭合的从 marker 起剥到末尾。
+_TOOL_CALL_BLOCK_RE = re.compile(r"<<TOOL_CALL>>.*?(?:<<END_TOOL_CALL>>|\Z)", re.S)
+# 单行形态（流式 guard 判断首段是不是"我先查看…"的幕后旁白）
+_TOOL_CALL_META_LINE_RE = re.compile(
+    r"^[（(]?[ \t]*(?:我先|让我先|我需要先|我得先|要先|先要|先)\s*"
+    r"(?:查看|看看|查询|检查|确认|读取|记录|整理|核对|推进|扫描|浏览|回顾|了解|获取|拉取|调取)"
+    r"[^\n]{0,120}[。.!！]?[ \t]*[）)]?\s*$"
+)
+# 紧贴 marker 前的中文"幕后旁白"（"我先查看待发生锚点和存档历史…"）。只在紧邻
+# <<TOOL_CALL>> 时剥，避免误伤正文里的"我先看看你的伤势"这类角色台词。
+_TOOL_CALL_META_BEFORE_RE = re.compile(
+    r"(?:^|\n)[ \t]*[（(]?[ \t]*(?:我先|让我先|我需要先|我得先|要先|先要|先)\s*"
+    r"(?:查看|看看|查询|检查|确认|读取|记录|整理|核对|推进|扫描|浏览|回顾|了解|获取|拉取|调取)"
+    r"[^\n]{0,120}[。.!！]?[ \t]*[）)]?[ \t]*\n*(?=<<TOOL_CALL>>)",
+)
+
+
+def strip_tool_call_markup(text: str) -> str:
+    """剥掉文本形态的工具调用协议及其紧邻的中文幕后旁白。
+
+    只处理明确出现 `<<TOOL_CALL>>` / `<<END_TOOL_CALL>>` 的文本；没有 marker 的
+    正文原样返回，不会误删叙事。完整块整段剥除，未闭合的从 marker 起剥到末尾
+    （截断/模型忘写 END 的常见形态）。剥完可能为空，由调用方决定重试或兜底。
+    """
+    if not text or ("<<TOOL_CALL>>" not in text and "<<END_TOOL_CALL>>" not in text):
+        return text or ""
+    out = _TOOL_CALL_META_BEFORE_RE.sub("", text)
+    out = _TOOL_CALL_BLOCK_RE.sub("", out)
+    out = out.replace("<<END_TOOL_CALL>>", "")
+    return out.strip()
+
+
 def is_acceptance_meta(item) -> bool:
     """acceptance 验收元信息(如「acceptance 'GM确认…' 跳过: set 240 6…」)判定。
 
@@ -567,3 +603,124 @@ class StreamFenceGuard:
         if buf.startswith("```"):
             return ""
         return buf
+
+
+class StreamToolCallGuard:
+    """流式工具调用标记抑制器 —— 无工具循环路径（开场）的兜底。
+
+    `<<TOOL_CALL>>{json}<<END_TOOL_CALL>>` 是给主聊天工具循环消费的协议。开场走裸流、
+    没有循环，模型若照搬"每轮先查锚点"就会把整段 marker 逐字转发给玩家。本类在 token
+    转发层检测 START/END，块内字符不转发；半个 marker 跨 chunk 时用尾部缓冲兜住。
+    调用方仍保留完整累积（落库清洗/结构化解析读原文），本类只决定哪些字符能安全外发。
+
+    hold_meta_preamble=True 时还会扣住开头的第一段，确认它不是「我先查看待发生锚点…」
+    这类幕后旁白再放行；开场专用，避免玩家先看到一句元叙述、生成完又消失。
+    只抑制明确的协议串/幕后旁白，普通叙事不受影响。
+    """
+
+    START = "<<TOOL_CALL>>"
+    END = "<<END_TOOL_CALL>>"
+    _TAIL = max(len(START), len(END)) - 1
+
+    def __init__(self, hold_meta_preamble: bool = False) -> None:
+        self._buf = ""
+        self._suppress = False
+        self._hold = bool(hold_meta_preamble)
+        self._held = ""
+        self._hold_done = not self._hold
+
+    @classmethod
+    def _partial_marker_tail(cls, s: str) -> str:
+        """s 尾部可能是 START/END 前缀的部分（1..len-1 字符）。"""
+        best = 0
+        for marker in (cls.START, cls.END):
+            for n in range(1, len(marker)):
+                if s.endswith(marker[:n]):
+                    best = max(best, n)
+        return s[-best:] if best else ""
+
+    @staticmethod
+    def _is_meta_preamble(line: str) -> bool:
+        return bool(_TOOL_CALL_META_LINE_RE.match((line or "").strip()))
+
+    def _drain_held(self, chunk: str) -> str:
+        """扣住首段直到能判定它是否幕后旁白。返回现在可以放行的文本。"""
+        self._held += chunk
+        held = self._held
+
+        # marker 先到：marker 前的整段若是旁白就丢，否则原样放行。
+        idx = held.find(self.START)
+        if idx != -1:
+            prefix = held[:idx]
+            self._buf = held[idx:]
+            self._held = ""
+            self._hold_done = True
+            return "" if self._is_meta_preamble(prefix) else prefix
+
+        nl = held.find("\n")
+        if nl != -1:
+            first, rest = held[:nl], held[nl + 1:]
+            self._buf = rest
+            self._held = ""
+            self._hold_done = True
+            if self._is_meta_preamble(first):
+                return ""
+            return first + "\n"
+
+        # 首段迟迟不换行：别无限扣住，超过 300 字直接放行。
+        if len(held) > 300:
+            self._buf = held
+            self._held = ""
+            self._hold_done = True
+        return ""
+
+    def feed(self, chunk: str) -> str:
+        """喂入一个流式 chunk，返回当前可以安全转发的文本（可能为空）。"""
+        if not chunk:
+            return ""
+        if not self._hold_done:
+            prefix = self._drain_held(chunk)
+            if prefix:
+                self._buf = prefix + self._buf
+        else:
+            self._buf += chunk
+        out: list[str] = []
+        while True:
+            if self._suppress:
+                end = self._buf.find(self.END)
+                if end == -1:
+                    # 未闭合：抑制内容不留（调用方有完整累积），只留尾部可能的 END 前缀
+                    self._buf = self._partial_marker_tail(self._buf)
+                    break
+                self._buf = self._buf[end + len(self.END):]
+                self._suppress = False
+                continue
+            start = self._buf.find(self.START)
+            if start == -1:
+                keep = self._partial_marker_tail(self._buf)
+                emit = self._buf[: len(self._buf) - len(keep)] if keep else self._buf
+                self._buf = keep
+                if emit:
+                    out.append(emit)
+                break
+            if start > 0:
+                out.append(self._buf[:start])
+                self._buf = self._buf[start:]
+            self._suppress = True
+            self._buf = self._buf[len(self.START):]
+        return "".join(out)
+
+    def flush(self) -> str:
+        """流结束时调用：未闭合的 marker 块整体丢弃（与落地 stripper 同哲学）。"""
+        out: list[str] = []
+        if not self._hold_done:
+            held, self._held = self._held, ""
+            self._hold_done = True
+            if held and not self._is_meta_preamble(held):
+                out.append(held)
+        buf, self._buf = self._buf, ""
+        if self._suppress:
+            self._suppress = False
+            return "".join(out)
+        out.append(buf)
+        return "".join(out)

@@ -16,7 +16,8 @@ test_worldline_preserves_settings.py
 
 本测试两层:
   Layer A — 源码不变量:三处写入都不能是裸覆盖,必须带保留片段。
-  Layer B — 保留片段本身覆盖了全部用户设置键 + progress_chapter。
+  Layer B — 保留片段本身覆盖了全部用户设置键 + 进度信号键
+            (progress_chapter / user_progress_floor / progress_pace_accum)。
 """
 from __future__ import annotations
 
@@ -60,8 +61,8 @@ class WorldlineUpsertPreservesSettings(unittest.TestCase):
         )
 
     def test_preserve_fragment_covers_all_setting_keys(self):
-        """保留片段必须覆盖 SETTINGS_SCHEMA 全部键 + progress_chapter,
-        否则漏掉的设置仍会被每回合抹掉。"""
+        """保留片段必须覆盖 SETTINGS_SCHEMA 全部键 + 进度信号键,
+        否则漏掉的键仍会被每回合抹掉。"""
         # 从 settings.py 源码抽出所有 setting key
         schema_keys = set(re.findall(r'"key"\s*:\s*"([a-z_]+)"', SETTINGS_PY))
         self.assertIn("steering_strength", schema_keys, "前置校验:settings.py 应含 steering_strength")
@@ -69,11 +70,27 @@ class WorldlineUpsertPreservesSettings(unittest.TestCase):
         idx = SESSION_REPO_PY.find("_PRESERVE_SETTINGS_SQL")
         end = SESSION_REPO_PY.find(")", SESSION_REPO_PY.find("'{}'::jsonb", idx))
         fragment = SESSION_REPO_PY[idx:end]
-        for k in schema_keys | {"progress_chapter"}:
+        for k in schema_keys | {"progress_chapter", "progress_pace_accum"}:
             self.assertIn(
                 f"'{k}'", fragment,
                 f"保留片段漏了设置键 {k} — 它会在下一回合被世界树覆盖抹掉。",
             )
+
+    def test_preserve_fragment_covers_pace_accumulator(self):
+        """回归(save=205 卡章):progress_pace_accum 必须跨回合保留。
+
+        该键只在 DB 侧由 anchor_reconcile._apply_pace_fallback 维护,不在 state 快照里。
+        每回合 _db_upsert_game_session 整列重写 worldline 时若漏掉它,节奏兜底每回合
+        从 0 重新累计,永远攒不够 3 点 → 世界线卡在同一章。
+        """
+        idx = SESSION_REPO_PY.find("_PRESERVE_SETTINGS_SQL")
+        end = SESSION_REPO_PY.find(")", SESSION_REPO_PY.find("'{}'::jsonb", idx))
+        fragment = SESSION_REPO_PY[idx:end]
+        self.assertIn(
+            "'progress_pace_accum'", fragment,
+            "progress_pace_accum 必须在 _PRESERVE_SETTINGS_SQL 里,否则节奏兜底累计器"
+            "每回合被 worldline 整列重写清零,进度永远卡在同一章。",
+        )
 
 
 if __name__ == "__main__":

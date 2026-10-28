@@ -350,7 +350,7 @@
       "effort_medium": "Medium (medium)",
       "effort_high": "High (high)",
       "max_tokens": "Max Output Tokens",
-      "max_tokens_desc": "Output budget for the main GM / console (minimum 4096; sub-agents use their own fixed budgets). With thinking enabled the backend reserves extra output tokens.",
+      "max_tokens_desc": "Output budget for the main GM / console / opening (minimum 4096; sub-agents use their own fixed budgets). With thinking enabled the backend reserves extra output tokens.",
       "context_size": "Context Window",
       "context_size_desc": "Only affects the denominator of the context-usage ring; it does not truncate the actual request context. The real context is decided by the model's native window and the context engine.",
       "seed": "Random Seed",
@@ -2790,6 +2790,10 @@
         "rail": "On rails (strong convergence)",
         "guided": "Soft guidance (default · gentle)",
         "free": "Freeform (no steering injected)"
+      },
+      "auto_pace_advance": {
+        "on": "On (pace advances in off-script/daily play too)",
+        "off": "Off (pure chat won't auto-advance chapters)"
       }
     },
     "branches": {
@@ -3320,6 +3324,9 @@
       "phases_count": "{{count}} phase(s)",
       "no_footprint": "No footprint yet — play to accumulate history",
       "in_progress_pill": "In Progress",
+      "convergence_done": "Converged",
+      "convergence_current": "Converging",
+      "convergence_pending": "Not started",
       "collapse_events": "▲ Collapse",
       "expand_events": "▼ {{count}} key event(s)",
       "anchors_section": "World-line Convergence · Anchors",
@@ -3746,6 +3753,8 @@
         "keep_failed_desc": "When a turn gets no reply or generation fails, keep your message and show Retry instead of auto-reverting it",
         "steering_label": "Steering Strength",
         "steering_desc": "Rail = strong anchors; Guided = gentle default; Free = no injection",
+        "auto_pace_label": "Automatic Pace Advancement",
+        "auto_pace_desc": "On: off-script/daily dialogue still advances the chapter slowly (about 3 normal-progress turns per chapter). Off: only anchor hits, chapter estimation, or a manual jump advance it — pure chat won't auto-advance chapters.",
         "steer_rail": "Rail",
         "steer_guided": "Guided",
         "steer_free": "Free",
@@ -5215,7 +5224,7 @@
         "freq_penalty_desc": "Penalizes tokens proportional to their frequency (OpenAI style)",
         "presence_penalty_desc": "Encourages the model to introduce new topics (OpenAI style)",
         "max_tokens": "Max Output Tokens",
-        "max_tokens_desc": "Main GM / console output budget (minimum 4096; sub-agents use their own fixed budgets)",
+        "max_tokens_desc": "Main GM / console / opening output budget (minimum 4096; sub-agents use their own fixed budgets)",
         "context_size": "Context Window",
         "context_size_desc": "Only affects the usage-ring denominator; it does not truncate the actual request context",
         "seed": "Seed",

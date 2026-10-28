@@ -52,8 +52,11 @@ _STATE_TABLES: tuple[tuple[str, str], ...] = (
 # 修复:导出时单独把 worldline 打包成 "game_session_worldline" 附加块(不动通用机制);
 # 导入时按 jsonb 白名单键塞回新建的 game_sessions 行。白名单键与 _PRESERVE_SETTINGS_SQL
 # (knowledge/_session_repo.py)+ SETTINGS_SCHEMA(gm_serving/settings.py)保持同步 ——
-# 均为「玩家可改设置」命名空间,不含世界树运行态键(user_variables/last_projection 等,
-# 那些每回合由 state 快照重建,导入空白亦可,且不应从旧存档带入新 save 的运行态)。
+# 包含「玩家可改设置」与「只在 DB 侧维护的进度信号」(progress_chapter /
+# user_progress_floor / progress_pace_accum);不含世界树运行态键(user_variables/
+# last_projection 等,那些每回合由 state 快照重建,导入空白亦可,且不应从旧存档带入
+# 新 save 的运行态)。progress_pace_accum 也必须 roundtrip:否则导出再导入会丢掉
+# 半章的节奏推进点,让兜底推进比导出前更慢一拍。
 _WORLDLINE_SETTINGS_KEYS: frozenset[str] = frozenset({
     "starting_worldline",
     "foreknowledge_mode",
@@ -62,6 +65,8 @@ _WORLDLINE_SETTINGS_KEYS: frozenset[str] = frozenset({
     "spoiler_guard",
     "progress_chapter",
     "user_progress_floor",
+    "progress_pace_accum",
+    "auto_pace_advance",
 })
 
 
@@ -109,7 +114,8 @@ def export_save(user_id: int, save_id: int) -> dict[str, Any]:
         ).fetchall()
         session_ids = [int(s["id"]) for s in sessions]
         # 矩阵审计 M6:game_sessions 本身不在 _STATE_TABLES 通用机制里(见上方常量注释),
-        # 单独打包 worldline(单行,save_id 唯一)供导入侧按白名单键回填玩家设置。
+        # 单独打包 worldline(单行,save_id 唯一)供导入侧按白名单键回填跨回合保留键
+        # (玩家设置 + 进度信号)。
         session_worldline: dict[str, Any] = {}
         if sessions:
             wl = sessions[0].get("worldline")
@@ -154,8 +160,10 @@ def _clean_gm_text(text: str) -> str:
         strip_json_state_ops,
         strip_leaked_scaffold,
         strip_meta_tool_preamble,
+        strip_tool_call_markup,
     )
-    s = strip_leaked_scaffold(strip_meta_tool_preamble(strip_json_state_ops(text or "")))
+    s = strip_leaked_scaffold(strip_meta_tool_preamble(
+        strip_json_state_ops(strip_tool_call_markup(text or ""))))
     # 残留代码围栏对「当小说」是噪声(含畸形/未闭合的 ops,如 ```json\n[, —— 三件套按合法 op 模式
     # 匹配会漏掉)→ 整块去掉:先去成对 ```...```,再去单条未闭合 ``` 到本条消息结尾(逐条独立清洗)。
     s = re.sub(r"```[\s\S]*?```", "", s)
@@ -453,10 +461,11 @@ def import_save(user_id: int, payload: dict[str, Any]) -> dict[str, Any]:
             ).fetchone()
         new_session_id: int | None = int(new_session_row["id"]) if new_session_row else None
 
-        # M6:回填玩家 worldline 设置(仅信任白名单键,其余键丢弃防注入 —— payload 来自用户
-        # 上传的 JSON,worldline 是 jsonb 任意结构,不能整块塞回)。老导出包(export_version<2
-        # 时代前,或本次修复前生成的 v2 包)没有 "game_session_worldline" 键 → get 到 None/{}，
-        # 行为与修复前一致(向后兼容,不报错不 warning 刷屏)。
+        # M6:回填 worldline 的跨回合保留键(玩家设置 + 进度信号;仅信任白名单键,其余键
+        # 丢弃防注入 —— payload 来自用户上传的 JSON,worldline 是 jsonb 任意结构,不能整块
+        # 塞回)。老导出包(export_version<2 时代前,或本次修复前生成的 v2 包)没有
+        # "game_session_worldline" 键 → get 到 None/{}，行为与修复前一致
+        # (向后兼容,不报错不 warning 刷屏)。
         if new_session_id is not None:
             raw_wl = payload.get("game_session_worldline")
             if isinstance(raw_wl, dict) and raw_wl:

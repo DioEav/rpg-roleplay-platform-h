@@ -13,11 +13,14 @@
   - env RPG_ANCHOR_AUTO_RECONCILE=0 → 完全跳过
   - 已非 pending(GM 本轮自调过)→ UPDATE ... where status='pending' 返 None → 不计数
   - 单回合标记上限(_MAX_MARK_PER_TURN)
+  - 节奏兜底累计器跨回合存活(不被每回合 worldline 整列重写清零)
 """
 import os
+import re
 import unittest
 from unittest import mock
 
+from agents.anchor_seed_agent import ANCHOR_BEHIND_GRACE_CHAPTERS
 from gm_serving import anchor_reconcile as ar
 
 
@@ -42,7 +45,8 @@ class FakeDB:
     - update save_anchor_states ... returning → 命中 set 里的 key 才返 row,否则 None
     """
     def __init__(self, *, max_turn=42, pending_keys=None, src_chapter=12, occurred_max=0,
-                 progress_pc=None, script_id_val=None, chapter_rows=None, pace_accum=0):
+                 progress_pc=None, script_id_val=None, chapter_rows=None, pace_accum=0,
+                 pace_setting="on"):
         self.max_turn = max_turn
         # 仍 pending(可被本兜底 UPDATE 命中)的 anchor_key 集合
         self.pending_keys = set(pending_keys if pending_keys is not None else [])
@@ -55,7 +59,10 @@ class FakeDB:
         self.chapter_rows = chapter_rows or []
         # 叙事节奏兜底累计器(progress_pace_accum)。可变,跨调用累积。
         self.pace_accum = pace_accum
+        # 存档级「自动节奏推进」设置(auto_pace_advance),默认 on。
+        self.pace_setting = pace_setting
         self.accum_writes = []  # 每次 accum 落库的新值
+        self.expired_calls = []  # 回看宽限收束 update 的 params(desc, save_id, threshold)
         self.updates = []  # (anchor_key, new_status, drift)
         self.calls = []    # 原始 (sql, params)
 
@@ -82,6 +89,8 @@ class FakeDB:
             return _FakeResult(row={"pc": int(pc), "ac": int(self.pace_accum)})
         if "progress_chapter" in s and "game_sessions" in s:
             return _FakeResult(row={"pc": self.progress_pc})
+        if "auto_pace_advance" in s:
+            return _FakeResult(row={"v": self.pace_setting})
         if "script_id" in s and "game_saves" in s:
             return _FakeResult(row={"script_id": self.script_id_val})
         if "from chapter_facts" in s:
@@ -89,6 +98,10 @@ class FakeDB:
         if "max(source_chapter)" in s:
             return _FakeResult(row={"c": self.occurred_max})
         if s.startswith("update save_anchor_states"):
+            if "status = 'superseded'" in s and "source_chapter <" in s:
+                # 回看宽限收束(expire_behind_anchors): params=(desc, save_id, threshold)
+                self.expired_calls.append(params)
+                return _FakeResult(rows=[{"id": 1}])
             # params: (new_status, desc, occurred_turn, drift, save_id, anchor_key)
             new_status, _desc, _turn, drift, _sid, anchor_key = params
             if anchor_key in self.pending_keys:
@@ -498,6 +511,81 @@ class ReconcileTest(unittest.TestCase):
         self.assertEqual(out, 5 + ar._PACE_CAP, "限速每回合最多 +_PACE_CAP 章")
         self.assertEqual(self.adv_calls, [(5, 5 + ar._PACE_CAP)])
 
+    # ── 回归(save=205):每回合 worldline 整列重写不得清零节奏累计器 ──
+    def test_pace_accumulator_survives_per_turn_worldline_rewrite(self):
+        """生产 bug:save=205 连续多回合 motion=1,但 progress_pace_accum 每回合被
+        record_context_run 的 worldline 整列重写抹掉 → 永远攒不到 3 点 → 卡同一章。
+
+        这里用 _PRESERVE_SETTINGS_SQL 的白名单键模拟「回合开始:新 state worldline
+        覆盖旧值,仅白名单键保留」,连跑 3 个 motion=1 回合,应触发一次 +1 章。
+        """
+        from platform_app.knowledge._session_repo import _PRESERVE_SETTINGS_SQL
+        preserved = set(re.findall(r"'([a-z_]+)'", _PRESERVE_SETTINGS_SQL))
+        self.assertIn(
+            "progress_pace_accum", preserved,
+            "累计器必须在 worldline 整列重写的保留白名单里,否则每回合被清零。",
+        )
+        worldline = {"progress_chapter": 1, "progress_pace_accum": 0}
+        for _ in range(ar._PACE_FALLBACK_POINTS_PER_CHAPTER):
+            # 回合开始:record_context_run → ensure_game_session → _db_upsert_game_session
+            # 用新 state 的 worldline 整列覆盖,只把白名单键从旧行叠回来。
+            worldline = {
+                "user_variables": {},
+                **{k: v for k, v in worldline.items() if k in preserved},
+            }
+            # 回合末:史官估章失败(发散/日常),只有 motion=1 的节奏兜底。
+            db = FakeDB(
+                progress_pc=str(worldline.get("progress_chapter") or 1),
+                pace_accum=int(worldline.get("progress_pace_accum") or 0),
+            )
+            ar._apply_pace_fallback(db, 1, 1)
+            worldline["progress_pace_accum"] = db.pace_accum
+        self.assertEqual(
+            self.adv_calls, [(1, 2)],
+            "3 个 motion=1 回合后应推进 1 章;累计器被清零则不会推进。",
+        )
+
+    # ── 回看宽限收束:有 pending 候选时按 progress-grace 阈值跑一次 ──
+    def test_reconcile_expires_behind_anchors_beyond_grace(self):
+        db = FakeDB(pending_keys=set(), occurred_max=0, progress_pc="20", pace_accum=0)
+        judge = _judge_dict_motion(reached=[], estimated=None, motion=1)
+        self._run(pending=_pending("chapter:18:event:0"), judge=judge, db=db)
+        self.assertTrue(db.expired_calls, "有 pending 候选时应跑回看宽限收束")
+        _desc, _sid, threshold, _limit = db.expired_calls[-1]
+        self.assertEqual(threshold, 20 - ANCHOR_BEHIND_GRACE_CHAPTERS)
+
+    # ── 命中锚点的当回合不再叠加节奏兜底(防双推进)──
+    def test_reconcile_pace_fallback_skipped_when_anchor_marked(self):
+        PTS = ar._PACE_FALLBACK_POINTS_PER_CHAPTER
+        db = FakeDB(pending_keys={"chapter:12:event:0"}, src_chapter=12,
+                    occurred_max=0, progress_pc="1", pace_accum=PTS - 1)
+        judge = _judge_dict_motion(
+            reached=[{"anchor_key": "chapter:12:event:0", "drift_score": 0.0}],
+            estimated=None, motion=1)
+        n = self._run(pending=_pending("chapter:12:event:0"), judge=judge, db=db)
+        self.assertEqual(n, 1, "本回合命中 1 个锚点")
+        self.assertEqual(self.adv_calls, [(1, 12)], "只走锚点推进,不叠加 pace")
+        self.assertEqual(db.accum_writes, [], "命中锚点当回合不应写节奏累计器")
+
+    # ── 存档级开关:off 时只停节奏兜底,不碰锚点/估章 ──
+    def test_pace_fallback_skipped_when_save_setting_off(self):
+        PTS = ar._PACE_FALLBACK_POINTS_PER_CHAPTER
+        db = FakeDB(pending_keys=set(), occurred_max=0, progress_pc="1",
+                    pace_accum=PTS - 1, pace_setting="off")
+        judge = _judge_dict_motion(reached=[], estimated=None, motion=1)
+        self._run(pending=_pending("chapter:9:event:0"), judge=judge, db=db)
+        self.assertEqual(self.adv_calls, [], "存档开关 off → 不跑节奏兜底")
+        self.assertEqual(db.accum_writes, [], "off 时累计器不应被写")
+
+    def test_auto_pace_advance_enabled_reads_values(self):
+        from gm_serving.settings import auto_pace_advance_enabled
+        cases = [(None, True), ("on", True), ("off", False),
+                 ("0", False), ("false", False), ("", True)]
+        for raw, expected in cases:
+            with self.subTest(raw=raw):
+                self.assertEqual(
+                    auto_pace_advance_enabled(FakeDB(pace_setting=raw), 1), expected)
+
     # ── 集成:估章给 None(对不上原著)但 motion≥1 → 靠兜底推进 ──
     def test_reconcile_pace_fallback_advances_when_estimate_null(self):
         # 估章 None(发散对不上),motion=1,accum 预置到差 1 点即满 → 本回合推进
@@ -534,7 +622,7 @@ class ReconcileTest(unittest.TestCase):
             db = FakeDB(pending_keys=set(), occurred_max=0, progress_pc="1",
                         pace_accum=ar._PACE_FALLBACK_POINTS_PER_CHAPTER - 1)
             judge = _judge_dict_motion(reached=[], estimated=None, motion=2)
-            n = self._run(pending=_pending("chapter:9:event:0"), judge=judge, db=db)
+            self._run(pending=_pending("chapter:9:event:0"), judge=judge, db=db)
             self.assertEqual(self.adv_calls, [], "kill switch 关 → 不兜底推进")
         finally:
             os.environ.pop("RPG_PACE_FALLBACK", None)

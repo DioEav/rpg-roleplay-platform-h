@@ -601,7 +601,12 @@ def _exec_advance_story_progress(state, args) -> str:
         return "advance_story_progress 失败: 无 active save(存档未就绪)"
     clamp_note = ""
     try:
-        from gm_serving.settings import advance_progress, read_settings, set_user_progress_floor
+        from gm_serving.settings import (
+            advance_progress,
+            read_settings,
+            reset_pace_accum,
+            set_user_progress_floor,
+        )
         from platform_app.db import connect
         with connect() as db:
             # 手滑护栏:advance_progress 是 max-only 单调,目标超剧本实际章数
@@ -622,6 +627,9 @@ def _exec_advance_story_progress(state, args) -> str:
             # 玩家显式跳章=确定性地板,揭示钳制(clamp_reveal_progress)对它放行,
             # 逃生阀语义保留(d50eb926a)。
             set_user_progress_floor(db, int(sid), to_ch)
+            # 显式跳章把时间线整体移动了,旧位置累计的节奏推进点不再属于新位置;
+            # 不清零会让跳章后的下一章早 1-2 回合到达。
+            reset_pace_accum(db, int(sid))
             after = (read_settings(db, int(sid)) or {}).get("progress_chapter")
     except Exception as exc:
         return f"advance_story_progress 失败: {type(exc).__name__}: {exc}"

@@ -7,7 +7,7 @@ import { useTranslation } from 'react-i18next';
 import i18n from '../../i18n';
 import { Icon } from '../icons.jsx';
 import { lsGet } from '../../lib/storage.js';
-import { anchorStatuses } from '../../lib/timeline-status.js';
+import { anchorStatuses, convergenceLabelKey } from '../../lib/timeline-status.js';
 // /set 强制设定管理(列出 + 逐条删 + 清空)复用电脑端同一组件:单一来源(worldline.remove + 配对 pinned +
 // game-state-refresh),移动端 MobileGame 复用 game-console run-loop,故 __confirm/__apiToast/刷新事件都可用。
 import { ForcedSetSection, WorldbookOverlaySection } from '../../game-panels.jsx';
@@ -270,12 +270,19 @@ function TimelinePanel({ s }) {
             : st === 'ongoing' ? t('game.timeline.in_progress_pill')
             : st === 'done' ? t('game.timeline.done_label')
             : t('game.timeline.pending_label');
+          // 收束轴(与位置轴分开):后端 save_anchor_states 聚合状态。
+          // 位置轴仍负责唯一的「当前」;这里只补充真实收束程度。
+          const convergenceKey = convergenceLabelKey(a.status);
+          const convergenceLabel = convergenceKey ? t(convergenceKey) : '';
           return (
             <div key={i} className="mp-tl">
               <span className="mp-tl-dot" />
               <div className="mp-tl-tx">
                 <strong>{mainTitle}</strong>
-                <span>{chapterRange}{chapterRange ? ' · ' : ''}{statusLabel}</span>
+                <span>
+                  {chapterRange}{chapterRange ? ' · ' : ''}{statusLabel}
+                  {convergenceLabel ? ` · ${convergenceLabel}` : ''}
+                </span>
               </div>
             </div>
           );

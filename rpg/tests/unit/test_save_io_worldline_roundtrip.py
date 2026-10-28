@@ -50,10 +50,15 @@ class ModuleParses(unittest.TestCase):
 
 class WhitelistKeysDefined(unittest.TestCase):
     """_WORLDLINE_SETTINGS_KEYS 必须存在，且与 knowledge/_session_repo.py 里
-    _PRESERVE_SETTINGS_SQL 的「玩家可改设置」命名空间键集合一致（同一份契约的
-    两处副本不能漂移，否则导出白名单和「跨回合 sticky」白名单各说各话）。"""
+    _PRESERVE_SETTINGS_SQL 的「跨回合保留键」集合一致（同一份契约的两处副本不能漂移，
+    否则导出白名单和「跨回合 sticky」白名单各说各话）。
 
-    _EXPECTED_KEYS = {
+    集合 = 玩家可改设置 + 只在 DB 侧维护的进度信号。
+    progress_pace_accum 属于后者:它不在 state 快照里,必须靠这两处白名单跨回合 /
+    跨导出包保留,否则节奏兜底累计器会被每回合的 worldline 整列重写清零。
+    """
+
+    _EXPECTED_SETTING_KEYS = {
         "starting_worldline",
         "foreknowledge_mode",
         "npc_awareness",
@@ -61,7 +66,11 @@ class WhitelistKeysDefined(unittest.TestCase):
         "spoiler_guard",
         "progress_chapter",
         "user_progress_floor",
+        "auto_pace_advance",
     }
+    # 只在 DB 侧维护的进度信号(非玩家设置):节奏兜底累计器。
+    _EXPECTED_INTERNAL_KEYS = {"progress_pace_accum"}
+    _EXPECTED_KEYS = _EXPECTED_SETTING_KEYS | _EXPECTED_INTERNAL_KEYS
 
     def test_constant_exists(self):
         self.assertIn("_WORLDLINE_SETTINGS_KEYS", SAVE_IO_SRC)
@@ -196,9 +205,21 @@ class RoundtripSemantics(unittest.TestCase):
             "user_progress_floor": 12,
             "progress_chapter": 12,
             "foreknowledge_mode": "partial",
+            "auto_pace_advance": "off",
         }
         filtered = {k: v for k, v in raw_wl.items() if k in keys}
-        self.assertEqual(filtered, raw_wl, "四个核心设置键必须全部通过白名单过滤")
+        self.assertEqual(filtered, raw_wl, "核心设置键必须全部通过白名单过滤(含 auto_pace_advance)")
+
+    def test_pace_accumulator_survives_filter(self):
+        """进度累计器是跨回合保留键的一部分:导出再导入不能丢掉半章推进点。"""
+        keys = self._whitelist()
+        raw_wl = {"progress_chapter": 51, "progress_pace_accum": 2}
+        filtered = {k: v for k, v in raw_wl.items() if k in keys}
+        self.assertEqual(
+            filtered, raw_wl,
+            "progress_pace_accum 必须在 _WORLDLINE_SETTINGS_KEYS 里,否则导出再导入"
+            "会丢掉已累计的节奏推进点,让兜底推进比导出前更慢一拍。",
+        )
 
     def test_unknown_or_forged_keys_are_dropped(self):
         keys = self._whitelist()

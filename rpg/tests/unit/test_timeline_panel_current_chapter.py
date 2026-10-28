@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import pytest
 
-from routes.timeline import _resolve_current_chapter
+from routes.timeline import _resolve_current_chapter, _resolve_current_phase_index
 
 
 class _FakeCur:
@@ -110,3 +110,29 @@ def test_falls_back_to_birthpoint_then_one(window, monkeypatch):
                         raising=False)
     assert _resolve_current_chapter(_FakeDB(birthpoint="50"), 9, 1) == 50
     assert (_resolve_current_chapter(_FakeDB(), 9, 1) or 1) == 1
+
+
+# ── 实际足迹线:active_phase_index 失效时的兜底 ──────────────────────────
+def test_current_phase_index_keeps_valid_value():
+    phases = [{"phase_index": 0, "status": "closed"},
+              {"phase_index": 1, "status": "open"}]
+    assert _resolve_current_phase_index(phases, 1) == 1
+
+
+def test_current_phase_index_falls_back_to_latest_open():
+    """生产 save 268:active_phase_index=2,但表里只有 0/1 → 不能返回 2。"""
+    phases = [{"phase_index": 0, "status": "closed"},
+              {"phase_index": 1, "status": "closed"},
+              {"phase_index": 2, "status": "open"}]
+    assert _resolve_current_phase_index(phases, 99) == 2
+
+
+def test_current_phase_index_falls_back_to_latest_when_all_closed():
+    phases = [{"phase_index": 0, "status": "closed"},
+              {"phase_index": 3, "status": "closed"}]
+    assert _resolve_current_phase_index(phases, 99) == 3
+
+
+def test_current_phase_index_empty():
+    assert _resolve_current_phase_index([], 0) == 0
+    assert _resolve_current_phase_index(None, None) == 0

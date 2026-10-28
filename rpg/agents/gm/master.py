@@ -423,13 +423,68 @@ _OPENING_PROMPT = """\
 **用户导演指令（最高优先级）**：
 - 若【本轮上下文包】中出现 `【玩家给 GM 的高优先级引导指令】` 段，
   必须把它当作玩家给 GM 的导演意图来执行 — 在剧本 / 出生点 / 时间线框架内尽可能贴合，
-  优先级高于剧本默认走向。哪怕开场只有 150-250 字，也要在场景细节 / 悬念方向上体现该指令。
+  优先级高于剧本默认走向。在场景细节 / 悬念方向上体现该指令。
 - 该指令不是玩家的台词或行动，不要在叙事里复述指令字面；用场景反应去落地。
 - 与剧本硬事实冲突时（例如指令要求"在月球"，但剧本时间线只在地球），
   采用就近合理化策略（用兼容描写靠拢指令），不要硬抗指令也不要破坏剧本。
 
-字数：150-250字
+篇幅按内容需要自然展开，不设固定字数限制；不要为了控制字数压缩场景、人物或对白。
 """
+
+# 开场生成专用 system 尾部：开场走的是裸流式生成，没有工具循环，也不该让模型做
+# "回合前检查"。但 _SYSTEM_BASE 始终带着工具协议（世界线锚点/历史工具 + <<TOOL_CALL>>
+# 格式）——弱模型会照搬"每轮先查锚点"的指令，把 marker 当正文吐出来（线上 mimo 实测：
+# 开场只剩"我先查看待发生锚点…" + 原始 JSON，没有剧情）。这里在 system 最末尾声明
+# 本次调用无工具可用；作为最后一段，优先级高于前面的通用回合规则。
+_OPENING_NO_TOOLS_SUFFIX = """
+
+# 开场生成模式（本次调用的最高优先级约束）
+本次调用只生成开场白，不是普通回合：
+- 系统**没有**向你提供任何工具，也不会执行任何工具调用。不要输出 `<<TOOL_CALL>>`、
+  `<<END_TOOL_CALL>>`、DSML 或任何其它工具标记。
+- 不要写「我先查看待发生锚点 / 存档历史 / 上下文」这类幕后旁白。开场所需的锚点、历史、
+  角色与设定已经全部在【本轮上下文包】里，直接据此写正文。
+- 只输出给玩家看的叙事正文（确有必要时可在末尾附 JSON ops fence）。不要解释你的准备工作。
+"""
+
+# 开场 system prompt 需要整段删掉的工具协议区。仅后置一句"没有工具"压不住弱模型：
+# deepseek-v4.1-flash 在 13k 的 system 里仍然照抄前面的「每轮先扫锚点/每轮开始前调
+# list_recent_history」并吐 <<TOOL_CALL>>，所以开场直接不把这些段落发给它。
+_OPENING_TOOL_SECTION_START = "# 世界线收束（task 136 核心规则"
+_OPENING_TOOL_SECTION_END = "\n# 主 GM 运行契约"
+_OPENING_TOOL_CALL_START = "# 工具调用（如有 MCP 工具可用）"
+_OPENING_TOOL_CALL_END = "\n# 叙事语言一致性（最高优先级）"
+_OPENING_PER_TURN_CONTRACT = (
+    "每轮按 [读取子代理决议 → 检查待发生锚点 → 裁定世界反应 → **推进剧情写正文** → "
+    "输出结构化写回 → **仅当出现真正分叉抉择时**用 question op 给选项] 顺序工作。"
+)
+
+
+def _strip_tool_protocol_for_opening(system: str) -> str:
+    """删掉 system prompt 里所有工具协议/回合前检查段，供开场生成使用。
+
+    开场走裸流式生成，没有工具循环；保留这些段落只会让弱模型照着「每轮先扫锚点 /
+    每轮开始前调 list_recent_history」发 <<TOOL_CALL>>，然后停住（线上实测）。
+    保留写作准则 / 风格 / 内容尺度 / JSON ops / 语言一致性；世界线收束的叙事规则和
+    工具清单整段移除，开场写什么由 _OPENING_PROMPT + 上下文包负责。
+    """
+    out = system or ""
+    # 1) 世界线收束段（含锚点/历史工具清单、KB 决策树、规则模组决策树）
+    start = out.find(_OPENING_TOOL_SECTION_START)
+    end = out.find(_OPENING_TOOL_SECTION_END)
+    if start != -1 and end != -1 and end > start:
+        out = out[:start] + out[end + 1:]
+    # 2) 工具调用格式段
+    start = out.find(_OPENING_TOOL_CALL_START)
+    end = out.find(_OPENING_TOOL_CALL_END)
+    if start != -1 and end != -1 and end > start:
+        out = out[:start] + out[end + 1:]
+    # 3) 主契约里的"每轮先检查待发生锚点"也替换掉
+    out = out.replace(
+        _OPENING_PER_TURN_CONTRACT,
+        "本次是开场生成：直接根据【本轮上下文包】写开场正文，不需要执行工具或回合前检查。",
+    )
+    return out
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -535,8 +590,13 @@ class GameMaster:
         except Exception:
             pass
 
-    def _build_system(self, style_profile: dict | None = None) -> str:
+    def _build_system(self, style_profile: dict | None = None, *,
+                      include_tool_protocol: bool = True) -> str:
         """组装通用 system prompt。
+
+        include_tool_protocol=False：开场专用。删掉锚点/历史工具清单、<<TOOL_CALL>>
+        格式和"每轮先检查待发生锚点"的契约——开场没有工具循环，发给弱模型只会诱导它
+        先发 marker 并停住。主聊天路径保持默认 True，行为不变。
 
         world_section 来源：
         - 如果绑定了《我蕾穆丽娜不爱你》兼容老存档（is_default_novel=True），注入 _WORLD（柏林宇宙）
@@ -592,6 +652,10 @@ class GameMaster:
                     # （含酒馆）。这里补上，且放在用户尺度块之后，符合“红线读在后面
                     # 才不会被用户自定义文本顶掉”的顺序契约。
                     .replace("{platform_invariant}", PLATFORM_INVARIANT))
+
+        def _finish(template_result: str) -> str:
+            return (template_result if include_tool_protocol
+                    else _strip_tool_protocol_for_opening(template_result))
         # 酒馆模式:content_pack.gm_policy.mode == "tavern_gm" → 角色扮演引擎(非 GM)。
         # 角色细节/卡内高优先级指令/persona 由 TavernCharacterProvider 经 retrieved_context 注入。
         _state = getattr(self, "_active_state", None)
@@ -606,7 +670,7 @@ class GameMaster:
                     # 酒馆 v2(决策1):还没设定角色 → 走自举模板,让 agent 先问玩家想扮演谁、
                     # 再用 set_tavern_character 搭好环境。已有角色名 → 沉浸扮演该角色(原行为)。
                     if not _char:
-                        return _fill(_SYSTEM_TAVERN_BOOTSTRAP)
+                        return _finish(_fill(_SYSTEM_TAVERN_BOOTSTRAP))
                     _sys_tav = _fill(_SYSTEM_TAVERN).replace("{char_name}", _char)
                     # 沉浸式拟人模式:确定性追加覆盖块。真相源 = self._immersive_mode ——
                     # chat_pipeline 每回合从持久列 game_saves.tavern_immersive【新鲜读 DB】后设上
@@ -619,16 +683,17 @@ class GameMaster:
                     # 表现为「关闭按钮不生效、回复还在过度角色扮演」。只认列派生的 _immersive_mode。
                     if getattr(self, "_immersive_mode", False):
                         _sys_tav += _IMMERSIVE_OVERRIDE.replace("{char_name}", _char)
-                    return _sys_tav
+                    return _finish(_sys_tav)
             except Exception:
                 pass  # 任何异常都退回通用 GM system,绝不让酒馆分支拖垮主流程
         # _SYSTEM_BASE intentionally contains literal JSON examples such as
         # {"op": "set", ...}.  Do not run the whole prompt through str.format(),
         # because those braces are prompt text, not Python placeholders.
-        return (
-            _fill(_SYSTEM_BASE).replace("{world_section}", world_section)
-        ) + _consequence_guide_block(getattr(self, "user_id", None)) \
-          + _agenda_guide_block(getattr(self, "user_id", None))
+        return _finish(
+            (_fill(_SYSTEM_BASE).replace("{world_section}", world_section))
+            + _consequence_guide_block(getattr(self, "user_id", None))
+            + _agenda_guide_block(getattr(self, "user_id", None))
+        )
 
     def _active_script_id(self) -> int | None:
         """解出当前 active script_id,用于剧本级 gm_style 解析。无 → None。
@@ -912,12 +977,12 @@ class GameMaster:
 
     # ── 生成开场白 ────────────────────────────────────────────────
     # 底层保持流水线无关:只接收"开场指令(prompt 覆盖)+ token 预算"中性参数,默认用通用
-    # _OPENING_PROMPT/600。是否贴原著、用什么开场文案、给多大预算,由【调用方流水线】(游戏/酒馆/
+    # _OPENING_PROMPT。是否贴原著、用什么开场文案、给多大预算,由【调用方流水线】(游戏/酒馆/
     # 编辑器各自)决定后传入——底层绝不认识 rail/原著/steering 这类某条流水线专属的概念。
     def generate_opening(self, state, retrieved_context: str = "", *,
                          prompt: str | None = None, max_tokens: int = 5000) -> str:
         self._active_state = state
-        system   = self._build_system()
+        system   = self._build_system(include_tool_protocol=False) + _OPENING_NO_TOOLS_SUFFIX
         self._reset_backend_usage()
         messages = [{"role": "user", "content": self._turn_message(prompt or _OPENING_PROMPT, state, retrieved_context)}]
         return self._backend.call(system, messages, max_tokens=max_tokens)
@@ -925,7 +990,7 @@ class GameMaster:
     def generate_opening_stream(self, state, retrieved_context: str = "", *, stop_event=None,
                                 prompt: str | None = None, max_tokens: int = 5000) -> Iterator[str]:
         self._active_state = state
-        system   = self._build_system()
+        system   = self._build_system(include_tool_protocol=False) + _OPENING_NO_TOOLS_SUFFIX
         self._reset_backend_usage()
         messages = [{"role": "user", "content": self._turn_message(prompt or _OPENING_PROMPT, state, retrieved_context)}]
         for chunk in self._backend.stream(system, messages, max_tokens=max_tokens):

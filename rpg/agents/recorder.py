@@ -303,9 +303,12 @@ def _build_user_prompt(
         # 独立于「对不对得上原著」,只看本回合相对上一回合有没有实质推进:
         lines.append("")
         lines.append("## 本回合叙事推进度(任务 ANCHORS-B,必答整数 progress_motion)")
-        lines.append("- 0 = 原地踏步:仍在同一场景/对话,未发生实质推进(如纯对话试探、环境描写、反复纠结)")
-        lines.append("- 1 = 正常推进:场景、目标、冲突或关系向前走了一步")
+        lines.append("- 0 = 原地踏步:同一场景内的对话、日常、感情互动、等待、环境描写、反复纠结;"
+                     "纯关系升温但没有不可逆的目标/冲突/场景变化 → 0")
+        lines.append("- 1 = 正常推进:场景切换、目标/冲突实质变化、关键信息/资源获得、"
+                     "关系发生不可逆的实质变化(结盟/背叛/决裂等)")
         lines.append("- 2 = 重大跨越:时间跳转、进入新副本/新地点、达成或失败关键目标、重大转折")
+        lines.append("玩家明确表示「只想聊天/不想推进剧情/原地等待/不要跳章」时,本回合一律 0。")
         lines.append("只按本回合 GM 正文判断,与能否对上原著章节无关。")
 
     # GM 正文
@@ -430,7 +433,7 @@ def _build_tool_schema(tasks: frozenset[str], acceptance_clauses: list[str] | No
         # provider 上永不触发(发散局进度冻死的真根因)。tool-schema 与 prompt 必须同源。
         properties["progress_motion"] = {
             "type": ["integer", "null"],
-            "description": "本回合叙事推进度(必答):0=原地/回忆无推进,1=正常推进一拍,2=重大跨越。发散局脱离原著也要答,与 current_chapter 无关。",
+            "description": "本回合叙事推进度(必答):0=同一场景内的对话/日常/等待/环境描写/纯关系升温但无不可逆变化;1=场景/目标/冲突实质推进或关系不可逆变化;2=重大跨越。玩家明确只想聊天/不推进时给 0。发散局脱离原著也要答,与 current_chapter 无关。",
         }
         required.extend(["reached", "current_chapter", "progress_motion"])
 
@@ -511,7 +514,8 @@ def _safe_current_chapter(raw: Any) -> int | None:
 
 def _safe_progress_motion(raw: Any) -> int | None:
     """本回合叙事推进度,由 LLM 判定(发散/无限流副本对不上原著章节时也能答):
-      0=原地踏步(同一场景、未实质推进) / 1=正常推进 / 2=重大跨越(时间跳转·进新副本·重大事件)。
+      0=同一场景内的对话/日常/等待/环境描写/纯关系升温但无不可逆变化;
+      1=场景/目标/冲突实质推进或关系不可逆变化;2=重大跨越(时间跳转·进新副本·重大事件)。
     专治「current_chapter 被钳在原著章号窗口里、发散play永远估不出更高章 → 进度冻死」。
     **纯 LLM 信号**:字段缺省/非法 → None(本回合无判定,不累计、不推进),绝不用「默认前进」
     这种硬编码假设凭空推进度(那就退化成被否决的回合计数器了)。"""
