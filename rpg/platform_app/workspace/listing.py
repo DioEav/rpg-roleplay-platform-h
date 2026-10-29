@@ -306,13 +306,24 @@ def saves(user_id: int) -> list[dict[str, Any]]:
 
 
 def saves_page(user_id: int, limit: int | str | None = None, cursor: str | None = None,
-               q: str | None = None, sort: str = "played", offset: int | None = None) -> dict[str, Any]:
+               q: str | None = None, sort: str = "played", offset: int | None = None,
+               kind: str | None = None) -> dict[str, Any]:
     """存档列表。分页两态:cursor(旧式,缺省,ContinuePicker 等全量消费方走默认)或
-    offset+q+sort(存档目录页页码式,total 恒为过滤后总数)。
-    q 搜索覆盖存档标题 + 所属剧本标题;sort: played(默认)/name/created。"""
+    offset+q+sort+kind(存档目录页页码式,total 恒为过滤后总数)。
+    q 搜索覆盖存档标题 + 所属剧本标题;sort: played(默认)/name/created;
+    kind: 'game' 只列剧本档(排除酒馆),None 保持旧行为(全量)。
+
+    total 与 items 必须用同一套 where —— 否则前端会按 total 算出比实际可见
+    条数更多的页。例:用户 12 条存档(8 剧本档 + 4 酒馆档),目录页传 kind=game;
+    若 total 仍数 12,前端显示 2 页,第 2 页全是酒馆档、被前端过滤后为空。"""
     ensure_default(user_id)
     page_limit = limit_value(limit)
     before_id = cursor_id(cursor)
+    # 当前档指针:DB 后端读 user_runtime 表,本地/桌面(file 后端)读 runtime JSON。
+    # 不能像旧实现那样在下面 SQL 里裸查 user_runtime —— file 后端下该表恒空,
+    # current 会一直 false(本地实测:runtime/user_1.json 指向 save 1405,
+    # 但列表里所有 current 都是 false)。
+    active_id = runtime.active_save_id(user_id)
     where = ["game_saves.user_id = %s"]
     params: list[Any] = [user_id]
     if before_id:
@@ -322,6 +333,9 @@ def saves_page(user_id: int, limit: int | str | None = None, cursor: str | None 
         where.append("(game_saves.title ILIKE %s OR s.title ILIKE %s)")
         like = f"%{q}%"
         params.extend([like, like])
+    if kind:
+        where.append("coalesce(game_saves.save_kind, 'game') = %s")
+        params.append(kind)
     where_sql = " and ".join(where)
     order_by = {
         "name": "game_saves.title ASC, game_saves.id ASC",
@@ -351,12 +365,7 @@ def saves_page(user_id: int, limit: int | str | None = None, cursor: str | None 
                      )::int
                      from branch_commits n
                      where n.save_id = game_saves.id
-                   ) as branch_count,
-                   (game_saves.id = (
-                     select ur.save_id from user_runtime ur
-                     where ur.user_id = game_saves.user_id
-                     limit 1
-                   )) as current
+                   ) as branch_count
             from game_saves
             left join scripts s on s.id = game_saves.script_id
             where {where_sql}
@@ -364,6 +373,10 @@ def saves_page(user_id: int, limit: int | str | None = None, cursor: str | None 
             """ + (" limit %s offset %s" if offset is not None else " limit %s"),
             tuple(params + [page_limit + 1] if offset is None else params + [page_limit, max(0, int(offset))]),
         ).fetchall()
+    # current 在 Python 里按运行时指针标记(DB/file 后端统一),不再在 SQL 里查
+    # user_runtime。旧 SQL 的 SELECT 子句一并删掉,避免 file 后端下恒 false。
+    for row in rows:
+        row["current"] = bool(active_id and int(row.get("id") or 0) == active_id)
     payload = page_payload(rows, page_limit)
     payload["total"] = total
     return payload

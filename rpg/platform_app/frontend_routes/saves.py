@@ -72,6 +72,13 @@ async def api_save_activate(save_id: int, request: Request):
         _ui._invalidate_user_cache(user)
     except Exception:
         pass
+    # 广播 saves 变更:平台页可能正开着存档目录(另一个标签),不通知就要手动刷新
+    # 才能看到「最后游玩」排序/当前档标记更新。与 api/saves.py 的 branch 激活路径一致。
+    try:
+        from ..api.saves import _emit_saves_changed
+        _emit_saves_changed(user["id"], "activate", (result or {}).get("active_save_id"))
+    except Exception:
+        pass
     return json_response(result)
 
 

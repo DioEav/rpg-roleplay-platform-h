@@ -18,8 +18,6 @@ import CSContainer from '@cloudscape-design/components/container';
 import CSSpaceBetween from '@cloudscape-design/components/space-between';
 import CSButton from '@cloudscape-design/components/button';
 import CSBox from '@cloudscape-design/components/box';
-import CSBadge from '@cloudscape-design/components/badge';
-import CSStatusIndicator from '@cloudscape-design/components/status-indicator';
 import CSKeyValuePairs from '@cloudscape-design/components/key-value-pairs';
 import CSTabs from '@cloudscape-design/components/tabs';
 import CSTextFilter from '@cloudscape-design/components/text-filter';
@@ -325,18 +323,27 @@ function SavesListView() {
   const flash = useFlash();
   const importInputRef = React.useRef(null);
 
+  // 请求序号:快速连点页码/改搜索时,先发的请求可能后返回。只接受最后一次
+  // 请求的结果,避免表格被过期页数据覆盖(例:点第 2 页又点第 3 页,第 2 页
+  // 的慢响应回来时不能把第 3 页的内容顶掉)。
+  const savesReqSeq = React.useRef(0);
   const reload = React.useCallback(async () => {
+    const seq = ++savesReqSeq.current;
+    const isLatest = () => seq === savesReqSeq.current;
     try {
-      // 服务端分页 + q(存档标题/剧本标题)+ sort(played/name/created)
+      // 服务端分页 + q(存档标题/剧本标题)+ sort(played/name/created)。
+      // kind=game:目录只列剧本档,过滤下沉到服务端,让 items 与 total 同口径。
+      // 之前 total 含酒馆档(例:共 12 条里 4 条酒馆)→ 前端按 12 算出 2 页,
+      // 第 2 页全是酒馆档、被下面的客户端过滤后为空,翻页像「没数据」。
       const r = await window.api.saves.list({
-        q: query || undefined, sort: sortBy,
+        q: query || undefined, sort: sortBy, kind: 'game',
         limit: savePageSize, offset: (savePage - 1) * savePageSize,
       });
+      if (!isLatest()) return;
       // 存档目录 = 剧本档专属;酒馆会话(save_kind='tavern')不进列表 —— 它们的管理
       // (历史/归档/删除)在酒馆页自带的对话栏,而本页的设置 tab(先知程度/剧情引导)
       // 与分支 tab 只被剧本 GM 管线消费,对酒馆档是「UI 存在≠生效」的死设置。
-      // 与移动端 mobile/saves/BranchesPage.jsx 同款过滤(normalizeSave 已把 save_kind
-      // 透传到顶层并默认 'game')。
+      // kind=game 已由服务端过滤;这里保留客户端兜底,兼容尚未升级的后端。
       const list = (Array.isArray(r) ? r : (r?.items || r?.saves || []))
         .map(window.__normalizeSave || ((x) => x))
         .filter((s) => (s && (s.save_kind || 'game')) !== 'tavern');
@@ -344,13 +351,18 @@ function SavesListView() {
       if (!list.length && savePage > 1) { setSavePage(savePage - 1); return; }
       setSaves(list);
       setSaveTotal(r?.total ?? list.length);
-    } catch (_) { setSaves([]); }
+    } catch (_) { if (isLatest()) setSaves([]); }
     try {
       const s = await window.api.scripts.list();
+      if (!isLatest()) return;
       const list = Array.isArray(s) ? s : (s?.items || s?.scripts || []);
       setScripts(list.map(window.__normalizeScript || ((x) => x)));
-    } catch (_) { setScripts([]); }
-  }, []);
+    } catch (_) { if (isLatest()) setScripts([]); }
+    // ⚠️ 依赖数组必须包含分页/搜索/排序状态:它们变了就要重新请求。
+    // 之前这里是 [](空数组),reload 闭包永远捕获首帧的 page=1/query=''/sort='played',
+    // 点页码只改高亮、数据不动;搜索/排序/每页条数同样失效。回归由 5fee4eb
+    // (列表改服务端分页)引入。
+  }, [query, sortBy, savePage, savePageSize, setSaves, setSaveTotal, setScripts, setSavePage]);
   useEffectPL(() => {
     reload();
     const refresh = () => reload();
@@ -468,14 +480,6 @@ function SavesListView() {
   // 搜索(q)与排序(sort)已下沉服务端,前端不再内存过滤/排序
   const pagedSaves = saves;
 
-  // 状态列:「激活」= 运行时指针(user_runtime,每用户单行,酒馆/剧本档共用)指向的档。
-  // 指针落在酒馆对话或已删档上时,本列表(纯剧本档)里没有任何 current → 全灰难读;
-  // 此时把最近游玩的剧本档标为「上次游玩」,避免整列未激活的误导。
-  const tsOf = (v) => (v ? new Date(v).getTime() || 0 : 0);
-  const anyCurrent = saves.some((s) => s.current);
-  const lastPlayedId = anyCurrent || !saves.length ? null
-    : saves.reduce((a, b) => (tsOf(b.last_played_ts) > tsOf(a.last_played_ts) ? b : a)).id;
-
   const scriptTitle = (s) => (scripts.find((x) => x.id === s.script_id)?.title || t('saves.list.unknown_script'));
   const saveSortOpts = _saveSortOpts(t);
 
@@ -529,11 +533,6 @@ function SavesListView() {
           { id: 'player', header: t('saves.list.col_player'), cell: (s) => s._raw?.player_name || '—' },
           { id: 'nodes', header: t('saves.list.col_nodes'), cell: (s) => s.branch_count },
           { id: 'played', header: t('saves.list.col_played'), cell: (s) => s.last_played_at },
-          { id: 'status', header: t('saves.list.col_status'), cell: (s) => s.current
-            ? <CSBadge color="green">{t('saves.list.status_active')}</CSBadge>
-            : s.id === lastPlayedId
-              ? <CSBadge color="grey">{t('saves.list.status_last_played')}</CSBadge>
-              : <CSStatusIndicator type="stopped">{t('saves.list.status_inactive')}</CSStatusIndicator> },
           { id: 'go', header: '', cell: (s) => <CSButton variant="inline-link" iconName="caret-right-filled" onClick={() => window.__openContinue?.(s)}>{t('saves.list.continue_btn')}</CSButton> },
         ]}
         items={pagedSaves}
@@ -577,7 +576,6 @@ function SavesListView() {
                     { label: t('saves.detail.kv_script'), value: scriptTitle(selected) },
                     { label: t('saves.detail.kv_player'), value: selected._raw?.player_name || t('saves.detail.kv_player_unset') },
                     { label: t('saves.detail.kv_turn'), value: selected._raw?.turn != null ? t('saves.detail.kv_turn_val', { n: selected._raw.turn }) : '—' },
-                    { label: t('saves.detail.kv_status'), value: selected.current ? <CSStatusIndicator type="success">{t('saves.detail.kv_status_current')}</CSStatusIndicator> : <CSStatusIndicator type="stopped">{t('saves.list.status_inactive')}</CSStatusIndicator> },
                     { label: t('saves.detail.kv_branches'), value: t('saves.detail.kv_branches_val', { n: selected.branch_count }) },
                     { label: t('saves.detail.kv_world_time'), value: selected._raw?.world_time || '—' },
                     { label: t('saves.detail.kv_played'), value: selected.last_played_at },

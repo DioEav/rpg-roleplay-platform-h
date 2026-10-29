@@ -164,28 +164,60 @@ def _db_write_runtime(payload: dict[str, Any]) -> None:
 
 
 # ── 公共 API ───────────────────────────────────────────────────────
-def read_runtime(user_id: int | None = None) -> dict[str, Any]:
-    """读取 runtime 元数据。
-    server 模式: DB; 本地: 文件。
+def _read_runtime_raw(user_id: int | None) -> dict[str, Any]:
+    """只读指针本身（DB 的 user_runtime 行 / 本地 runtime JSON），不附加 checkout 状态。
+
+    拆出来给 active_save_id() 用：存档列表每一页都只需要 save_id，而 read_runtime()
+    的 _attach_db_state() 会额外查 runtime_checkouts 并解析大 JSONB，列表页不该为
+    「当前档是谁」付这份成本。
     """
     backend = _runtime_backend()
     if backend == "db" and user_id:
-        payload = _db_read_runtime(int(user_id))
-        return _attach_db_state(payload) if payload else {}
+        return _db_read_runtime(int(user_id)) or {}
     # file backend
     path = _runtime_file(user_id)
     try:
-        payload = json.loads(path.read_text(encoding="utf-8"))
+        return json.loads(path.read_text(encoding="utf-8"))
     except Exception:
+        # 老版本只有全局 runtime.json；按 user_id 匹配后回退
         if user_id and LEGACY_RUNTIME_FILE.exists():
             try:
                 legacy = json.loads(LEGACY_RUNTIME_FILE.read_text(encoding="utf-8"))
                 if int(legacy.get("user_id") or 0) == int(user_id):
-                    return _attach_db_state(legacy)
+                    return legacy
             except Exception:
                 pass
         return {}
-    return _attach_db_state(payload)
+
+
+def read_runtime(user_id: int | None = None) -> dict[str, Any]:
+    """读取 runtime 元数据。
+    server 模式: DB; 本地: 文件。
+    """
+    payload = _read_runtime_raw(user_id)
+    return _attach_db_state(payload) if payload else {}
+
+
+def active_save_id(user_id: int | None = None) -> int:
+    """运行时指针当前指向的 save id；无指针返回 0。
+
+    存档列表/继续选择器的「当前档」判定必须走这里，而不是直接 SQL 查 user_runtime：
+    本地/桌面模式 _runtime_backend() 是 'file'，指针写在
+    platform_data/runtime/user_N.json，user_runtime 表始终为空。直接查表会让
+    current 恒 false —— 例：本地档已经切到 save 1405，列表仍认为没有任何「在玩」的
+    存档，继续选择器的「正在游玩」标签不出现，详情里的「激活」按钮在当前档上也不消失。
+    """
+    if not user_id:
+        return 0
+    try:
+        payload = _read_runtime_raw(int(user_id)) or {}
+        # 指针文件被写坏(合法 JSON 但不是对象)时按「无当前档」处理,
+        # 不能把存档列表整体打挂 —— 列表只是展示 current,不该因脏文件 500。
+        if not isinstance(payload, dict):
+            return 0
+        return int(payload.get("save_id") or 0)
+    except (TypeError, ValueError):
+        return 0
 
 
 def _attach_db_state(payload: dict[str, Any]) -> dict[str, Any]:

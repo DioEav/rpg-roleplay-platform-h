@@ -556,6 +556,11 @@ function PlatformShellCS({ page, setPage, children, assistant, assistantOpen, on
         window.__apiToast?.("切换存档失败", { kind: "danger", detail: e?.message, duration: 3000 });
         return;
       }
+      // 激活已切换运行时指针(当前档/最后游玩),通知本窗口的列表重拉。
+      // 例:平台页停在存档目录,点「继续」切到存档 B;不广播的话目录仍按 A 的时间
+      // 排序、当前档标记也停在 A,要等离开页面或手动刷新才更新。
+      // 游戏台是在新标签打开的,它无法替平台页刷新。
+      try { window.dispatchEvent(new CustomEvent('rpg-saves-updated')); } catch (_) {}
       // about:blank 无法解析相对 URL,必须用绝对地址
       const gameUrl = new URL("Game Console.html", window.location.href).href;
       if (gameWin) gameWin.location.href = gameUrl;

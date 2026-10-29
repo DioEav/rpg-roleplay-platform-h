@@ -23,14 +23,31 @@ router = APIRouter()
 _MAX_SAVE_IMPORT_BYTES = 16 * 1024 * 1024  # 16MB 上限,防内存炸
 
 
+def _emit_saves_changed(user_id: int | None, op: str, save_id: int | None = None) -> None:
+    """广播「存档列表/当前档」变更,让已打开的存档目录、继续选择器通过 SSE 自动重拉。
+
+    REST 激活路径以前不发事件(只有 LLM 工具 activate_save 在 ui_manifest 里标了
+    side_effect_topics)。影响案例:平台页停在存档目录,游戏台标签切换/继续到另一档 →
+    平台页的「最后游玩」排序和当前档标记要等手动刷新才更新。
+    """
+    try:
+        from state_event_bus import emit
+        payload = {"save_id": int(save_id)} if save_id else {}
+        emit(int(user_id or 0), "saves", op, payload)
+    except Exception:
+        pass
+
+
 @router.get("/api/saves")
 # 同步 def:saves_page 在协程里阻塞事件循环 → 启动六路请求被迫串行。线程池并行。
 def api_saves(limit: int | None = None, cursor: str | None = None, q: str | None = None,
-              sort: str = "played", offset: int | None = None, user=Depends(require_user)):
+              sort: str = "played", offset: int | None = None, kind: str | None = None,
+              user=Depends(require_user)):
     """轻量列表：只返摘要字段（turn/player_name/world_time/history_count），不含 state_snapshot。
-    分页两态:cursor(缺省,全量消费方)或 offset+q+sort(存档目录页,响应带 total)。"""
+    分页两态:cursor(缺省,全量消费方)或 offset+q+sort+kind(存档目录页,响应带 total)。
+    kind='game' 只列剧本档(排除酒馆);不传保持旧行为。"""
     return json_response({"ok": True, **workspace.saves_page(
-        user["id"], limit, cursor, q=q or None, sort=sort, offset=offset)})
+        user["id"], limit, cursor, q=q or None, sort=sort, offset=offset, kind=kind or None)})
 
 
 @router.get("/api/saves/{save_id}/export")
@@ -336,6 +353,7 @@ async def api_continue_branch(request: Request, user=Depends(require_user)):
         _ui._invalidate_user_cache(user)
     except Exception:
         pass
+    _emit_saves_changed(user["id"], "continue", (result.get("runtime") or {}).get("save_id"))
     return json_response(result)
 
 
@@ -358,6 +376,7 @@ async def api_activate_branch(request: Request, user=Depends(require_user)):
         _ui._invalidate_user_cache(user)
     except Exception:
         pass
+    _emit_saves_changed(user["id"], "activate", (result.get("runtime") or {}).get("save_id"))
     return json_response(result)
 
 
