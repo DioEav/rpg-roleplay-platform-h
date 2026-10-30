@@ -59,12 +59,14 @@ async def api_canon_update(
 
         before = dict(before_row)
         sets, args = [], []
+        changed: set[str] = set()
         # full_name 是 md-editor canon schema 的可写字段,必须支持更新:否则用户在
         # 编辑器/冲突合并里改了它,界面显示已保存、DB 实际没落库。
         for col in ("summary", "identity", "background", "parent_logical_key", "entity_subtype", "full_name"):
             if col in body:
                 sets.append(f"{col}=%s")
                 args.append(str(body[col]))
+                changed.add(col)
         if "type" in body:
             # type 是 NOT NULL 且参与知识库筛选。允许改,但不允许改成空串(否则 500)。
             _new_type = str(body.get("type") or "").strip()
@@ -72,6 +74,7 @@ async def api_canon_update(
                 return json_response({"ok": False, "error": "type 不能为空"}, status_code=400)
             sets.append("type=%s")
             args.append(_new_type)
+            changed.add("type")
         if "name" in body:
             # 名称可改(知识库人物表格的内联编辑)。注意:logical_key 不跟随改名 ——
             # 它是实体的稳定标识(防剧透门控/锚点引用/commit 历史都按它),改名只影响展示名。
@@ -79,26 +82,47 @@ async def api_canon_update(
             if _new_name:
                 sets.append("name=%s")
                 args.append(_new_name)
+                changed.add("name")
         if "importance" in body:
             sets.append("importance=%s")
             args.append(int(body["importance"]))
+            changed.add("importance")
         if "first_revealed_chapter" in body:
             sets.append("first_revealed_chapter=%s")
             args.append(int(body["first_revealed_chapter"]))
+            changed.add("first_revealed_chapter")
         if "public_knowledge" in body:
             sets.append("public_knowledge=%s")
             args.append(bool(body["public_knowledge"]))
+            changed.add("public_knowledge")
         if "aliases" in body and isinstance(body["aliases"], list):
             # aliases 为 jsonb 字符串数组
             sets.append("aliases=%s")
             args.append(Jsonb([str(x) for x in body["aliases"]]))
+            changed.add("aliases")
         if "attrs" in body and isinstance(body["attrs"], dict):
-            # attrs 为 jsonb 开放对象,原样写回
-            sets.append("attrs=%s")
-            args.append(Jsonb(body["attrs"]))
+            changed.add("attrs")
 
-        if not sets:
+        if not sets and not changed:
             return json_response({"ok": False, "error": "无可更新字段"}, status_code=400)
+
+        # 字段级手编标记(2026-10):记录本次实际改动的列。旧数据只有
+        # attrs.source='editor' 没有 manual_fields → 整行兜底，再并上本次改动。
+        from platform_app.knowledge._manual import CANON_MANUAL_FIELDS, is_legacy_editor
+        _before_attrs = before.get("attrs")
+        _old_attrs = dict(_before_attrs) if isinstance(_before_attrs, dict) else {}
+        _manual = set(_old_attrs.get("manual_fields") or [])
+        if is_legacy_editor(_old_attrs):
+            _manual |= set(CANON_MANUAL_FIELDS)
+        _manual |= changed & set(CANON_MANUAL_FIELDS)
+        _body_attrs = body["attrs"] if isinstance(body.get("attrs"), dict) else None
+        _new_attrs = {
+            **(_body_attrs if _body_attrs is not None else _old_attrs),
+            "source": "editor",
+            "manual_fields": sorted(_manual),
+        }
+        sets.append("attrs=%s")
+        args.append(Jsonb(_new_attrs))
 
         # canon 原先没有 updated_at(迁移 110 补齐)。每次真实编辑都推进版本,
         # 否则乐观锁基线永远不变,编辑器保存无法发现 AI/其他会话的写入。
@@ -178,7 +202,17 @@ async def api_canon_add(
     aliases = body.get("aliases")
     aliases_jsonb = Jsonb([str(x) for x in aliases]) if isinstance(aliases, list) else Jsonb([])
     attrs = body.get("attrs")
-    attrs_jsonb = Jsonb(attrs) if isinstance(attrs, dict) else Jsonb({})
+    # 新建 = 用户提供的字段都是手编字段（字段级标记）。
+    from platform_app.knowledge._manual import CANON_MANUAL_FIELDS
+    _manual = {
+        k for k in CANON_MANUAL_FIELDS
+        if k in body and body.get(k) is not None
+    }
+    attrs_jsonb = Jsonb({
+        **(attrs if isinstance(attrs, dict) else {}),
+        "source": "editor",
+        "manual_fields": sorted(_manual),
+    })
 
     with connect() as db:
         try:
@@ -233,6 +267,59 @@ async def api_canon_add(
         db.commit()
 
     return json_response({"ok": True, "entity": _jsonable(after), "commit_id": commit_id})
+
+
+@router.post("/api/scripts/{script_id}/canon-entities/{logical_key}/unlock-manual")
+async def api_canon_unlock_manual(
+    request: Request, script_id: int, logical_key: str, user=Depends(require_user)
+):
+    """取消 canon 实体的手编标记（字段级精确解锁 / 整行解锁）。仅 owner。"""
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    fields = body.get("fields") if isinstance(body.get("fields"), list) else None
+    _cols = (
+        "id, logical_key, name, full_name, type, entity_subtype, parent_logical_key, "
+        "summary, identity, background, aliases, attrs, "
+        "first_revealed_chapter, public_knowledge, importance, created_at, updated_at"
+    )
+    with connect() as db:
+        try:
+            _require_owner(db, script_id, user["id"])
+        except ValueError as exc:
+            return value_error_response(exc, status_code=403)
+        before = db.execute(
+            "SELECT id, attrs FROM kb_canon_entities WHERE script_id=%s AND logical_key=%s",
+            (script_id, logical_key),
+        ).fetchone()
+        if not before:
+            return json_response({"ok": False, "error": "canon entity 不存在"}, status_code=404)
+        from ...knowledge._manual import unlock_manual_fields
+        new_attrs = unlock_manual_fields(
+            before.get("attrs"), fields, default_source="extracted",
+        )
+        db.execute(
+            "UPDATE kb_canon_entities SET attrs=%s, updated_at=now() "
+            "WHERE script_id=%s AND logical_key=%s",
+            (Jsonb(new_attrs), script_id, logical_key),
+        )
+        after = db.execute(
+            f"SELECT {_cols} FROM kb_canon_entities WHERE script_id=%s AND logical_key=%s",
+            (script_id, logical_key),
+        ).fetchone()
+        try:
+            _write_commit(
+                db, script_id=script_id, user_id=user["id"],
+                kind="canon_unlock_manual",
+                message=f"取消 canon 手编标记: {logical_key}",
+                payload={"table": "kb_canon_entities", "op": "unlock_manual",
+                         "ids": {"logical_key": logical_key}, "fields": fields or []},
+            )
+        except Exception:
+            pass
+        db.commit()
+    return json_response({"ok": True, "entity": _jsonable(dict(after))})
 
 
 @router.delete("/api/scripts/{script_id}/canon-entities/{logical_key}")

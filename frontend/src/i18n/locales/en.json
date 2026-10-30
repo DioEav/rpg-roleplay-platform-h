@@ -4268,6 +4268,8 @@
       "title": "Module Matrix",
       "desc": "Current state of all derived data for this script. Each module can be rebuilt independently."
     },
+    "force_overwrite_label": "Force overwrite hand-edited fields (off by default)",
+    "force_overwrite_help": "When checked, this rebuild ignores manual protection and overwrites the fields it actually writes with LLM/derived output. Rows/fields not covered keep their manual badge. Export a script pack first as a backup.",
     "status": {
       "missing": "Not built",
       "na": "N/A",
@@ -4318,6 +4320,7 @@
       "cancel_fail": "Cancel request failed",
       "dispatched": "Rebuild job dispatched",
       "dispatch_fail": "Dispatch failed",
+      "job_busy": "A job is already running",
       "rebuild_done": "Rebuild complete",
       "rebuild_partial": "Rebuild finished, but some parts may be incomplete",
       "rebuild_failed": "Rebuild failed",
@@ -4329,15 +4332,18 @@
     },
     "chapter-facts": {
       "title": "Chapter summaries",
-      "desc": "Per-chapter LLM summary + story-time labels"
+      "desc": "Deterministic per-chapter summary / time labels (LLM refinement lives in “Chapter summary LLM refine”)"
     },
     "chapter_facts": {
       "title": "Chapter summaries",
-      "desc": "Per-chapter LLM summary + story-time labels"
+      "desc": "Deterministic per-chapter summary / time labels (LLM refinement lives in “Chapter summary LLM refine”)"
     },
     "canon": {
       "title": "Knowledge base entities",
-      "desc": "Character / faction / location / item / concept entities extracted by the LLM"
+      "desc": "Character / faction / location / item / concept entities extracted by the LLM",
+      "resolve_only_label": "Zero-LLM re-clustering (rebuild entities from chapter facts only, no LLM)",
+      "resolve_only_help_on": "Free and instant; only recombines stored chapter facts — discovers no new entities and refreshes no summaries.",
+      "resolve_only_help_off": "Default is a full LLM re-extraction (uses your API key), re-reading chapters for more complete entities and summaries."
     },
     "cards": {
       "title": "NPC cards",
@@ -4346,7 +4352,11 @@
       "chapter_max_placeholder": "Blank = whole book; set your progress chapter to skip not-yet-appeared characters",
       "chapter_max_help": "Only backfills characters revealed by that chapter, and preserves each character's first-revealed chapter (spoiler-safe).",
       "llm_enrich_label": "LLM-enriched rebuild (uses your API key; richer period-accurate personas)",
-      "llm_enrich_help": "Default is zero-LLM and free. When checked, re-extracts the period state for the range; falls back to the free version if no key."
+      "llm_enrich_help": "Default is zero-LLM and free. When checked, re-extracts the period state for the range; falls back to the free version if no key.",
+      "preserve_label": "Keep existing card content (do not overwrite hand-edited identity / aliases)",
+      "preserve_help": "Recommended: both zero-LLM and LLM-enriched rebuilds only fill empty fields, so hand-edited content is kept.",
+      "preserve_help_off": "Protection off: this rebuild will refresh existing identity/aliases from the canon summary / LLM extraction.",
+      "auto_protect_help": "Hand-edited fields (identity/aliases, etc.) are protected automatically; to refresh them, unlock fields via the “Manual” tag or check “Force overwrite hand-edited fields” below."
     },
     "worldbook": {
       "desc": "Collection of worldbuilding entries, persistent reference in GM context",
@@ -4365,6 +4375,28 @@
       "include_label": "Which types to re-embed",
       "include_help": "Rebuild = clears the selected types' vectors, then re-embeds them all; unchecked types are left as-is. Zero LLM — only consumes embedding-model quota.",
       "include_empty": "Pick at least one type."
+    },
+    "facts_refine": {
+      "title": "Chapter summary LLM refine",
+      "desc": "Upgrades deterministic fragment summaries into real LLM summaries + in-world time"
+    },
+    "worldbook_enrich": {
+      "title": "Worldbook core entry enrichment",
+      "desc": "Mechanism-level enrichment for power-system / core-setting entries (hand-edited entries skipped by default)",
+      "include_editor_label": "Also overwrite hand-edited entries (include_editor)",
+      "include_editor_help_on": "Enabled: hand-edited entries whose title matches core setting terms will also be rewritten by the LLM. Make sure the original wording is no longer needed.",
+      "include_editor_help_off": "By default, entries with metadata.source=editor are skipped; only an explicit opt-in overwrites them."
+    },
+    "world_key": {
+      "title": "Worldline split backfill",
+      "desc": "Splits multi-world books (infinite flow / isekai) by world, with optional LLM boundary confirmation",
+      "llm_label": "Add LLM narrow confirmation (uses your API key)",
+      "llm_help_on": "After the structural prior, runs one LLM check per segment boundary; new_world must quote evidence from the summary or it degrades to continuous.",
+      "llm_help_off": "Default is zero-LLM: splits worlds by volume/chapter-title structural priors, free; misjudgements are left to LLM narrow confirmation."
+    },
+    "story_phase": {
+      "title": "Story phase division",
+      "desc": "LLM divides chapters into five phases (opening/development/ending), recomputes phase digests and anchor membership"
     }
   },
   "md_editor": {
@@ -7993,6 +8025,8 @@
     "action_detail": "Details",
     "count_unit": "entries",
     "cover_chapters": "covers {{total}} chapters",
+    "last_failed": "Last job failed",
+    "last_partial": "Last job partially failed",
     "protagonist_badge_title": "Protagonist",
     "source_mixed_llm": "Optional LLM",
     "source_zero_llm": "No LLM",
@@ -8009,6 +8043,59 @@
     "unit_facts": "entries",
     "unit_world_key": "chapters",
     "unit_worldbook": "entries"
+  },
+  "manual": {
+    "badge": "Manual",
+    "tip_fields": "Hand-edited fields: {{fields}}",
+    "tip_legacy": "Hand-edited content (legacy data, whole row protected)",
+    "unlock_title": "Hand-edited fields (checked = protected)",
+    "unlock_all": "Unlock the whole row",
+    "unlock_hint": "Unchecking lets the next rebuild overwrite this field with LLM output.",
+    "legacy_hint": "Legacy data has no field list; the whole row is protected. Unlock to allow rebuild to overwrite it.",
+    "fields": {
+      "card": {
+        "full_name": "Full name",
+        "aliases": "Aliases",
+        "identity": "Identity",
+        "background": "Background",
+        "appearance": "Appearance",
+        "personality": "Personality",
+        "speech_style": "Speech style",
+        "current_status": "Current status",
+        "secrets": "Secrets",
+        "sample_dialogue": "Sample dialogue",
+        "tags": "Tags"
+      },
+      "canon": {
+        "name": "Name",
+        "aliases": "Aliases",
+        "type": "Type",
+        "summary": "Summary",
+        "attrs": "Attributes",
+        "first_revealed_chapter": "First revealed chapter",
+        "public_knowledge": "Public knowledge",
+        "importance": "Importance",
+        "metadata": "Metadata",
+        "full_name": "Full name",
+        "identity": "Identity",
+        "background": "Background",
+        "entity_subtype": "Subtype",
+        "parent_logical_key": "Parent entity"
+      },
+      "worldbook": {
+        "title": "Title",
+        "content": "Content",
+        "keys": "Trigger keys",
+        "regex_keys": "Regex keys",
+        "character_filter": "Character filter",
+        "scene_filter": "Scene filter",
+        "priority": "Priority",
+        "insertion_position": "Insertion position",
+        "tags": "Tags"
+      }
+    },
+    "unlocked": "Manual flag removed",
+    "unlock_fail": "Failed to remove manual flag"
   },
   "policy_banner": {
     "days_until_effective": "{{count}} day(s) until effective",

@@ -23,8 +23,12 @@ ARRAY_OF_TWO = (
 
 
 class _FakeCur:
-    def __init__(self, rowcount=1):
+    def __init__(self, rowcount=1, row=None):
         self.rowcount = rowcount
+        self._row = row
+
+    def fetchone(self):
+        return self._row
 
 
 class _Row:
@@ -39,12 +43,14 @@ class _Row:
 
 
 class _FakeDB:
-    """覆盖 _stage_worldbook 用到的 4 类查询 + insert(upsert)。"""
+    """覆盖 _stage_worldbook 用到的查询 + insert(upsert) + force 标记清理。"""
 
-    def __init__(self, fact_rows, insert_rowcount=1):
+    def __init__(self, fact_rows, insert_rowcount=1, metadata=None):
         self.executed: list[str] = []
+        self.calls: list[tuple[str, tuple | None]] = []
         self._fact_rows = fact_rows
         self._insert_rowcount = insert_rowcount
+        self._metadata = metadata
 
     def __enter__(self):
         return self
@@ -53,13 +59,17 @@ class _FakeDB:
         return False
 
     def execute(self, sql, params=None):
-        self.executed.append(" ".join(str(sql).split()))
+        s = " ".join(str(sql).split())
+        self.executed.append(s)
+        self.calls.append((s, params))
         if "insert into worldbook_entries" in sql:
             return _FakeCur(self._insert_rowcount)
         if "from books" in sql:
             return _Row({"id": 5})
         if "from chapter_facts" in sql:
             return _Row(self._fact_rows)
+        if "select metadata from worldbook_entries" in s:
+            return _FakeCur(0, {"metadata": self._metadata})
         if "纪元" in sql:
             return _Row(None)  # 无 era 条目 → 无纪元锁
         return _FakeCur(0)
@@ -84,8 +94,8 @@ class _DummyCtl:
         pass
 
 
-def _install(monkeypatch, raw_response, insert_rowcount=1):
-    db = _FakeDB(_FACTS, insert_rowcount=insert_rowcount)
+def _install(monkeypatch, raw_response, insert_rowcount=1, metadata=None):
+    db = _FakeDB(_FACTS, insert_rowcount=insert_rowcount, metadata=metadata)
     # stages_llm 顶部 `from ..db import connect` 已把名字绑进模块命名空间,
     # 必须patch绑定名(SL.connect),patch 源模块 platform_app.db.connect 不生效。
     monkeypatch.setattr(SL, "connect", lambda: db)
@@ -111,22 +121,40 @@ def test_single_object_response_accepted(monkeypatch):
     assert db.executed.index(deletes[0]) < next(
         i for i, s in enumerate(db.executed) if "insert into worldbook_entries" in s
     )
-    # upsert 保护 extracted + editor
+    # upsert 保护 extracted（不覆盖 canon 产物）；editor 行改为字段级 manual guard
     upsert = next(s for s in db.executed if "insert into worldbook_entries" in s)
-    assert "not in ('editor','extracted')" in upsert
+    assert "<> 'extracted'" in upsert
+    assert "metadata->'manual_fields'" in upsert
 
 
 def test_array_response_accepted(monkeypatch):
-    db = _install(monkeypatch, ARRAY_OF_TWO)
+    _install(monkeypatch, ARRAY_OF_TWO)
     assert _stage_worldbook(_DummyCtl(), 1, 1) == 2
+
+
+def test_force_clears_only_written_fields(monkeypatch):
+    """force 后只清 content/keys/priority；tags 等本次没写的标记必须保留。"""
+    db = _install(
+        monkeypatch, SINGLE_OBJECT,
+        metadata={"source": "editor", "manual_fields": ["content", "tags"]},
+    )
+    assert _stage_worldbook(_DummyCtl(), 1, 1, force_overwrite_manual=True) == 1
+    updates = [
+        params for sql, params in db.calls
+        if sql.startswith("update worldbook_entries set metadata")
+    ]
+    assert updates, "force 重建后没有执行手编标记清理"
+    new_meta = getattr(updates[-1][0], "obj", updates[-1][0])
+    assert new_meta["manual_fields"] == ["tags"]
+    assert new_meta["source"] == "editor"
 
 
 def test_title_collision_with_protected_source_skipped(monkeypatch):
     """同名命中 editor/extracted → rowcount=0 跳过,不计入 written。"""
-    db = _install(monkeypatch, ARRAY_OF_TWO, insert_rowcount=0)
+    _install(monkeypatch, ARRAY_OF_TWO, insert_rowcount=0)
     assert _stage_worldbook(_DummyCtl(), 1, 1) == 0
 
 
 def test_garbage_response_returns_zero_without_raise(monkeypatch):
-    db = _install(monkeypatch, "模型这次没有输出 JSON,抱歉。")
+    _install(monkeypatch, "模型这次没有输出 JSON,抱歉。")
     assert _stage_worldbook(_DummyCtl(), 1, 1) == 0

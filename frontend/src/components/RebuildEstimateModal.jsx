@@ -20,6 +20,13 @@ export function RebuildEstimateModal({ open, module, scriptId, estimate, loading
   const isCards = module === 'cards';
   const isEmbeddings = module === 'embeddings';
   const isWorldbook = module === 'worldbook';
+  const isWorldbookEnrich = module === 'worldbook_enrich';
+  const isCanon = module === 'canon';
+  const isWorldKey = module === 'world_key';
+  const isAnchors = module === 'anchors';
+  // 有字段级手编保护的模块：显示「强制覆盖手编字段」开关（worldbook_enrich 用它自己的
+  // include_editor 开关，不重复显示）。
+  const showForce = ['cards', 'canon', 'worldbook', 'anchors'].includes(module);
 
   // 进度感知角色卡:cards 重建的「重建到第 N 章」+「LLM 丰富」本地状态。
   // 改动 → debounce 后回调 onOptionsChange(带 chapter_max / mode)重估。
@@ -27,6 +34,14 @@ export function RebuildEstimateModal({ open, module, scriptId, estimate, loading
   const [llmEnrich, setLlmEnrich] = React.useState(false);
   // 世界书:默认 canon 聚合(零 LLM);勾选后走单次 LLM 抽取(source='llm')。
   const [wbLlm, setWbLlm] = React.useState(false);
+  // 世界书条目充实:默认跳过高编条目;勾选后连手编一起覆盖(include_editor)。
+  const [wbEnrichEditor, setWbEnrichEditor] = React.useState(false);
+  // 知识库人物:默认全量 LLM 重抽;勾选后只从 chapter_facts 零 LLM 重聚类。
+  const [canonResolveOnly, setCanonResolveOnly] = React.useState(false);
+  // 世界观切分:默认结构先验(零 LLM);勾选后追加 LLM 窄确认(use_llm)。
+  const [wkLlm, setWkLlm] = React.useState(false);
+  // 强制覆盖手编字段（默认关闭）：cards/canon/worldbook/anchors 共用。
+  const [forceOverwrite, setForceOverwrite] = React.useState(false);
   // 按类型重嵌:embeddings 的 include 勾选本地态。默认全选 = 后端不传 include 时的行为,
   // 所以打开弹窗时不需要额外重估一次。
   const [embedKinds, setEmbedKinds] = React.useState(EMBED_KINDS);
@@ -43,6 +58,18 @@ export function RebuildEstimateModal({ open, module, scriptId, estimate, loading
     if (open && isWorldbook) {
       setWbLlm(!!(options && (options.source === 'llm' || options.mode === 'llm')));
     }
+    if (open && isWorldbookEnrich) {
+      setWbEnrichEditor(!!(options && options.include_editor));
+    }
+    if (open && isCanon) {
+      setCanonResolveOnly(!!(options && options.source === 'resolve_only'));
+    }
+    if (open && isWorldKey) {
+      setWkLlm(!!(options && options.use_llm));
+    }
+    if (open) {
+      setForceOverwrite(!!(options && options.force_overwrite_manual));
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, module]);
 
@@ -58,10 +85,14 @@ export function RebuildEstimateModal({ open, module, scriptId, estimate, loading
 
   const emitOptions = React.useCallback((nextCh, nextLlm) => {
     if (!onOptionsChange) return;
-    const opts = {};
     const n = parseInt(nextCh, 10);
-    if (Number.isFinite(n) && n > 0) opts.chapter_max = n;
-    if (nextLlm) opts.mode = 'llm';
+    // 显式写 null/''：hook 侧是"合并"语义，缺键会保留上一次的值，清空操作必须覆盖成空。
+    const opts = {
+      chapter_max: (Number.isFinite(n) && n > 0) ? n : null,
+      mode: nextLlm ? 'llm' : '',
+    };
+    // 手编保护已改为后端 automatic(manual_fields 字段级)：不再由弹窗传
+    // preserve_existing。整批刷新用下方的 force_overwrite_manual。
     onOptionsChange(opts);
   }, [onOptionsChange]);
 
@@ -82,7 +113,32 @@ export function RebuildEstimateModal({ open, module, scriptId, estimate, loading
   // 两者都立即重估(needs_llm / token 成本随 source 变化)。
   const onWbLlmToggle = (checked) => {
     setWbLlm(checked);
-    if (onOptionsChange) onOptionsChange(checked ? { source: 'llm' } : {});
+    // 显式空串：hook 侧是合并语义，{} 会保留上一次的 source。
+    if (onOptionsChange) onOptionsChange({ source: checked ? 'llm' : '' });
+  };
+
+  // 世界书条目充实:默认跳过高编(editor)条目;勾选后连手编一起覆盖。
+  const onWbEnrichEditorToggle = (checked) => {
+    setWbEnrichEditor(checked);
+    if (onOptionsChange) onOptionsChange({ include_editor: !!checked });
+  };
+
+  // 知识库人物:全量 LLM ↔ 仅从章节事实零 LLM 重聚类。
+  const onCanonResolveToggle = (checked) => {
+    setCanonResolveOnly(checked);
+    if (onOptionsChange) onOptionsChange({ source: checked ? 'resolve_only' : '' });
+  };
+
+  // 世界观切分:结构先验(零 LLM) ↔ 追加 LLM 窄确认。
+  const onWkLlmToggle = (checked) => {
+    setWkLlm(checked);
+    if (onOptionsChange) onOptionsChange({ use_llm: !!checked });
+  };
+
+  // 强制覆盖手编字段（cards/canon/worldbook/anchors 共用）。
+  const onForceToggle = (checked) => {
+    setForceOverwrite(checked);
+    if (onOptionsChange) onOptionsChange({ force_overwrite_manual: !!checked });
   };
 
   if (!open) return null;
@@ -192,6 +248,51 @@ export function RebuildEstimateModal({ open, module, scriptId, estimate, loading
             <span style={{ fontSize: 11, color: 'var(--muted-2, #9a8f78)', marginLeft: 24 }}>
               {t('modules.cards.llm_enrich_help', { defaultValue: '默认零 LLM、免费。勾选后按区间重抽该时期态；无 Key 会自动降级到免费版。' })}
             </span>
+            <span style={{ fontSize: 11, color: 'var(--muted-2, #9a8f78)', marginLeft: 24 }}>
+              {t('modules.cards.auto_protect_help', { defaultValue: '手编字段（identity/别名等）会自动保护；要刷新可点编辑器里的“手编”标签逐字段解锁，或勾选下方「强制覆盖手编字段」。' })}
+            </span>
+          </div>
+        )}
+
+        {/* 知识库人物:全量 LLM 重抽 vs 零 LLM 从章节事实重聚类 */}
+        {isCanon && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginBottom: 14,
+                        padding: '12px 14px', border: '1px solid var(--border, #d8d2c4)', borderRadius: 6 }}>
+            <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, cursor: 'pointer' }}>
+              <input
+                type="checkbox"
+                checked={canonResolveOnly}
+                onChange={(e) => onCanonResolveToggle(e.target.checked)}
+                disabled={loading}
+              />
+              <span>{t('modules.canon.resolve_only_label', { defaultValue: '零 LLM 重新聚类（仅从章节事实重建实体，不调用 LLM）' })}</span>
+            </label>
+            <span style={{ fontSize: 11, color: 'var(--muted-2, #9a8f78)', marginLeft: 24 }}>
+              {canonResolveOnly
+                ? t('modules.canon.resolve_only_help_on', { defaultValue: '免费、秒完成；只重组已落库的章节事实，不会发现新实体，也不会刷新实体摘要。' })
+                : t('modules.canon.resolve_only_help_off', { defaultValue: '默认走全量 LLM 重抽（消耗 API Key），会重新阅读章节并产出更完整的实体与摘要。' })}
+            </span>
+          </div>
+        )}
+
+        {/* 世界观切分:结构先验(免费) vs 追加 LLM 窄确认 */}
+        {isWorldKey && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginBottom: 14,
+                        padding: '12px 14px', border: '1px solid var(--border, #d8d2c4)', borderRadius: 6 }}>
+            <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, cursor: 'pointer' }}>
+              <input
+                type="checkbox"
+                checked={wkLlm}
+                onChange={(e) => onWkLlmToggle(e.target.checked)}
+                disabled={loading}
+              />
+              <span>{t('modules.world_key.llm_label', { defaultValue: '追加 LLM 窄确认（消耗你的 API Key）' })}</span>
+            </label>
+            <span style={{ fontSize: 11, color: 'var(--muted-2, #9a8f78)', marginLeft: 24 }}>
+              {wkLlm
+                ? t('modules.world_key.llm_help_on', { defaultValue: '在结构先验之后，对每个段边界调用一次 LLM 复核；new_world 必须引用摘要原话举证，无证据降级为连续世界。' })
+                : t('modules.world_key.llm_help_off', { defaultValue: '默认零 LLM：按卷/章标题结构先验切分多世界，免费；误判留给 LLM 窄确认修正。' })}
+            </span>
           </div>
         )}
 
@@ -212,6 +313,46 @@ export function RebuildEstimateModal({ open, module, scriptId, estimate, loading
               {wbLlm
                 ? t('modules.worldbook.llm_help_on', { defaultValue: '单次 LLM 调用从章节事实提炼设定条目(≤20 条,擅长关系/概念类设定)。与知识库人物聚合出的条目叠加共存,同名时保留先建的一条,不会互相覆盖;你手编的条目永远优先。' })
                 : t('modules.worldbook.llm_help_off', { defaultValue: '默认从「知识库人物」聚合常驻设定条目,零 LLM、免费、秒完成;先重做「知识库人物」再点本项可同步最新实体。' })}
+            </span>
+          </div>
+        )}
+
+        {/* 世界书条目充实:默认跳过高编条目;显式勾选才覆盖 */}
+        {isWorldbookEnrich && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginBottom: 14,
+                        padding: '12px 14px', border: '1px solid var(--border, #d8d2c4)', borderRadius: 6 }}>
+            <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, cursor: 'pointer' }}>
+              <input
+                type="checkbox"
+                checked={wbEnrichEditor}
+                onChange={(e) => onWbEnrichEditorToggle(e.target.checked)}
+                disabled={loading}
+              />
+              <span>{t('modules.worldbook_enrich.include_editor_label', { defaultValue: '连手编条目一起覆盖（include_editor）' })}</span>
+            </label>
+            <span style={{ fontSize: 11, color: 'var(--muted-2, #9a8f78)', marginLeft: 24 }}>
+              {wbEnrichEditor
+                ? t('modules.worldbook_enrich.include_editor_help_on', { defaultValue: '已开启：标题命中核心设定词的手编条目也会被 LLM 重写。请确认原措辞不再需要。' })
+                : t('modules.worldbook_enrich.include_editor_help_off', { defaultValue: '默认跳过 metadata.source=editor 的手编条目；只有显式勾选才会覆盖。' })}
+            </span>
+          </div>
+        )}
+
+        {/* 强制覆盖手编字段（cards/canon/worldbook/anchors 共用） */}
+        {showForce && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 14,
+                        padding: '12px 14px', border: '1px solid var(--danger, #b4483c)', borderRadius: 6 }}>
+            <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, cursor: 'pointer' }}>
+              <input
+                type="checkbox"
+                checked={forceOverwrite}
+                onChange={(e) => onForceToggle(e.target.checked)}
+                disabled={loading}
+              />
+              <span>{t('modules.force_overwrite_label', { defaultValue: '强制覆盖手编字段（默认关闭）' })}</span>
+            </label>
+            <span style={{ fontSize: 11, color: 'var(--muted-2, #9a8f78)', marginLeft: 24 }}>
+              {t('modules.force_overwrite_help', { defaultValue: '勾选后本次重建会忽略手编保护，用 LLM/派生结果覆盖本次实际写到的字段；未覆盖的行/字段仍保留「手编」标记。建议先导出剧本 pack 备份。' })}
             </span>
           </div>
         )}

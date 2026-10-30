@@ -17,6 +17,7 @@ import MediaStudio from '../MediaStudio.jsx';
 import { ModuleStatusCard } from '../ModuleStatusCard.jsx';
 import { ModuleMatrixOverview } from '../ModuleMatrixOverview.jsx';
 import { RebuildEstimateModal } from '../RebuildEstimateModal.jsx';
+import { ManualBadge } from '../ManualBadge.jsx';
 import { scriptPlayBlockReason } from './shared.js';
 import { VersionHistoryDrawer } from './VersionHistoryDrawer.jsx';
 // 「共享模式」四档选择器(私密/公开/固定快照/跟随最新)已隐藏 —— 遗留 UI:
@@ -119,6 +120,42 @@ function ScriptDetailPanel({ script: s, savesCount, scriptSaves = [], embedStatu
       setNpc(Array.isArray(r) ? r : (r?.items || r?.cards || []));
     } catch (_) { /* 保留旧列表,不塌高度 */ }
   }, [s.id]);
+
+  // 时间线锚点静默重拉（解锁手编标记后刷新「手编」标签）。
+  const reloadTimeline = React.useCallback(async () => {
+    try {
+      const r = await window.api.scripts.timeline(s.id);
+      setTl(r?.phases || []);
+    } catch (_) { /* 保留旧时间线 */ }
+  }, [s.id]);
+
+  // 精确解锁 NPC 卡手编字段（field=null → 整卡解锁）。
+  const onUnlockNpcManual = async (c, field) => {
+    try {
+      await window.api.cards.scriptUnlockManual(s.id, c.id, field ? [field] : null);
+      await reloadNpc();
+      window.__apiToast?.(t('manual.unlocked', { defaultValue: '已取消手编标记' }),
+        { kind: 'ok', duration: 1600 });
+    } catch (e) {
+      window.__apiToast?.(t('manual.unlock_fail', { defaultValue: '取消手编标记失败' }),
+        { kind: 'danger', detail: e?.message });
+      throw e;
+    }
+  };
+
+  // 行级解锁锚点（source 改回 novel，允许时间线重建覆盖）。
+  const onUnlockAnchorManual = async (a) => {
+    try {
+      await window.api.scripts.anchorUnlockManual(s.id, a.anchor_id || a.id);
+      await reloadTimeline();
+      window.__apiToast?.(t('manual.unlocked', { defaultValue: '已取消手编标记' }),
+        { kind: 'ok', duration: 1600 });
+    } catch (e) {
+      window.__apiToast?.(t('manual.unlock_fail', { defaultValue: '取消手编标记失败' }),
+        { kind: 'danger', detail: e?.message });
+      throw e;
+    }
+  };
 
   // 手动把某 NPC 卡设为主角(AI canon importance 误判时纠正)。设完重拉列表刷新「主角」徽标。
   const [protagBusy, setProtagBusy] = useStatePL(null); // 正在设置的 card id
@@ -598,6 +635,13 @@ function ScriptDetailPanel({ script: s, savesCount, scriptSaves = [], embedStatu
                           <CSBadge color="severity-high">{t('scripts.page.badge_protagonist')}</CSBadge>
                         </CSBox>
                       )}
+                      {/* 手编提示:manual_fields（新数据）或 source='editor'（旧数据） */}
+                      <ManualBadge
+                        fields={c.metadata?.manual_fields}
+                        source={c.metadata?.source}
+                        kind="card"
+                        onUnlock={isOwner ? (field) => onUnlockNpcManual(c, field) : undefined}
+                      />
                     </CSBox>
                   </div>
                   {c.enabled === false && <CSStatusIndicator type="stopped">{t('common.disabled')}</CSStatusIndicator>}
@@ -675,6 +719,11 @@ function ScriptDetailPanel({ script: s, savesCount, scriptSaves = [], embedStatu
                               >
                                 <CSBox fontSize="body-s">
                                   <span className="mono" style={{ color: 'var(--accent)', whiteSpace: 'normal', overflowWrap: 'anywhere' }}>{label || t('scripts.editor.chapter_range', { min: a.chapter_min, max: a.chapter_max })}</span>
+                                  {/* 手编锚点：update_anchor 写 source='editor'，重建不删 */}
+                                  <ManualBadge
+                                    source={a.source}
+                                    onUnlock={isOwner ? () => onUnlockAnchorManual(a) : undefined}
+                                  />
                                 </CSBox>
                                 {summary && (
                                   <CSBox color="text-body-secondary" fontSize="body-s">
@@ -692,7 +741,7 @@ function ScriptDetailPanel({ script: s, savesCount, scriptSaves = [], embedStatu
         ) },
         { id: 'modules', label: t('scripts.kb_center', { defaultValue: '知识库中心' }), content: (
           /* 收敛处置④⑥:「模块」tab 升级为「知识库中心」——所有重建/提取操作的唯一聚合地。
-             矩阵(ModuleRebuildPanel,含 facts_refine/worldbook_enrich/world_key 三张新卡)
+             矩阵(ModuleRebuildPanel,含 facts_refine/worldbook_enrich/world_key/story_phase 四张新卡)
              + 角色卡分组的 AI 复核次按钮(原 NPC tab 迁来) + 底部「全量重新提取」区块
              (原独立 extract tab 并入,KbExtractPanel 仅剩 full scope)。 */
           <CSSpaceBetween size="l">

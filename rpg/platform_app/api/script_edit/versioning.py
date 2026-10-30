@@ -338,6 +338,11 @@ async def api_undo_edit(request: Request, script_id: int, user=Depends(require_u
                 if c in before:
                     sets.append(f"{c}=%s")
                     params.append(Jsonb(before[c] or []))
+            # metadata 也还原：manual_fields/source 是这次编辑的一部分，撤销要一并
+            # 回滚，否则内容与手编标记会不一致。
+            if "metadata" in before:
+                sets.append("metadata=%s")
+                params.append(Jsonb(before["metadata"] or {}))
             if sets:
                 sets.append("updated_at=now()")
                 params.extend([entity_id, script_id])

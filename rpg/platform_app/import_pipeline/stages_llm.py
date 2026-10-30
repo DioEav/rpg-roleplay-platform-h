@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 import json
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from psycopg.types.json import Jsonb
 
@@ -14,6 +14,9 @@ from model_aliases import credential_storage_api_id, normalize_api_id
 
 from ..db import connect
 from .errors import MissingUserCredentialError
+
+if TYPE_CHECKING:
+    from .control import JobController
 
 
 def _resolve_extractor_llm(user_id: int) -> tuple[str, str]:
@@ -96,7 +99,7 @@ def _sample_phase_rows(rows: list) -> list:
     sample = rows[::step]
 
     def _chars(seq):
-        return sum(len((r.get("summary") or "")) + _PHASE_POINT_OVERHEAD for r in seq)
+        return sum(len(r.get("summary") or "") + _PHASE_POINT_OVERHEAD for r in seq)
 
     # 字符预算超限 → [::2] 均匀抽稀保分布(下限 50 点)
     while len(sample) > _PHASE_POINTS_MIN and _chars(sample) > _PHASE_SAMPLE_CHAR_BUDGET:
@@ -496,8 +499,13 @@ def _stage_cards(ctl: JobController, user_id: int, script_id: int, entities: lis
     return generated
 
 
-def _stage_worldbook(ctl: JobController, user_id: int, script_id: int) -> int:
-    """LLM 从 chapter_facts 摘要 + facts 提取世界观条目入 worldbook_entries。"""
+def _stage_worldbook(ctl: JobController, user_id: int, script_id: int,
+                     *, force_overwrite_manual: bool = False) -> int:
+    """LLM 从 chapter_facts 摘要 + facts 提取世界观条目入 worldbook_entries。
+
+    force_overwrite_manual(2026-10):弹窗「强制覆盖手编字段」勾选时 True —
+    跳过 manual_fields 保护（extracted 的两路保护仍保留）。
+    """
     api_id, model = _resolve_extractor_llm(user_id)
 
     with connect() as db:
@@ -609,39 +617,87 @@ def _stage_worldbook(ctl: JobController, user_id: int, script_id: int) -> int:
         if not isinstance(entries, list):
             entries = []
         count = 0
+        skipped_dup = 0
+        # 字段级手编 guard：force_overwrite_manual=True 时全部退化为 true。
+        def _wb_guard(field: str) -> str:
+            if force_overwrite_manual:
+                return "true"
+            return (
+                f"coalesce(worldbook_entries.metadata->'manual_fields','[]'::jsonb) ? '{field}' "
+                "or (coalesce(worldbook_entries.metadata->>'source','') = 'editor' "
+                "and worldbook_entries.metadata->'manual_fields' is null)"
+            )
+
+        _wb_meta_expr = (
+            "coalesce(worldbook_entries.metadata,'{}'::jsonb) "
+            "|| (excluded.metadata - 'source' - 'manual_fields')"
+        )
+        written_titles: list[str] = []
         with connect() as db:
             for entry in entries[:20]:
                 if not isinstance(entry, dict) or not entry.get("name"):
                     continue
+                _title = str(entry["name"])[:120]
                 _cur = db.execute(
-                    """
+                    f"""
                     insert into worldbook_entries(
                       book_id, script_id, title, keys, content, priority, enabled, metadata
                     ) values (%s, %s, %s, %s, %s, %s, true, %s)
                     on conflict (script_id, title) do update set
-                      content   = excluded.content,
-                      keys      = excluded.keys,
-                      priority  = excluded.priority,
-                      metadata  = excluded.metadata,
+                      -- 字段级手编保护(2026-10):manual_fields 里的字段保留旧值；
+                      -- 旧 editor 数据(无 manual_fields)整行兜底。
+                      -- force_overwrite_manual=True 时 guard 恒 true，全部刷新。
+                      content = case when {_wb_guard("content")}
+                        then worldbook_entries.content else excluded.content end,
+                      priority = case when {_wb_guard("priority")}
+                        then worldbook_entries.priority else excluded.priority end,
+                      keys = case when {_wb_guard("keys")}
+                        then worldbook_entries.keys else excluded.keys end,
+                      metadata = {_wb_meta_expr},
                       updated_at = now()
-                    where coalesce(worldbook_entries.metadata->>'source','') not in ('editor','extracted')
+                    -- extracted(canon 路径产物)不覆盖,保持"两路产物叠加、先到先得";
+                    -- editor 行允许非手编字段刷新,手编字段由上面的 guard 保护。
+                    where coalesce(worldbook_entries.metadata->>'source','') <> 'extracted'
                     """,
                     (
                         book_id, script_id,
-                        str(entry["name"])[:120],
+                        _title,
                         Jsonb(entry.get("keys") or [entry["name"]]),
                         str(entry.get("content") or "")[:2000],
                         int(entry.get("priority") or 80),
                         Jsonb({"source": "llm_pipeline"}),
                     ),
                 )
-                # 只**新增**不覆盖:editor(用户手编)与 extracted(canon 路径产物)同名时
-                # rowcount=0 跳过 —— 两路产物叠加、互不顶掉,重跑 canon 也不会丢 LLM 条目。
+                # 只**新增**不覆盖:extracted(canon 路径产物)同名时 rowcount=0 跳过
+                # —— 两路产物叠加、互不顶掉。editor 行会更新非手编字段。
                 # rowcount=1 表示插入或更新成功。
-                count += (getattr(_cur, "rowcount", 0) or 0)
+                _rc = getattr(_cur, "rowcount", 0) or 0
+                count += _rc
+                if _rc:
+                    # 只有真正写到的行才在 force 后清标记；被 where 跳过的
+                    # extracted 行没被覆盖，手编标记必须继续保留。
+                    written_titles.append(_title)
+                else:
+                    # 同名被保护跳过是**设计内**行为,不是失败。上层用它区分
+                    # "LLM 一条都没返回" 与 "返回了但全部与已有条目同名"。
+                    skipped_dup += 1
+            if force_overwrite_manual and written_titles:
+                # LLM 路径只写 content/keys/priority，不写 insertion_position；
+                # 只清这三类，tags/title/regex_keys/... 的标记保留。
+                from platform_app.knowledge._manual import (
+                    WORLDBOOK_LLM_WRITTEN_FIELDS,
+                    clear_worldbook_force_marks,
+                )
+                clear_worldbook_force_marks(
+                    db, script_id, written_titles,
+                    written_fields=WORLDBOOK_LLM_WRITTEN_FIELDS,
+                    default_source="llm_pipeline",
+                )
         ctl.update(stage_progress=1)
-        # phase_backend: 标记 worldbook 阶段写了多少条 — 0 当作 partial 让上层标 done_with_errors
+        # phase_backend: 标记 worldbook 阶段写了多少条/跳过多少条
         _stage_worldbook._last_count = count
+        _stage_worldbook._last_skipped = skipped_dup
+        _stage_worldbook._last_error = ""
         return count
     except Exception as exc:
         # phase_backend: 不 silent swallow,把 LLM 失败写到 import_jobs.error + warnings
@@ -664,6 +720,9 @@ def _stage_worldbook(ctl: JobController, user_id: int, script_id: int) -> int:
         except Exception:
             pass
         _stage_worldbook._last_count = 0
+        _stage_worldbook._last_skipped = 0
+        # 保留首行错误摘要:上层 rebuild worker 用它区分"真失败"与"全部同名跳过"。
+        _stage_worldbook._last_error = f"{type(exc).__name__}: {str(exc)[:300]}"
         return 0
 
 def _stage_npc_voices(user_id: int, script_id: int, *, max_npc: int = 20, only_empty: bool = True) -> int:

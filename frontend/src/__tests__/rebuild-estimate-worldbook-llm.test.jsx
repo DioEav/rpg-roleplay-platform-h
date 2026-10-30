@@ -33,7 +33,7 @@ function renderModal(props) {
 describe('RebuildEstimateModal 世界书 LLM 选项', () => {
   it('默认未勾选,显示 canon(零 LLM)帮助文案', () => {
     renderModal();
-    const box = screen.getByRole('checkbox');
+    const box = screen.getByLabelText(/用 LLM 抽取世界观条目/);
     expect(box.checked).toBe(false);
     expect(screen.getByText(/知识库人物/)).toBeTruthy();
   });
@@ -41,21 +41,22 @@ describe('RebuildEstimateModal 世界书 LLM 选项', () => {
   it('勾选 → onOptionsChange({source:"llm"}) 并切换帮助文案', () => {
     const onOptionsChange = vi.fn();
     renderModal({ onOptionsChange });
-    fireEvent.click(screen.getByRole('checkbox'));
+    fireEvent.click(screen.getByLabelText(/用 LLM 抽取世界观条目/));
     expect(onOptionsChange).toHaveBeenCalledWith({ source: 'llm' });
   });
 
-  it('再次取消 → onOptionsChange({}) 回到 canon 路径', () => {
+  it('再次取消 → onOptionsChange({source:""}) 回到 canon 路径', () => {
     const onOptionsChange = vi.fn();
     renderModal({ onOptionsChange, options: { source: 'llm' }, estimate: OK_LLM });
-    const box = screen.getByRole('checkbox');
+    const box = screen.getByLabelText(/用 LLM 抽取世界观条目/);
     expect(box.checked).toBe(true); // 打开时按 options 回显
     fireEvent.click(box);
-    expect(onOptionsChange).toHaveBeenCalledWith({});
+    // hook 侧是合并语义，清空必须显式发空串
+    expect(onOptionsChange).toHaveBeenCalledWith({ source: '' });
   });
 
   it('打开时 options.source=llm → 勾选态回显正确', () => {
     renderModal({ options: { source: 'llm' }, estimate: OK_LLM });
-    expect(screen.getByRole('checkbox').checked).toBe(true);
+    expect(screen.getByLabelText(/用 LLM 抽取世界观条目/).checked).toBe(true);
   });
 });

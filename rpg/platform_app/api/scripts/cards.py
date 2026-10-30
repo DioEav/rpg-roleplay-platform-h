@@ -114,6 +114,25 @@ async def api_script_import_tavern_card(request: Request, script_id: int, user=D
         return value_error_response(exc)
 
 
+@router.post("/api/scripts/{script_id}/character-cards/{card_id}/unlock-manual")
+async def api_script_unlock_card_manual(request: Request, script_id: int, card_id: int, user=Depends(require_user)):
+    """取消 NPC 卡的手编标记（字段级精确解锁 / 整卡解锁）。仅 owner。"""
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    fields = body.get("fields") if isinstance(body.get("fields"), list) else None
+    try:
+        return json_response({
+            "ok": True,
+            "card": knowledge.unlock_character_card_manual(
+                user["id"], script_id, int(card_id), fields,
+            ),
+        })
+    except ValueError as exc:
+        return value_error_response(exc, status_code=403)
+
+
 @router.post("/api/scripts/{script_id}/character-cards/{card_id}/delete")
 async def api_script_delete_character_card(script_id: int, card_id: int, user=Depends(require_user)):
     try:

@@ -83,10 +83,11 @@ def synthesize_seed_from_db(db, script_id: int) -> ScriptSeed:
     return seed
 
 
-def rebuild_worldbook_from_db(db, script_id: int) -> dict:
+def rebuild_worldbook_from_db(db, script_id: int, *, preserve_manual: bool = True) -> dict:
     """零 LLM 重建 worldbook_entries。返 {worldbook: N, used_seed_era, used_factions}。
 
     依赖:kb_canon_entities 必须已存在(不然没东西可以聚合)。
+    preserve_manual=False(弹窗强制覆盖手编字段)时连 manual_fields 保护一起跳过。
     """
     from extract import resolve as R
 
@@ -113,7 +114,9 @@ def rebuild_worldbook_from_db(db, script_id: int) -> dict:
     before_count = int(before_row["c"]) if before_row else 0
     seed = synthesize_seed_from_db(db, script_id)
     try:
-        written = R.build_constant_worldbook(db, script_id, book_id, seed)
+        written = R.build_constant_worldbook(
+            db, script_id, book_id, seed, preserve_manual=preserve_manual,
+        )
     except Exception as exc:
         return {
             "ok": False, "source": "canon",
@@ -136,10 +139,14 @@ def rebuild_worldbook_from_db(db, script_id: int) -> dict:
     }
 
 
-def rebuild_canon_resolve_from_facts(db, script_id: int) -> dict:
+def rebuild_canon_resolve_from_facts(db, script_id: int, *,
+                                     include_editor: bool = False) -> dict:
     """零 LLM:从 chapter_facts.characters/locations/factions/concepts 重 cluster
     canon_entities。等价于 resolve.gather_entity_mentions + cluster_entities,
     但只从已落库的 chapter_facts 拉,绕开 LLM Pass1。
+
+    include_editor(2026-10):弹窗「强制覆盖手编字段」勾选时 True —— 连 attrs.source='editor'
+    的实体也删除重建；默认 False 保留手编实体（delete 白名单 + on conflict do nothing）。
 
     依赖:chapter_facts 必须存在且非空。返 {ok, before_count, after_count, partial_failures}。
     """
@@ -183,6 +190,9 @@ def rebuild_canon_resolve_from_facts(db, script_id: int) -> dict:
             ("location", fr.get("locations") or []),
             ("faction", fr.get("factions") or []),
             ("concept", fr.get("concepts") or []),
+            # item 是 CANON_TYPES 里的合法类型,chapter_facts 也一直在抽;
+            # 旧实现只聚四类 → 零 LLM 重建会把物品实体整类丢掉(LLM 全量路径会写)。
+            ("item", fr.get("items") or []),
         ):
             if not isinstance(items, list):
                 continue
@@ -191,18 +201,29 @@ def rebuild_canon_resolve_from_facts(db, script_id: int) -> dict:
                     _add(kind, it.get("name", ""), ch)
                 elif isinstance(it, str):
                     _add(kind, it, ch)
+    # relationships 不在此处转成实体:它是"角色↔角色"的边(chapter_facts.relationships
+    # 每行是关系描述/两端名字),不是单一实体;硬塞进 kb_canon_entities 会造出
+    # 「A信任B」这种伪实体并污染人物卡/世界书。关系图需要独立的 kb_edges 模块,
+    # 这里显式不做,避免后续误以为漏了。
     # savepoint 兜底:cluster + 写库出错时回滚到 savepoint,不污染 transaction
     db.execute("SAVEPOINT canon_rebuild")
     try:
         from psycopg.types.json import Jsonb
         # 清旧(只清同 script,不动其他 script)。editor=编辑器 agent 写的(upsert_canon_entity,
         # attrs.source='editor')重建保留不删,与 worldbook/timeline 同口径(harness 审计 P1)。
+        # force_overwrite_manual(include_editor=True)时连 editor 一起删，允许重聚类覆盖。
         # 再插用 on conflict do nothing,故幸存 editor 实体不会被同 logical_key 的重抽撞键覆盖。
-        db.execute(
-            "delete from kb_canon_entities where script_id=%s "
-            "and coalesce(attrs->>'source','') <> 'editor'",
-            (script_id,),
-        )
+        if include_editor:
+            db.execute(
+                "delete from kb_canon_entities where script_id=%s",
+                (script_id,),
+            )
+        else:
+            db.execute(
+                "delete from kb_canon_entities where script_id=%s "
+                "and coalesce(attrs->>'source','') <> 'editor'",
+                (script_id,),
+            )
         written = 0
         for typ, mentions in by_type.items():
             for name, rec in mentions.items():
@@ -261,9 +282,12 @@ def _slugify(name: str) -> str:
     return s[:60] or "unknown"
 
 
-def rebuild_timeline_from_db(db, script_id: int) -> dict:
+def rebuild_timeline_from_db(db, script_id: int, *, include_editor: bool = False) -> dict:
     """零 LLM 重建 script_timeline_anchors。从 chapter_facts.story_time_label
     + chapter_facts.summary 按章节顺序聚合连续 label 段。
+
+    include_editor(2026-10):弹窗「强制覆盖手编字段」勾选时 True —— 连 source='editor'
+    的锚点一起删除重算；默认 False 保留手编锚点。
 
     依赖:chapter_facts 必须有 story_time_label(空 label 的章节跳过)。
 
@@ -323,10 +347,18 @@ def rebuild_timeline_from_db(db, script_id: int) -> dict:
     try:
         # 先清旧 anchors — upsert 也可以但有歪历史数据时 conflict key 不一致会留垃圾。
         # 只删原著骨架(source='novel');保留编辑器续写新增的(source='editor')。
-        db.execute(
-            "delete from script_timeline_anchors where script_id = %s and coalesce(source,'novel') <> 'editor'",
-            (script_id,),
-        )
+        # include_editor=True（强制覆盖）时 editor 也删，允许重建重算。
+        if include_editor:
+            db.execute(
+                "delete from script_timeline_anchors where script_id = %s",
+                (script_id,),
+            )
+        else:
+            db.execute(
+                "delete from script_timeline_anchors where script_id = %s "
+                "and coalesce(source,'novel') <> 'editor'",
+                (script_id,),
+            )
         for seg in segments:
             sums = seg.get("summaries") or []
             if sums:

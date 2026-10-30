@@ -33,6 +33,7 @@ def run_extraction(
     seed_sample: int = 12,
     concurrency: int = 10,
     progress_cb: Callable[[str, dict], None] | None = None,
+    force_overwrite_manual: bool = False,
 ) -> dict[str, Any]:
     """端到端提取。chapters 从 script_chapters 读(exclude_from_extraction=false)。
 
@@ -165,7 +166,11 @@ def run_extraction(
 
     with connect() as db:
         # v28: 传 book_id → resolve_and_write 同步 NPC canon 进 character_cards 表
-        stats = R.resolve_and_write(db, script_id, extracts, embedder=embedder, book_id=book_id)
+        # 2026-10: force_overwrite_manual=True 时跳过手编字段保护（弹窗强制覆盖）。
+        stats = R.resolve_and_write(
+            db, script_id, extracts, embedder=embedder, book_id=book_id,
+            preserve_manual=not force_overwrite_manual,
+        )
         tl = R.build_timeline(db, script_id, extracts)
         wb = R.build_constant_worldbook(db, script_id, book_id, seed)
 

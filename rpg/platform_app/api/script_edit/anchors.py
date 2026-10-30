@@ -71,6 +71,8 @@ async def api_anchor_update(
     _ANCHOR_COLS = (
         "id, story_phase, story_time_label, sample_title, sample_summary, "
         "chapter_min, chapter_max, chapter_count, keywords, confidence, "
+        # 手编标记：编辑器新建/修改都写 source='editor'，时间线重建只删非 editor。
+        "source, "
         # 乐观锁基线随行下发;时间线 GET 也会带上同名列,保证编辑标签拿到基线。
         "updated_at"
     )
@@ -97,6 +99,7 @@ async def api_anchor_update(
                 status_code=400,
             )
 
+        sets.append("source='editor'")
         sets.append("updated_at=now()")
         args.extend([anchor_id, script_id])
         where = "id=%s AND script_id=%s"
@@ -176,11 +179,11 @@ async def api_anchor_add(
             INSERT INTO script_timeline_anchors
               (script_id, story_phase, story_time_label,
                chapter_min, chapter_max, chapter_count, sample_summary,
-               keywords, confidence, sample_title)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+               keywords, confidence, sample_title, source)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'editor')
             ON CONFLICT (script_id, story_phase, story_time_label) DO NOTHING
             RETURNING id, story_phase, story_time_label, chapter_min, chapter_max,
-                      sample_summary, keywords, confidence, sample_title
+                      sample_summary, keywords, confidence, sample_title, source
             """,
             (
                 script_id, story_phase, story_time_label,
@@ -212,6 +215,41 @@ async def api_anchor_add(
         db.commit()
 
     return json_response({"ok": True, "anchor": after, "commit_id": commit_id})
+
+
+@router.post("/api/scripts/{script_id}/anchors/{anchor_id}/unlock-manual")
+async def api_anchor_unlock_manual(
+    script_id: int, anchor_id: int, user=Depends(require_user)
+):
+    """取消锚点的手编标记（行级）：source 改回 novel，允许时间线重建删/重算。仅 owner。"""
+    with connect() as db:
+        try:
+            _require_owner(db, script_id, user["id"])
+        except ValueError as exc:
+            return value_error_response(exc, status_code=403)
+        before = db.execute(
+            "SELECT id FROM script_timeline_anchors WHERE id=%s AND script_id=%s",
+            (anchor_id, script_id),
+        ).fetchone()
+        if not before:
+            return json_response({"ok": False, "error": "anchor 不存在"}, status_code=404)
+        db.execute(
+            "UPDATE script_timeline_anchors SET source='novel', updated_at=now() "
+            "WHERE id=%s AND script_id=%s",
+            (anchor_id, script_id),
+        )
+        try:
+            _write_commit(
+                db, script_id=script_id, user_id=user["id"],
+                kind="anchor_unlock_manual",
+                message=f"取消 anchor 手编标记 #{anchor_id}",
+                payload={"table": "script_timeline_anchors", "op": "unlock_manual",
+                         "ids": {"anchor_id": anchor_id}},
+            )
+        except Exception:
+            pass
+        db.commit()
+    return json_response({"ok": True, "anchor": {"id": anchor_id, "source": "novel"}})
 
 
 @router.delete("/api/scripts/{script_id}/anchors/{anchor_id}")

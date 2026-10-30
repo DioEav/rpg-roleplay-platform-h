@@ -83,14 +83,17 @@ def test_worldbook_rebuild_delete_guards_editor():
 def test_editor_write_tools_mark_source():
     """upsert_worldbook / upsert_canon / create_anchor 三个直写工具落库时必须打 source/editor 标记。"""
     # 拆包后单文件成子包:三个断言的目标分别住在不同子模块,分别读后拼接。
+    wb = _read("tools_dsl/command_tools_script_write/worldbook.py")
     src = (
-        _read("tools_dsl/command_tools_script_write/worldbook.py")  # 创建分支 metadata Jsonb({"source":"editor"})
+        wb
         + _read("tools_dsl/command_tools_script_write/canon.py")    # canon attrs 合并 "source": "editor"
         + _read("tools_dsl/command_tools_script_write/anchors.py")  # create_anchor 写 source='editor'
     )
-    # worldbook 创建分支 metadata 标 editor
-    assert re.search(r'Jsonb\(\{\s*"source"\s*:\s*"editor"\s*\}\)', src), \
+    # worldbook 创建分支 metadata 标 editor + manual_fields（字段级手编单一真源）
+    assert re.search(r'"source"\s*:\s*"editor"', wb), \
         "upsert_worldbook_entry 创建未给 metadata 打 source=editor"
+    assert re.search(r'"manual_fields"\s*:\s*sorted\(_manual\)', wb), \
+        "upsert_worldbook_entry 创建未写字段级 manual_fields"
     # canon 创建分支 attrs 合并 editor
     assert '"source": "editor"' in src, "canon 创建未在 attrs 打 source=editor"
     # create_anchor 写 source='editor'

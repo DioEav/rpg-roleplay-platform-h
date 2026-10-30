@@ -119,13 +119,19 @@ def rebuild_facts_from_db(user_id: int, script_id: int) -> dict[str, Any]:
 
 
 def rebuild_cards_from_canon(user_id: int, script_id: int, *,
-                             chapter_max: int | None = None) -> dict[str, Any]:
+                             chapter_max: int | None = None,
+                             preserve_existing: bool = False) -> dict[str, Any]:
     """零 LLM:从 kb_canon_entities 的 character 类回填 character_cards。
     无 canon 数据时退化为 _aggregate_characters_from_facts(零 LLM 词频)。
 
     chapter_max(进度感知角色卡 Phase 1A):仅回填 first_revealed_chapter<=chapter_max
     的角色(过滤掉中后期才出场的角色,序章重建时不引入未登场角色);并透传
     first_revealed_chapter 给 _sync(别再被刷成 0 丢防剧透章)。None=全书(默认)。
+
+    preserve_existing(手编保护,2026-10):默认 False(兼容其它调用方)。True 时,若目标卡
+    已有非空的 identity / aliases,就把本次输入对应字段置空 —— 借助 _sync 既有的
+    "excluded 非空才覆盖"规则,实现"只补空、不覆盖已有卡面"。矩阵的角色卡重建
+    (零 LLM 与 LLM 丰富)都默认开启;只有用户在弹窗里显式取消"保留已有卡面"才会关闭。
     """
     from .. import knowledge
     from ..knowledge.session import _aggregate_characters_from_facts
@@ -186,12 +192,88 @@ def rebuild_cards_from_canon(user_id: int, script_id: int, *,
             except Exception as exc:
                 partial_failures.append({"stage": "aggregate", "error": str(exc)})
                 chars = {}
+        # 手编保护(字段级,2026-10):只把 manual_fields 里的人设字段置空，让 _sync
+        # 的"excluded 非空才覆盖"规则保留原值；**非手编字段仍可用 canon 新值刷新**。
+        # 旧数据只有 metadata.source='editor' 没有 manual_fields → protected_card_fields()
+        # 返回全部人设字段（整行兜底）。
+        if preserve_existing and chars:
+            try:
+                from ..knowledge._manual import protected_card_fields
+                existing_rows = db.execute(
+                    "select name, metadata from character_cards "
+                    "where script_id = %s and card_type = 'npc'",
+                    (script_id,),
+                ).fetchall()
+                existing_by_name = {r["name"]: r for r in existing_rows}
+                for nm, card in chars.items():
+                    protected = protected_card_fields(
+                        (existing_by_name.get(nm) or {}).get("metadata"))
+                    if "identity" in protected:
+                        card["identity"] = ""
+                    if "aliases" in protected:
+                        card["aliases"] = []
+            except Exception as exc:
+                # 保护逻辑失败不该阻断重建;退回旧行为(可能覆盖),并记录 partial。
+                partial_failures.append({"stage": "preserve_existing", "error": str(exc)})
         from ..knowledge._sync import _sync_character_cards
         try:
             after_count = _sync_character_cards(db, book, script, chars)
         except Exception as exc:
             partial_failures.append({"stage": "_sync_character_cards", "error": str(exc)})
             after_count = 0
+        else:
+            if not preserve_existing and chars:
+                # 强制覆盖（preserve_existing=False）后，只清本次真正写进去的字段标记。
+                # _sync 的 SQL 对空字符串/空数组走 else 分支保留旧值，所以“覆盖集合”
+                # 必须按本次传入的非空值计算；没写的 personality/tags 等继续保留手编。
+                # 标记回收失败不回滚已写入的卡片，只记 partial（下次重建仍会继续尝试）。
+                # 用 SAVEPOINT 隔离：若清理 SQL 出错，只回滚清理，不把 _sync 的写入
+                # 一起拖进 aborted transaction（PostgreSQL 一旦报错，后续 COMMIT 会变
+                # 成 ROLLBACK，表现为“任务成功但卡片没写成”）。
+                try:
+                    db.execute("SAVEPOINT card_manual_marks")
+                    from ..knowledge._manual import (
+                        CARD_MANUAL_FIELDS,
+                        clear_character_card_force_marks,
+                    )
+                    _rows = db.execute(
+                        "select name, metadata from character_cards "
+                        "where script_id = %s and card_type = 'npc'",
+                        (script_id,),
+                    ).fetchall()
+                    _meta_by_name = {r["name"]: r.get("metadata") for r in _rows}
+                    _written_card_fields = (
+                        "full_name", "aliases", "identity", "background", "appearance",
+                        "personality", "speech_style", "current_status", "secrets",
+                        "sample_dialogue",
+                    )
+                    for nm, card in chars.items():
+                        overwritten = set()
+                        for f in _written_card_fields:
+                            v = card.get(f)
+                            if isinstance(v, (list, tuple)):
+                                if v:
+                                    overwritten.add(f)
+                            elif str(v or ""):
+                                # _sync 对 full_name/background 会先 strip()，其它文本
+                                # 原样写入；这里与它保持同一归一化，避免纯空白值判断错。
+                                _s = str(v or "")
+                                if f in ("full_name", "background"):
+                                    _s = _s.strip()
+                                if _s:
+                                    overwritten.add(f)
+                        overwritten &= set(CARD_MANUAL_FIELDS)
+                        if overwritten:
+                            clear_character_card_force_marks(
+                                db, script_id, nm, _meta_by_name.get(nm), overwritten)
+                    db.execute("RELEASE SAVEPOINT card_manual_marks")
+                except Exception as exc:
+                    try:
+                        db.execute("ROLLBACK TO SAVEPOINT card_manual_marks")
+                    except Exception:
+                        pass
+                    partial_failures.append(
+                        {"stage": "clear_manual_marks", "error": str(exc)})
     return {
         "ok": True, "source": source,
         "before_count": before_count, "after_count": after_count,
@@ -204,13 +286,21 @@ def rebuild_cards_with_llm(user_id: int, script_id: int, *,
                            chapter_max: int | None = None,
                            model: str = "deepseek-v4-flash",
                            api_id: str = "deepseek",
-                           progress_cb=None) -> dict[str, Any]:
+                           progress_cb=None,
+                           preserve_existing: bool = False,
+                           force_overwrite_manual: bool = False) -> dict[str, Any]:
     """可选 LLM 丰富重建(进度感知角色卡 Phase 1A):走 run_llm_extraction(带 chapter_max)
     对 1..chapter_max 区间重抽规范层,产「该时期态」的丰富 identity/background,然后零 LLM
     路径把 canon 回填到 character_cards。BYOK,用户付费。
 
     优雅降级:LLM 抽取失败(无 key / 配额 / 网络)→ 回退零 LLM 版(rebuild_cards_from_canon),
     保证「重建」永远有产物、永不报错卡死。
+
+    preserve_existing 透传给回填步骤:默认 False(兼容其它调用方);矩阵的 LLM 丰富
+    重建默认传 True(与零 LLM 一致保护手编),只有用户显式取消才覆盖。
+    force_overwrite_manual(2026-10):弹窗「强制覆盖手编字段」勾选时 True,必须同时透传给
+    run_llm_extraction —— 否则 LLM 重抽阶段仍按默认保护 canon 手编字段,回填只能读到旧值,
+    出现「勾了强制覆盖但卡片没变」。
     """
     from ..knowledge.llm_extract import run_llm_extraction
     llm_ok = False
@@ -223,14 +313,22 @@ def rebuild_cards_with_llm(user_id: int, script_id: int, *,
             chapter_min=1, chapter_max=chapter_max,
             confirmed=True,
             progress_cb=progress_cb,
+            force_overwrite_manual=force_overwrite_manual,
         )
         llm_ok = bool(r.get("ok"))
         if not llm_ok:
             llm_error = str(r.get("error") or r.get("message") or "llm_extract failed")
+    except (InterruptedError, KeyboardInterrupt):
+        # 用户在弧边界取消:不能走"LLM 失败 → 回退零 LLM"分支 —— 那会把取消变成
+        # 一次额外的全量回填,且最终被标成 done。直接上抛给 worker 落 cancelled。
+        raise
     except Exception as exc:
         llm_error = str(exc)
     # 无论 LLM 是否成功,都跑零 LLM 回填把(新或旧)canon → character_cards。
-    out = rebuild_cards_from_canon(user_id, script_id, chapter_max=chapter_max)
+    out = rebuild_cards_from_canon(
+        user_id, script_id, chapter_max=chapter_max,
+        preserve_existing=preserve_existing,
+    )
     out["source"] = "llm_extract" if llm_ok else (out.get("source") or "canon")
     out["llm_ok"] = llm_ok
     if llm_error and not llm_ok:
@@ -239,9 +337,14 @@ def rebuild_cards_with_llm(user_id: int, script_id: int, *,
 
 
 def rebuild_worldbook_with_llm(user_id: int, script_id: int, *,
-                                source: str = "canon") -> dict[str, Any]:
+                                source: str = "canon",
+                                preserve_manual: bool = True) -> dict[str, Any]:
     """worldbook 重建。source='canon' 零 LLM(rebuild_worldbook_from_db),
-    'llm' 走 _stage_worldbook 一次 LLM 调用 + 写库。"""
+    'llm' 走 _stage_worldbook 一次 LLM 调用 + 写库。
+
+    preserve_manual(2026-10):默认 True 按 manual_fields 字段级保护手编内容；
+    False = 弹窗「强制覆盖手编字段」，canon 聚合路径也不保留手编字段。
+    """
     partial_failures: list[dict[str, Any]] = []
     with connect() as db:
         before = db.execute(
@@ -254,7 +357,9 @@ def rebuild_worldbook_with_llm(user_id: int, script_id: int, *,
     if source == "canon":
         with connect() as db:
             from extract.rebuild import rebuild_worldbook_from_db
-            res = rebuild_worldbook_from_db(db, script_id)
+            res = rebuild_worldbook_from_db(
+                db, script_id, preserve_manual=preserve_manual,
+            )
         if not res.get("ok"):
             return {
                 "ok": False, "source": "canon",

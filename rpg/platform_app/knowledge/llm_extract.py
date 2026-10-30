@@ -37,6 +37,8 @@ def run_llm_extraction(
     confirmed: bool = False,
     max_book_usd: float = 10.0,
     monthly_book_limit: int | None = None,
+    # 2026-10：弹窗「强制覆盖手编字段」。True 时 canon/卡片同步都跳过 manual_fields 保护。
+    force_overwrite_manual: bool = False,
 ) -> dict[str, Any]:
     """对一本已导入剧本跑 LLM 提取管线,产出规范层 KB(BYOK,用户付费)。
 
@@ -97,6 +99,7 @@ def run_llm_extraction(
             target_arcs=target_arcs, concurrency=concurrency,
             chapter_min=chapter_min, chapter_max=chapter_max,
             progress_cb=progress_cb,
+            force_overwrite_manual=force_overwrite_manual,
         )
     else:
         from extract.pipeline import run_extraction
@@ -107,6 +110,7 @@ def run_llm_extraction(
             model=model, api_id=api_id, sample_chapters=sample_chapters,
             chapter_min=chapter_min, chapter_max=chapter_max,
             progress_cb=progress_cb,
+            force_overwrite_manual=force_overwrite_manual,
         )
 
     # 跑后记账(配额 + 估算花费 + 实测花费)

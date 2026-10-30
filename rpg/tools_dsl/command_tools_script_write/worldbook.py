@@ -61,37 +61,61 @@ def _wb_upsert_one(db: Any, sid: int, user_id: int, args: dict) -> dict:
         before = db.execute(
             "select id, title, content, priority, token_budget, sticky_turns, cooldown_turns, "
             "probability::float8 as probability, enabled, keys, regex_keys, character_filter, "
-            "scene_filter, insertion_position from worldbook_entries where id = %s and script_id = %s",
+            "scene_filter, insertion_position, metadata "
+            "from worldbook_entries where id = %s and script_id = %s",
             (eid, sid),
         ).fetchone()
         if not before:
             return {"ok": False, "id": eid, "action": None, "title": "", "error": f"条目 #{eid} 不存在或不属于剧本 #{sid}"}
         # 撤销快照:存改前全字段,供作者一键撤回 AI 对世界书的改动(与章节撤销同款安全网)。
+        # metadata 也纳入快照：手编标记 manual_fields 是这次改动的一部分，撤销要一并还原。
         _wb_before = {k: before[k] for k in (
             "title", "content", "priority", "token_budget", "sticky_turns", "cooldown_turns",
             "probability", "enabled", "keys", "regex_keys", "character_filter", "scene_filter",
-            "insertion_position")}
+            "insertion_position", "metadata")}
         sets, params = [], []
+        changed: set[str] = set()
         for col in ("title", "content", "insertion_position"):
             if col in args and args[col] is not None:
                 sets.append(f"{col}=%s")
                 params.append(str(args[col]))
+                changed.add(col)
         for col in ("priority", "token_budget", "sticky_turns", "cooldown_turns"):
             if col in args and args[col] is not None:
                 sets.append(f"{col}=%s")
                 params.append(int(args[col]))
+                changed.add(col)
         if args.get("probability") is not None:
             sets.append("probability=%s")
             params.append(float(args["probability"]))
+            changed.add("probability")
         if args.get("enabled") is not None:
             sets.append("enabled=%s")
             params.append(bool(args["enabled"]))
+            changed.add("enabled")
         for col in ("keys", "regex_keys", "character_filter", "scene_filter"):
             if col in args and isinstance(args[col], list):
                 sets.append(f"{col}=%s")
                 params.append(Jsonb(_strlist(args[col])))
+                changed.add(col)
         if not sets:
             return {"ok": False, "id": eid, "action": None, "title": before["title"], "error": "没有要更新的字段"}
+        # 字段级手编标记(2026-10):只有"内容类"字段变化才写标记；仅切换
+        # enabled/probability 不点亮手编标签，避免条目被误判成整行手编。
+        # 旧数据只有 meta.source='editor' 没有 manual_fields → 先按整行兜底。
+        from platform_app.knowledge._manual import WORLDBOOK_MANUAL_FIELDS, is_legacy_editor
+        _before_meta = before.get("metadata")
+        _old_meta = dict(_before_meta) if isinstance(_before_meta, dict) else {}
+        _manual = set(_old_meta.get("manual_fields") or [])
+        _legacy = is_legacy_editor(_old_meta)
+        if _legacy:
+            _manual |= set(WORLDBOOK_MANUAL_FIELDS)
+        _manual_delta = changed & set(WORLDBOOK_MANUAL_FIELDS)
+        _manual |= _manual_delta
+        if _manual_delta or _manual or _legacy:
+            _new_meta = {**_old_meta, "source": "editor", "manual_fields": sorted(_manual)}
+            sets.append("metadata=%s")
+            params.append(Jsonb(_new_meta))
         # 确认预览时注入的版本基线:和 UPDATE 放在同一条 WHERE 里,确认期间作者/
         # 另一标签/AI 改过该条目 → rowcount=0,拒绝覆盖。
         base_ts = None
@@ -126,6 +150,17 @@ def _wb_upsert_one(db: Any, sid: int, user_id: int, args: dict) -> dict:
 
     # ── 创建新条目 ──
     t = str(title).strip()
+    # 新建 = 用户提供的字段都是手编字段（字段级标记）。
+    from platform_app.knowledge._manual import WORLDBOOK_MANUAL_FIELDS
+    _manual = {
+        k for k in WORLDBOOK_MANUAL_FIELDS
+        if k in args and args.get(k) is not None
+    }
+    _meta = {
+        **(args.get("metadata") if isinstance(args.get("metadata"), dict) else {}),
+        "source": "editor",
+        "manual_fields": sorted(_manual),
+    }
     # book_id 是遗留可空列(migration 85);归属看 script_id,没有 books 行就 NULL。
     book = db.execute("select id from books where script_id = %s", (sid,)).fetchone()
     book_id = int(book["id"]) if book else None
@@ -144,7 +179,8 @@ def _wb_upsert_one(db: Any, sid: int, user_id: int, args: dict) -> dict:
             str(args.get("content") or ""),
             int(args["priority"]) if args.get("priority") is not None else 50,
             bool(args["enabled"]) if args.get("enabled") is not None else True,
-            Jsonb({"source": "editor"}),  # 标记编辑器写入,重建保留不删(harness 审计 P1)
+            # 标 source='editor' + manual_fields:重建/enrich 按字段保护手编内容。
+            Jsonb(_meta),
             Jsonb(_strlist(args.get("keys"))),
             Jsonb(_strlist(args.get("regex_keys"))),
             Jsonb(_strlist(args.get("character_filter"))),

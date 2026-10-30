@@ -67,9 +67,11 @@ describe('RebuildEstimateModal — embeddings 按类型重嵌', () => {
     expect(confirm).toBeDisabled();
   });
 
-  it('非 embeddings 模块不渲染类型勾选框', () => {
+  it('非 embeddings 模块不渲染类型勾选框（anchors 只显示强制覆盖开关）', () => {
     renderModal({ module: 'anchors' });
-    expect(screen.queryAllByRole('checkbox')).toHaveLength(0);
+    // 不再断言 checkbox 总数为 0：anchors 现在有「强制覆盖手编字段」开关。
+    expect(screen.queryByLabelText(/章节切片/)).toBeNull();
+    expect(screen.getByLabelText(/强制覆盖手编字段/)).toBeTruthy();
   });
 });
 

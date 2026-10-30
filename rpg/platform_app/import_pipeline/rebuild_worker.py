@@ -4,6 +4,7 @@
 """
 from __future__ import annotations
 
+import time
 from typing import Any
 
 from ..db import connect
@@ -99,6 +100,11 @@ def _run_module_rebuild(
             db.execute(
                 "update import_jobs set finished_at=now() where job_id=%s", (job_id,),
             )
+    except (InterruptedError, KeyboardInterrupt):
+        # 长任务(canon 全量 / cards LLM)在弧边界抛取消信号。必须单独接住并落
+        # cancelled —— 旧实现只在模块返回后检查,取消要等整本书跑完才生效;
+        # 若被下面的 except Exception 吞掉还会被标成 failed。
+        return _finalize_cancelled(ctl)
     except Exception as exc:
         import logging as _logging
         import traceback as _tb
@@ -148,6 +154,13 @@ def _rebuild_cards(ctl, user_id, script_id, body) -> dict:
         cmax = int(cmax_raw) if cmax_raw not in (None, "") else None
     except (TypeError, ValueError):
         cmax = None
+    # 手编保护(字段级,默认开):manual_fields 里的字段不覆盖。
+    # 弹窗「强制覆盖手编字段」勾选时传 force_overwrite_manual=true → 全部刷新。
+    # 兼容旧 API:preserve_existing=false 仍等价于强制覆盖。
+    if "force_overwrite_manual" in body:
+        preserve_existing = not bool(body.get("force_overwrite_manual"))
+    else:
+        preserve_existing = bool(body.get("preserve_existing", True))
     if source == "llm":
         # 进度只有 0/100 的根因:此前只有 arc_extract 阶段写 overall_progress,seed/
         # per_chapter/resolve/embed 只写 stage_progress,而前端浮窗读的是 overall_*。给每个
@@ -156,6 +169,10 @@ def _rebuild_cards(ctl, user_id, script_id, body) -> dict:
                   "resolve": (85, 95), "embed": (95, 100)}
 
         def _cards_progress(stage: str, info: dict) -> None:
+            # 取消检查点:arc 每完成一弧回调一次,命中即抛 InterruptedError,
+            # 由 run_arc_extraction 取消未开始的 future 并一路冒泡到 worker。
+            if ctl.is_cancelled():
+                raise InterruptedError("cancelled")
             try:
                 total = int(info.get("total") or 0)
                 done = int(info.get("done") or 0)
@@ -166,6 +183,8 @@ def _rebuild_cards(ctl, user_id, script_id, body) -> dict:
                     overall = int(lo + (hi - lo) * max(0.0, min(1.0, frac)))
                     ctl.update(stage=stage, stage_progress=done, stage_total=max(total, 1),
                                overall_progress=overall, overall_total=100)
+            except (InterruptedError, KeyboardInterrupt):
+                raise
             except Exception:
                 pass
         # 模型兜底与 estimate/凭证闸同源(_resolve_extractor_llm):此前硬编码
@@ -178,19 +197,27 @@ def _rebuild_cards(ctl, user_id, script_id, body) -> dict:
             model=str(body.get("model") or _def_model),
             api_id=str(body.get("api_id") or _def_api),
             progress_cb=_cards_progress,
+            preserve_existing=preserve_existing,
+            # force 必须同时进 LLM 重抽阶段：否则 canon 手编字段仍被保护，回填读不到新值。
+            force_overwrite_manual=not preserve_existing,
         )
     else:
-        result = rebuild_cards_from_canon(user_id, script_id, chapter_max=cmax)
+        result = rebuild_cards_from_canon(
+            user_id, script_id, chapter_max=cmax, preserve_existing=preserve_existing,
+        )
     return result
 
 
 def _rebuild_canon(ctl, user_id, script_id, body) -> dict:
     source = str(body.get("source") or body.get("mode") or "")
+    force_manual = bool(body.get("force_overwrite_manual"))
     # full = 重抽 LLM;resolve_only = 从 chapter_extracts 重 cluster (零 LLM)
     from extract.rebuild import rebuild_canon_resolve_from_facts
     if source == "resolve_only":
         with connect() as db:
-            result = rebuild_canon_resolve_from_facts(db, script_id)
+            result = rebuild_canon_resolve_from_facts(
+                db, script_id, include_editor=force_manual,
+            )
     else:
         # full LLM: 走 schedule_llm_extraction 同款 (但这里直接调底层)
         from platform_app.knowledge.llm_extract import run_llm_extraction
@@ -203,6 +230,12 @@ def _rebuild_canon(ctl, user_id, script_id, body) -> dict:
         # overall;done/total 由 as_completed 串行回调,无并发竞争。终态会把 overall_total
         # 重置回 1(见下方写终态),避免 done 时显示 1/弧数。
         def _canon_progress(stage: str, info: dict) -> None:
+            # 取消检查点(2026-10):canon 全量是整本最烧钱的模块,旧实现只在派发前/
+            # 返回后看 cancel_requested → 点取消仍要跑完整本书。arc 每完成一弧都会回调
+            # 这里,抛 InterruptedError 后 run_arc_extraction 会取消未开始的 future 并
+            # 一路冒泡到 worker,终态落 cancelled。
+            if ctl.is_cancelled():
+                raise InterruptedError("cancelled")
             try:
                 total = int(info.get("total") or 0)
                 done = int(info.get("done") or 0)
@@ -213,6 +246,8 @@ def _rebuild_canon(ctl, user_id, script_id, body) -> dict:
                 elif stage in ("seed", "per_chapter", "resolve", "embed"):
                     ctl.update(stage=stage, stage_progress=done,
                                stage_total=max(total, 1))
+            except (InterruptedError, KeyboardInterrupt):
+                raise
             except Exception:
                 pass
         # 模型兜底与 estimate/凭证闸同源(_resolve_extractor_llm),同 _rebuild_cards:
@@ -225,6 +260,8 @@ def _rebuild_canon(ctl, user_id, script_id, body) -> dict:
             api_id=str(body.get("api_id") or _def_api),
             confirmed=True,
             progress_cb=_canon_progress,
+            # 强制覆盖手编字段：一路传到 resolve_and_write，跳过 manual_fields guard。
+            force_overwrite_manual=force_manual,
         )
         with connect() as _dbc:
             after = _count(_dbc, "kb_canon_entities", script_id) if r.get("ok") else before
@@ -245,6 +282,7 @@ def _rebuild_canon(ctl, user_id, script_id, body) -> dict:
 def _rebuild_worldbook(ctl, user_id, script_id, body) -> dict:
     source = str(body.get("source") or body.get("mode") or "")
     src = source or "canon"
+    force_manual = bool(body.get("force_overwrite_manual"))
     if src == "llm":
         # 走 import pipeline 的 _stage_worldbook(单次 LLM)
         with connect() as db:
@@ -253,16 +291,36 @@ def _rebuild_worldbook(ctl, user_id, script_id, body) -> dict:
                 (script_id,),
             ).fetchone()
             before_count = int(before["c"]) if before else 0
-        count = _stage_worldbook(ctl, user_id, script_id)
+        count = _stage_worldbook(
+            ctl, user_id, script_id, force_overwrite_manual=force_manual,
+        )
+        # _stage_worldbook 的返回值只统计"真正插入/更新的行";与 editor/extracted
+        # 同名的条目会被它有意跳过(rowcount=0)。旧实现用 count>0 判成功 → LLM 返回的
+        # 条目如果全部与 canon 已建条目同名,明明按设计工作却报「重做失败」。
+        # 成功条件改为:无异常 且 (写入>0 或 跳过重复>0);after_count 用表内真实总数
+        # (旧实现直接把"新增数"当 after_count,和矩阵里的条数对不上)。
+        stage_error = str(getattr(_stage_worldbook, "_last_error", "") or "")
+        skipped_dup = int(getattr(_stage_worldbook, "_last_skipped", 0) or 0)
+        with connect() as db:
+            after_row = db.execute(
+                "select count(*) as c from worldbook_entries where script_id = %s",
+                (script_id,),
+            ).fetchone()
+        after_count = int(after_row["c"]) if after_row else before_count
+        ok = (not stage_error) and (count > 0 or skipped_dup > 0)
         result = {
-            "ok": count > 0, "source": "llm",
-            "before_count": before_count, "after_count": count,
-            "partial_failures": [] if count > 0 else [
-                {"stage": "worldbook", "error": "LLM returned 0 entries"}
+            "ok": ok, "source": "llm",
+            "before_count": before_count, "after_count": after_count,
+            "partial_failures": [] if ok else [
+                {"stage": "worldbook",
+                 "error": stage_error or "LLM returned 0 entries（未写入也未命中同名条目）"}
             ],
         }
     else:
-        result = rebuild_worldbook_with_llm(user_id, script_id, source="canon")
+        result = rebuild_worldbook_with_llm(
+            user_id, script_id, source="canon",
+            preserve_manual=not force_manual,
+        )
     return result
 
 
@@ -274,7 +332,10 @@ def _rebuild_anchors(ctl, user_id, script_id, body) -> dict:
         ).fetchone()
         before_count = int(before["c"]) if before else 0
         from extract.rebuild import rebuild_timeline_from_db
-        r = rebuild_timeline_from_db(db, script_id)
+        r = rebuild_timeline_from_db(
+            db, script_id,
+            include_editor=bool(body.get("force_overwrite_manual")),
+        )
         after = db.execute(
             "select count(*) as c from script_timeline_anchors where script_id = %s",
             (script_id,),
@@ -326,7 +387,7 @@ def _rebuild_story_phase(ctl, user_id, script_id, body) -> dict:
             "where script_id = %s and coalesce(story_phase,'') <> ''",
             (script_id,),
         ).fetchone()["c"])
-        cur = db.execute(
+        db.execute(
             """
             update script_timeline_anchors a
                set story_phase = m.phase, updated_at = now()
@@ -365,7 +426,20 @@ def _rebuild_story_phase(ctl, user_id, script_id, body) -> dict:
 
 
 def _rebuild_embeddings(ctl, user_id, script_id, body) -> dict:
+    """向量重嵌入。**任务在向量真正写完后才落 done。**
+
+    旧实现:先强制清空向量 → `embed_script()` 起后台线程(fire-and-forget)→ 立即返回,
+    `after_count` 直接用 chunks 总行数假装完成。结果是任务秒完成、矩阵仍显示 0/N,
+    下一次有人在后台线程跑完前查 RAG 会拿到空结果。现在改成:
+      1. 先记录 before(选中类型的已嵌入数);
+      2. 清空选中类型 → canon 同步重嵌 → chunks/cards/worldbook 触发后台 embed 并
+         **轮询到结束**(期间汇报真实进度、响应取消);
+      3. after 用真实计数,残留 NULL 记为 partial failure。
+    """
     includes = list(body.get("include") or ["chunks", "cards", "worldbook", "canon"])
+    includes = [k for k in includes if k in ("chunks", "cards", "worldbook", "canon")]
+    if not includes:
+        return {"ok": False, "error": "include 里没有可重嵌的类型（chunks/cards/worldbook/canon）"}
     from extract.embed import embed_canon_entities
 
     from ..knowledge import embedding as _embed
@@ -381,6 +455,13 @@ def _rebuild_embeddings(ctl, user_id, script_id, body) -> dict:
         "worldbook": "update worldbook_entries set embedding_vec=NULL, embedded_at=NULL where script_id=%s",
         "canon":     "update kb_canon_entities set embedding=NULL where script_id=%s",
     }
+    # before 必须在清空之前取:旧实现在清空后才数 → before 恒 0(任务卡"0 → N"是假的)。
+    def _selected_counts() -> dict:
+        st = _embed.embed_status(script_id)
+        return {k: (int(st[k]["done"]), int(st[k]["total"])) for k in includes}
+
+    before_counts = _selected_counts()
+    before_count = sum(v[0] for v in before_counts.values())
     with connect() as db:
         for _k in includes:
             _sql = _FORCE_CLEAR.get(_k)
@@ -392,42 +473,111 @@ def _rebuild_embeddings(ctl, user_id, script_id, body) -> dict:
                 partial_failures.append({"stage": f"force_clear_{_k}", "error": str(exc)})
         db.commit()
     with connect() as db:
-        if "chunks" in includes or "cards" in includes or "worldbook" in includes:
-            try:
-                # embed_script fire-and-forget;这里改成同步等(rebuild 等任务跑完)
-                # 但为简洁同复用现有线程模型,直接调 sub-rountines
-                # 不直接调:embed_script 已是异步 dispatch,只确认凭证有效
-                _ = _embed.embed_status(script_id)
-            except Exception as exc:
-                partial_failures.append({"stage": "embed_check", "error": str(exc)})
         if "canon" in includes:
             try:
                 emb = embed_canon_entities(db, script_id, user_id=user_id)
                 counts["canon"] = emb
             except Exception as exc:
                 partial_failures.append({"stage": "embed_canon", "error": str(exc)})
-    # 触发后台 embed_script(chunks/cards/worldbook)
-    try:
-        from ..knowledge import embedding as _embed2
-        _embed2.embed_script(user_id, script_id)
-    except Exception as exc:
-        partial_failures.append({"stage": "embed_script", "error": str(exc)})
-    with connect() as db:
-        done = db.execute(
-            "select count(*) as c from document_chunks "
-            "where script_id = %s and embedding_vec is not null",
-            (script_id,),
-        ).fetchone()
-        total = db.execute(
-            "select count(*) as c from document_chunks where script_id = %s",
-            (script_id,),
-        ).fetchone()
+
+    # chunks/cards/worldbook 走后台 embed 线程;这里等它真正结束。
+    # 注意:embed_script 内部三类型一起跑(未选中的类型若本来就有 NULL 也会被补嵌)。
+    # 这是幂等增量,不会动已有点向量,可接受;真正"未勾选 = 不重嵌"由 force_clear 保证。
+    if any(k in includes for k in ("chunks", "cards", "worldbook")):
+        for _round in range(2):
+            try:
+                start = _embed.embed_script(user_id, script_id)
+            except Exception as exc:
+                partial_failures.append({"stage": "embed_script", "error": str(exc)})
+                break
+            if start.get("ok") is False and not start.get("already_running"):
+                partial_failures.append({
+                    "stage": "embed_script",
+                    "error": str(start.get("error") or "embedding provider unavailable"),
+                })
+                break
+            # 轮询到后台线程结束;每 3s 用真实计数刷新 job 进度。
+            # 两道保险,防止 job 永远卡在 running:
+            #   · 120s 进度无变化 → 视为 provider/线程停滞(也可能是 Redis 里残留的
+            #     运行锁把 embed_script 误判成 already_running),退出并标 partial;
+            #   · 总等待 30 分钟 → 硬上限(超长书 + 慢 provider 的正常上限之上)。
+            _wait_started = time.monotonic()
+            _last_done = -1
+            _stall_polls = 0
+            while True:
+                _cur = _selected_counts()
+                _done = sum(v[0] for v in _cur.values())
+                _total = sum(v[1] for v in _cur.values())
+                if _done == _last_done:
+                    _stall_polls += 1
+                else:
+                    _stall_polls = 0
+                    _last_done = _done
+                try:
+                    ctl.update(
+                        stage="embeddings",
+                        stage_progress=_done, stage_total=max(_total, 1),
+                        overall_progress=_done, overall_total=max(_total, 1),
+                    )
+                except Exception:
+                    pass
+                if ctl.is_cancelled():
+                    # 后台线程无法安全中断(正在发 HTTP);让它自然跑完即可,
+                    # 这里先如实返回 cancelled,由 worker 落终态。
+                    return {
+                        "ok": True, "source": "pgvector", "cancelled": True,
+                        "before_count": before_count, "after_count": _done,
+                        "partial_failures": partial_failures, "extra": {"counts": counts},
+                    }
+                if not _embed.embed_status(script_id).get("running"):
+                    break
+                if _stall_polls >= 40:
+                    partial_failures.append({
+                        "stage": "embedding_stalled",
+                        "error": f"后台嵌入 120s 无进度（已完成 {_done}/{_total}），已停止等待；"
+                                 "若 provider 正常，可稍后再次点重做补齐剩余条目。",
+                    })
+                    break
+                if time.monotonic() - _wait_started > 30 * 60:
+                    partial_failures.append({
+                        "stage": "embedding_timeout",
+                        "error": f"后台嵌入等待超过 30 分钟（已完成 {_done}/{_total}），已停止等待。",
+                    })
+                    break
+                time.sleep(3)
+            # 竞态:若另一条 embed 线程已跑过 cards/worldbook 阶段,刚被清空的向量可能
+            # 不会被它拾取。检查选中类型是否仍有 NULL,有则再来一轮(最多 2 轮)。
+            _left = any(
+                _cur[k][0] < _cur[k][1] for k in includes
+                if k in ("chunks", "cards", "worldbook")
+            )
+            if not _left:
+                break
+
+    after_counts = _selected_counts()
+    after_count = sum(v[0] for v in after_counts.values())
+    # 仍有 NULL = provider 失败/配额/模型下线;如实标 partial,不再谎报完成。
+    leftover = {
+        k: f"{after_counts[k][0]}/{after_counts[k][1]}"
+        for k in includes
+        if after_counts[k][0] < after_counts[k][1]
+    }
+    if leftover:
+        partial_failures.append({
+            "stage": "embedding_incomplete",
+            "error": "仍有未嵌入条目: " + ", ".join(f"{k} {v}" for k, v in leftover.items()),
+        })
     result = {
         "ok": True, "source": "pgvector",
-        "before_count": int(done["c"]) if done else 0,
-        "after_count": int(total["c"]) if total else 0,
+        "before_count": before_count,
+        "after_count": after_count,
         "partial_failures": partial_failures,
-        "extra": counts,
+        "extra": {
+            "counts": counts,
+            "before": {k: v[0] for k, v in before_counts.items()},
+            "after": {k: v[0] for k, v in after_counts.items()},
+            "total": {k: v[1] for k, v in after_counts.items()},
+        },
     }
     return result
 
@@ -500,6 +650,10 @@ def _rebuild_worldbook_enrich(ctl, user_id, script_id, body) -> dict:
         script_id, user_id, pattern=pattern,
         api_id=(body.get("api_id") or None), model=(body.get("model") or None),
         apply=True,
+        # 默认跳过 metadata.source='editor' 的手编条目 —— 与世界书/canon 重建的
+        # "护手编"铁律一致。旧实现会无条件覆盖手编正文。需要覆盖时显式传
+        # include_editor=true(API 可用,UI 不暴露)。
+        include_editor=bool(body.get("include_editor")),
         should_cancel=ctl.is_cancelled, progress_cb=_enrich_progress,
     )
     entries = list(r.get("entries") or [])

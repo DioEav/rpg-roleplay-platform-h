@@ -78,9 +78,13 @@ def validate_enriched(raw_text: str) -> str | None:
 
 def enrich_script_worldbook(script_id: int, user_id: int, *, pattern: str,
                             api_id: str | None = None, model: str | None = None,
-                            apply: bool = False,
+                            apply: bool = False, include_editor: bool = False,
                             should_cancel=None, progress_cb=None) -> dict[str, Any]:
     """命中 pattern 的世界书条目逐条 LLM 重写 content。
+
+    include_editor(2026-10,默认 False):默认跳过 metadata.source='editor' 的手编条目 ——
+      与 worldbook/canon 重建的「护手编」铁律一致。旧实现无条件覆盖,作者手写的设定
+      会被后台 LLM 静默改写。需要覆盖时显式传 True(API 可用,UI 不暴露)。
 
     should_cancel: 可选无参回调,返回真值表示用户已请求取消 —— 每条开头检查一次,
       命中即停在条目边界并返回 {"cancelled": True} + 已充实的条目(已 apply 的保留)。
@@ -94,11 +98,17 @@ def enrich_script_worldbook(script_id: int, user_id: int, *, pattern: str,
     if not rapi or not rmodel:
         return {"ok": False, "error": "无可用 api/model"}
     with connect() as db:
-        entries = db.execute(
+        from platform_app.knowledge._manual import WORLDBOOK_CONTENT_GUARD_SQL
+        sql = (
             "select id, title, content from worldbook_entries "
-            "where script_id=%s and title ~ %s order by id",
-            (int(script_id), pattern),
-        ).fetchall()
+            "where script_id=%s and title ~ %s "
+        )
+        if not include_editor:
+            # 默认跳过：旧 editor 行（整行兜底）+ content 被手编的条目。
+            # 只改过 title/priority 的手编条目仍允许充实正文。
+            sql += WORLDBOOK_CONTENT_GUARD_SQL
+        sql += "order by id"
+        entries = db.execute(sql, (int(script_id), pattern)).fetchall()
     out: list[dict] = []
     cancelled = False
     all_entries = list(entries or [])
@@ -144,16 +154,57 @@ def enrich_script_worldbook(script_id: int, user_id: int, *, pattern: str,
                 continue
             if apply:
                 with connect() as db:
-                    db.execute(
-                        "update worldbook_entries set content=%s, "
-                        "metadata = coalesce(metadata,'{}'::jsonb) || %s::jsonb, "
-                        # 推进版本:编辑器用 updated_at 做乐观锁,后台改写也要让基线变化,
-                        # 否则用户标签里的旧内容保存时会静默覆盖刚 enrich 的正文。
-                        "updated_at=now() "
-                        "where id=%s and script_id=%s",
-                        (content, json.dumps({"enriched": "llm_r5"}, ensure_ascii=False),
-                         int(ent["id"]), int(script_id)),
-                    )
+                    if not include_editor:
+                        # 默认路径：不碰手编标记，只并入 enriched 标记（SQL 侧读当前值，
+                        # 避免用 LLM 调用前的旧 metadata 覆盖并发编辑）。
+                        db.execute(
+                            "update worldbook_entries set content=%s, "
+                            "metadata = coalesce(metadata,'{}'::jsonb) || %s::jsonb, "
+                            # 推进版本:编辑器用 updated_at 做乐观锁,后台改写也要让基线变化,
+                            # 否则用户标签里的旧内容保存时会静默覆盖刚 enrich 的正文。
+                            "updated_at=now() "
+                            "where id=%s and script_id=%s",
+                            (content, json.dumps({"enriched": "llm_r5"}, ensure_ascii=False),
+                             int(ent["id"]), int(script_id)),
+                        )
+                    else:
+                        # include_editor=True（强制覆盖）：只清 content 的手编标记；
+                        # title/tags/keys 等本函数没写的字段继续保留标记。
+                        # 写前重读 metadata：LLM 调用可能耗时数分钟，不能用旧快照覆盖
+                        # 这段时间里用户/其它任务的并发修改。
+                        _row = db.execute(
+                            "select metadata from worldbook_entries "
+                            "where id=%s and script_id=%s",
+                            (int(ent["id"]), int(script_id)),
+                        ).fetchone()
+                        meta = (_row or {}).get("metadata") if isinstance(_row, dict) else None
+                        if not isinstance(meta, dict):
+                            meta = {}
+                        from platform_app.knowledge._manual import (
+                            WORLDBOOK_ENRICH_WRITTEN_FIELDS,
+                            WORLDBOOK_MANUAL_FIELDS,
+                            clear_overwritten_manual_fields,
+                        )
+                        meta = clear_overwritten_manual_fields(
+                            meta, WORLDBOOK_ENRICH_WRITTEN_FIELDS,
+                            universe=WORLDBOOK_MANUAL_FIELDS,
+                            # 全部清空时保留原有非 editor 来源（extracted/llm_pipeline），
+                            # 避免强制充实把条目来源也改掉；editor 才回落 extracted。
+                            default_source=(
+                                "extracted"
+                                if str(meta.get("source") or "") in ("", "editor")
+                                else str(meta.get("source"))
+                            ),
+                        )
+                        meta = dict(meta)
+                        meta["enriched"] = "llm_r5"
+                        db.execute(
+                            "update worldbook_entries set content=%s, metadata=%s::jsonb, "
+                            "updated_at=now() "
+                            "where id=%s and script_id=%s",
+                            (content, json.dumps(meta, ensure_ascii=False),
+                             int(ent["id"]), int(script_id)),
+                        )
                     if hasattr(db, "commit"):
                         db.commit()
             out.append({"id": ent["id"], "title": title, "status": "ok",

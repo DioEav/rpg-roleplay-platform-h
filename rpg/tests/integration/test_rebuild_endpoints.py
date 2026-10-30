@@ -11,11 +11,12 @@ from platform_app import import_pipeline as ip
 
 class RebuildModulesRegistry(unittest.TestCase):
     def test_all_modules_registered(self):
-        # 7 个基础模块 + 3 个按需精炼模块(拆书审计后新增:facts_refine/worldbook_enrich/world_key)
+        # 7 个基础模块 + 4 个按需增强模块(拆书审计后新增:
+        # facts_refine/worldbook_enrich/world_key + story_phase)
         expected = {
             "chunks", "chapter-facts", "canon", "cards",
             "worldbook", "anchors", "embeddings",
-            "facts_refine", "worldbook_enrich", "world_key",
+            "facts_refine", "worldbook_enrich", "world_key", "story_phase",
         }
         self.assertEqual(set(ip.REBUILD_MODULES.keys()), expected)
 

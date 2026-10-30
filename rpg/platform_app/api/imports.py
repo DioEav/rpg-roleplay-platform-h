@@ -605,8 +605,9 @@ async def api_script_embed_alias(request: Request, script_id: int, user=Depends(
 async def api_script_active_job(script_id: int, user=Depends(require_user)):
     """返某剧本最近一次后台 job(import_jobs 表),给前端切走 tab 又切回来时复活进度面板用。
 
-    回填 {ok, job: {...}, active: bool}; active=true 表示 status in ('pending','running'),
-    前端可凭此重订 SSE。
+    回填 {ok, job: {...}, active: bool}; active=true 表示 status in
+    ('queued','pending','running'),前端可凭此重订 SSE / 禁用其它重做按钮。
+    queued 也算活动:全量导入在全局并发闸排队时,矩阵数据同样还没刷新。
     """
     from .. import import_pipeline
     payload = import_pipeline.get_job_status(user["id"], script_id=script_id)
@@ -615,5 +616,5 @@ async def api_script_active_job(script_id: int, user=Depends(require_user)):
         return json_response({"ok": True, "active": False, "job": None})
     job = payload.get("job") or {}
     status = (job.get("status") or "").strip()
-    active = status in ("pending", "running")
+    active = status in ("queued", "pending", "running")
     return json_response({"ok": True, "active": active, "job": job, "status": status})

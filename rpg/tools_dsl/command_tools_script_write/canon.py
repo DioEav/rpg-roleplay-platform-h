@@ -59,40 +59,58 @@ def _t_upsert_canon_entity(user_id: int, script_id: int | None, args: dict, stat
             if not script_owned(db, sid, user_id):
                 return "失败(权限): 剧本不属于当前用户"
             existing = db.execute(
-                "select id from kb_canon_entities where script_id = %s and logical_key = %s",
+                "select id, attrs from kb_canon_entities where script_id = %s and logical_key = %s",
                 (sid, logical_key),
             ).fetchone()
 
             if existing:
                 # ── 更新 ──
+                from platform_app.knowledge._manual import CANON_MANUAL_FIELDS, is_legacy_editor
                 sets, params = [], []
+                changed: set[str] = set()
                 for col in ("name", "full_name", "type", "summary", "identity",
                             "background", "entity_subtype", "parent_logical_key"):
                     if col in args and args[col] is not None:
                         sets.append(f"{col}=%s")
                         params.append(str(args[col]))
+                        changed.add(col)
                 if args.get("importance") is not None:
                     sets.append("importance=%s")
                     params.append(int(args["importance"]))
+                    changed.add("importance")
                 if args.get("first_revealed_chapter") is not None:
                     sets.append("first_revealed_chapter=%s")
                     params.append(int(args["first_revealed_chapter"]))
+                    changed.add("first_revealed_chapter")
                 if args.get("public_knowledge") is not None:
                     sets.append("public_knowledge=%s")
                     params.append(bool(args["public_knowledge"]))
+                    changed.add("public_knowledge")
                 # aliases = jsonb 字符串数组;attrs = jsonb 开放对象。
                 if "aliases" in args and isinstance(args["aliases"], list):
                     sets.append("aliases=%s")
                     params.append(Jsonb(_strlist(args["aliases"])))
-                if "attrs" in args and isinstance(args["attrs"], dict):
-                    # 用户传了 attrs → jsonb 合并(保留既有键)+ 标 source='editor'。
-                    sets.append("attrs = coalesce(attrs,'{}'::jsonb) || %s::jsonb")
-                    params.append(Jsonb({**args["attrs"], "source": "editor"}))
-                if not sets:
+                    changed.add("aliases")
+                attrs_input = args.get("attrs") if isinstance(args.get("attrs"), dict) else None
+                if attrs_input is not None:
+                    changed.add("attrs")
+                if not sets and attrs_input is None:
                     return "失败: 没有要更新的字段"
-                # 有真实字段更新但没动 attrs → 仍标 source='editor',让重建保留这条用户编辑过的实体(harness 审计 P1)。
-                if not any(s.startswith("attrs") for s in sets):
-                    sets.append("attrs = coalesce(attrs,'{}'::jsonb) || '{\"source\":\"editor\"}'::jsonb")
+                # 字段级手编标记(2026-10):记录本次实际改动的列。旧数据只有
+                # source='editor' 没有 manual_fields → 先按整行兜底，再并上本次改动。
+                old_attrs = dict(existing.get("attrs") or {}) if isinstance(existing.get("attrs"), dict) else {}
+                manual = set(old_attrs.get("manual_fields") or [])
+                if is_legacy_editor(old_attrs):
+                    manual |= set(CANON_MANUAL_FIELDS)
+                manual |= changed & set(CANON_MANUAL_FIELDS)
+                new_attrs = {
+                    **old_attrs,
+                    **(attrs_input or {}),
+                    "source": "editor",
+                    "manual_fields": sorted(manual),
+                }
+                sets.append("attrs=%s")
+                params.append(Jsonb(new_attrs))
                 # 推进 updated_at:canon 编辑器以它为乐观锁基线,AI 写入必须让基线变化,
                 # 否则编辑器里未保存的旧内容保存时不会冲突、会静默覆盖 AI 的修改。
                 # 确认预览注入的 base_updated_at 同时进 WHERE:确认期间被手动/他方
@@ -136,6 +154,17 @@ def _t_upsert_canon_entity(user_id: int, script_id: int | None, args: dict, stat
                     return "失败: 创建 canon 实体必须提供 name 和 type"
                 aliases = args.get("aliases")
                 attrs = args.get("attrs")
+                # 新建 = 所有用户提供的人设字段都是手编字段（字段级标记）。
+                from platform_app.knowledge._manual import CANON_MANUAL_FIELDS
+                _manual = {
+                    k for k in CANON_MANUAL_FIELDS
+                    if k in args and args.get(k) is not None
+                }
+                _attrs = {
+                    **(attrs if isinstance(attrs, dict) else {}),
+                    "source": "editor",
+                    "manual_fields": sorted(_manual),
+                }
                 new_row = db.execute(
                     """
                     insert into kb_canon_entities
@@ -157,8 +186,8 @@ def _t_upsert_canon_entity(user_id: int, script_id: int | None, args: dict, stat
                         str(args.get("parent_logical_key") or ""),
                         int(args["importance"]) if args.get("importance") is not None else 0,
                         Jsonb(_strlist(aliases)) if isinstance(aliases, list) else Jsonb([]),
-                        # 标 source='editor':重建保留不删(harness 审计 P1,attrs 是 canon 的开放 jsonb)
-                        Jsonb({**(attrs if isinstance(attrs, dict) else {}), "source": "editor"}),
+                        # 标 source='editor' + manual_fields:重建时按字段保护手编内容。
+                        Jsonb(_attrs),
                         int(args["first_revealed_chapter"]) if args.get("first_revealed_chapter") is not None else 0,
                         bool(args["public_knowledge"]) if args.get("public_knowledge") is not None else False,
                     ),

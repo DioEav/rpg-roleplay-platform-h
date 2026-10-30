@@ -529,6 +529,9 @@
       worldbook: (sid, q) => GET(`${API_PREFIX}/scripts/${sid}/worldbook`, q),
       worldbookCreate: (sid, body) => POST(`${API_PREFIX}/scripts/${sid}/worldbook`, body),
       worldbookUpdate: (sid, eid, body) => PUT(`${API_PREFIX}/scripts/${sid}/worldbook/${eid}`, body),
+      // 取消手编标记（字段级解锁）：fields 为空/null = 整条解锁
+      worldbookUnlockManual: (sid, eid, fields) => POST(
+        `${API_PREFIX}/scripts/${sid}/worldbook/${eid}/unlock-manual`, { fields: fields || null }),
       worldbookDelete: (sid, eid) => DEL(`${API_PREFIX}/scripts/${sid}/worldbook/${eid}`, {}),
       // 批量:body={entry_ids:[...], action:'delete'|'enable'|'disable'|'set_priority', priority?}
       worldbookBatch: (sid, body) => POST(`${API_PREFIX}/scripts/${sid}/worldbook/batch`, body),
@@ -555,6 +558,10 @@
         ? PUT(`${API_PREFIX}/scripts/${sid}/canon-entities/${encodeURIComponent(body.logical_key)}`, body)
         : POST(`${API_PREFIX}/scripts/${sid}/canon-entities`, body)),
       canonDelete: (sid, key) => DEL(`${API_PREFIX}/scripts/${sid}/canon-entities/${encodeURIComponent(key)}`, {}),
+      // 取消手编标记（字段级解锁）：fields 为空/null = 整行解锁
+      canonUnlockManual: (sid, key, fields) => POST(
+        `${API_PREFIX}/scripts/${sid}/canon-entities/${encodeURIComponent(key)}/unlock-manual`,
+        { fields: fields || null }),
       // 出生点(玩家选择从哪个章节起场)
       birthpoints: (sid) => GET(`${API_PREFIX}/scripts/${sid}/birthpoints`),
       // 真实剧本时间线锚点(script_timeline_anchors,LLM 抽出的 story-time 段,
@@ -562,6 +569,8 @@
       timeline: (sid) => GET(`${API_PREFIX}/scripts/${sid}/timeline`),
       // 时间线锚点(MD 编辑器):update/create/delete(读取走 timeline()）
       anchorUpdate: (sid, anchorId, body) => PUT(`${API_PREFIX}/scripts/${sid}/anchors/${anchorId}`, body),
+      anchorUnlockManual: (sid, anchorId) => POST(
+        `${API_PREFIX}/scripts/${sid}/anchors/${anchorId}/unlock-manual`, {}),
       anchorCreate: (sid, body) => POST(`${API_PREFIX}/scripts/${sid}/anchors`, body),
       anchorDelete: (sid, anchorId) => DEL(`${API_PREFIX}/scripts/${sid}/anchors/${anchorId}`, {}),
       // knowledgeSync / importBudget 前端不再调用:
@@ -812,6 +821,10 @@
       scriptEnabled: (sid, cid, on) => POST(`${API_PREFIX}/scripts/` + sid + "/character-cards/" + cid + "/enabled", { enabled: !!on }),
       // 手动指定剧本主角(清其它卡主角标记 + 锁定不被重新提取覆盖)。仅 owner。
       scriptSetProtagonist: (sid, cid) => POST(`${API_PREFIX}/scripts/` + sid + "/character-cards/" + cid + "/protagonist", {}),
+      // 取消手编标记（字段级解锁）：fields 为空/null = 整卡解锁
+      scriptUnlockManual: (sid, cid, fields) => POST(
+        `${API_PREFIX}/scripts/` + sid + "/character-cards/" + cid + "/unlock-manual",
+        { fields: fields || null }),
       // 按需 AI 复核全部 NPC 卡(合并同人/锁定主角/删非人名)。model 由公用选择器传入(可空,后端读偏好兜底)。
       auditCards: (sid, api_id, model) => POST(`${API_PREFIX}/scripts/` + sid + "/audit-cards", { api_id, model }),
       // Phase 4 — 人设图自动维护(persona/pc 类卡)

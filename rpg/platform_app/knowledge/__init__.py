@@ -30,6 +30,7 @@ from platform_app.knowledge.character_cards import (
     list_character_cards,
     set_character_card_enabled,
     set_character_card_protagonist,
+    unlock_character_card_manual,
     upsert_character_card,
 )
 from platform_app.knowledge.context_runs import (
@@ -78,5 +79,6 @@ __all__ = [
     "delete_character_card",
     "set_character_card_enabled",
     "set_character_card_protagonist",
+    "unlock_character_card_manual",
     "list_worldbook_entries",
 ]

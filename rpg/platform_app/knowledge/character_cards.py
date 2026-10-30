@@ -67,6 +67,38 @@ def get_character_card(user_id: int, script_id: int, card_id: int) -> dict[str, 
     return card_to_dto(row) if row else None
 
 
+_CARD_TEXT_MANUAL_FIELDS = (
+    "full_name", "identity", "background", "appearance",
+    "personality", "speech_style", "current_status", "secrets",
+)
+_CARD_LIST_MANUAL_FIELDS = ("aliases", "sample_dialogue", "tags")
+
+
+def _list_value(v: Any) -> list:
+    return list(v) if isinstance(v, (list, tuple)) else []
+
+
+def _diff_card_manual_fields(payload: dict[str, Any], existing: dict[str, Any] | None) -> set[str]:
+    """算出本次编辑实际改动的"人设内容"字段（字段级手编标记）。
+
+    · existing is None（新建）：非空字段都算手编；
+    · existing 存在：与旧值逐字段比较，变化（含清空）才加入。
+    章节/重要度/预算/启停不在此列 —— 它们由 least/greatest/单独开关保护。
+    """
+    manual: set[str] = set()
+    for key in _CARD_TEXT_MANUAL_FIELDS:
+        new = str(payload.get(key) or "").strip()
+        old = str((existing or {}).get(key) or "").strip()
+        if (existing is None and new) or (existing is not None and new != old):
+            manual.add(key)
+    for key in _CARD_LIST_MANUAL_FIELDS:
+        new_list = _list_value(payload.get(key))
+        old_list = _list_value((existing or {}).get(key))
+        if (existing is None and new_list) or (existing is not None and new_list != old_list):
+            manual.add(key)
+    return manual
+
+
 def upsert_character_card(user_id: int, script_id: int, payload: dict[str, Any]) -> dict[str, Any]:
     """创建/更新剧本 NPC 角色卡。card_id 给定就 update，否则 insert。
 
@@ -114,12 +146,34 @@ def upsert_character_card(user_id: int, script_id: int, payload: dict[str, Any])
         book = db.execute("select id from books where script_id = %s", (script_id,)).fetchone()
         book_id = int(book["id"]) if book else None
         if card_id:
-            owned = db.execute(
-                "select 1 from character_cards where id = %s and script_id = %s and card_type='npc'",
+            existing = db.execute(
+                "select * from character_cards where id = %s and script_id = %s and card_type='npc'",
                 (int(card_id), script_id),
             ).fetchone()
-            if not owned:
+            if not existing:
                 raise ValueError("character_card 不存在或不属于该剧本")
+            # 手编字段级标记(2026-10):与旧行逐字段 diff，记下本次真正改动的
+            # 人设字段。旧数据只有 source='editor' 没有 manual_fields → 先把全部
+            # 人设字段视为手编（整行兜底），再并上本次改动，避免升级即丢保护。
+            from ._manual import (
+                CARD_MANUAL_FIELDS,
+                is_legacy_editor,
+                manual_fields_from_meta,
+            )
+            _old_meta_raw = existing.get("metadata")
+            _old_meta = dict(_old_meta_raw) if isinstance(_old_meta_raw, dict) else {}
+            _manual = set(manual_fields_from_meta(_old_meta)) & set(CARD_MANUAL_FIELDS)
+            if is_legacy_editor(_old_meta):
+                _manual |= set(CARD_MANUAL_FIELDS)
+            _manual |= _diff_card_manual_fields(payload, existing)
+            # metadata 浅合并（旧键打底）：保住 is_protagonist / protagonist_locked
+            # 等剧本侧标记。旧实现直接用 payload.metadata 覆盖，编辑器若没回传这些
+            # 键会把主角锁清掉。
+            _merged_meta = {**_old_meta, **dict(payload.get("metadata") or {})}
+            if _manual:
+                _merged_meta["manual_fields"] = sorted(_manual)
+                _merged_meta.setdefault("source", "editor")
+            fields["metadata"] = Jsonb(_merged_meta)
             # 改名预检:把卡改成已被**别的** NPC 占用的名字会撞 uq_character_cards_npc_name
             # (script_id,name)唯一约束 → 裸 UniqueViolation 冒成 500、前端「保存没反应」。
             # 先查冲突给出可行动 ValueError(端点 ValueError→400,前端能显示原因)。
@@ -172,6 +226,14 @@ def upsert_character_card(user_id: int, script_id: int, payload: dict[str, Any])
                 raise CharacterCardConflict(card_to_dto(current) or {})
             row = db.execute("select * from character_cards where id = %s", (int(card_id),)).fetchone()
         else:
+            # 新建卡：用户提供的人设字段即手编字段（字段级标记）。
+            # 之后重建/LLM 丰富只保护这些字段，其余空字段仍可被填充。
+            _manual = _diff_card_manual_fields(payload, None)
+            _meta = dict(payload.get("metadata") or {})
+            if _manual:
+                _meta["manual_fields"] = sorted(_manual)
+                _meta.setdefault("source", "editor")
+            fields["metadata"] = Jsonb(_meta)
             insert_sql = """
                 insert into character_cards(
                   book_id, script_id, name, full_name, aliases, identity, background,
@@ -286,6 +348,37 @@ def import_character_card(user_id: int, script_id: int, payload: dict[str, Any])
         existing = _db_get_character_card_by_name(db, script_id, name)
     card = upsert_character_card(user_id, script_id, merge_imported_card(existing, payload))
     return {"card": card, "replaced": bool(existing)}
+
+
+def unlock_character_card_manual(
+    user_id: int, script_id: int, card_id: int, fields: list[str] | None = None,
+) -> dict[str, Any]:
+    """取消 NPC 卡的手编标记（字段级精确解锁 / 整卡解锁）。
+
+    fields=None 或 [] → 整卡取消手编（来源改回 platform，允许后续重建刷新）；
+    fields=[...] → 只移除这些字段；仍有其它手编字段时保留 source='editor'。
+    """
+    init_db()
+    from ._manual import unlock_manual_fields
+    with connect() as db:
+        _require_script_owner(db, user_id, script_id)
+        row = db.execute(
+            "select * from character_cards where id = %s and script_id = %s and card_type='npc'",
+            (int(card_id), script_id),
+        ).fetchone()
+        if not row:
+            raise ValueError("character_card 不存在或不属于该剧本")
+        meta = unlock_manual_fields(row.get("metadata"), fields, default_source="platform")
+        db.execute(
+            "update character_cards set metadata=%s, row_version=row_version+1, updated_at=now() "
+            "where id=%s and script_id=%s and card_type='npc'",
+            (Jsonb(meta), int(card_id), script_id),
+        )
+        updated = db.execute(
+            "select * from character_cards where id=%s and script_id=%s",
+            (int(card_id), script_id),
+        ).fetchone()
+    return card_to_dto(updated) or {}
 
 
 def delete_character_card(user_id: int, script_id: int, card_id: int) -> dict[str, Any]:

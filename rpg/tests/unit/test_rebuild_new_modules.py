@@ -115,6 +115,7 @@ class EstimateFactsRefine(unittest.TestCase):
              patch.object(ip_sched, "connect", return_value=_fake_connect_cm(db)), \
              patch.object(ip_sched, "script_owned", return_value=script_row), \
              patch.object(ip_sched, "_resolve_extractor_llm", return_value=("deepseek", "deepseek-v4-flash")), \
+             patch.object(ip_sched, "_resolve_recorder_llm", return_value=("deepseek", "deepseek-v4-flash")), \
              patch.object(ip_sched, "_has_user_llm_credential", return_value=True):
             return ip.estimate_module_rebuild(1, 1, "facts_refine", body=body)
 
@@ -164,6 +165,7 @@ class EstimateWorldbookEnrich(unittest.TestCase):
              patch.object(ip_sched, "connect", return_value=_fake_connect_cm(db)), \
              patch.object(ip_sched, "script_owned", return_value=script_row), \
              patch.object(ip_sched, "_resolve_extractor_llm", return_value=("deepseek", "deepseek-v4-flash")), \
+             patch.object(ip_sched, "_resolve_recorder_llm", return_value=("deepseek", "deepseek-v4-flash")), \
              patch.object(ip_sched, "_has_user_llm_credential", return_value=True):
             return ip.estimate_module_rebuild(1, 1, "worldbook_enrich", body=body)
 
@@ -175,7 +177,9 @@ class EstimateWorldbookEnrich(unittest.TestCase):
     def test_empty_worldbook_blocks_with_prereq(self):
         out = self._run(matched=0, wb_total=0)
         keys = [p.get("key") for p in out["prereqs"]]
-        self.assertIn("worldbook", keys)
+        # 口径收紧:旧版在"世界书为空"时给 worldbook 键;现在按真实候选数判断
+        # (手编条目默认不计入),0 候选给出更精确的 worldbook_enrich_candidates。
+        self.assertIn("worldbook_enrich_candidates", keys)
 
 
 class EstimateWorldKey(unittest.TestCase):
@@ -210,6 +214,7 @@ class EstimateWorldKey(unittest.TestCase):
              patch.object(ip_sched, "connect", return_value=_fake_connect_cm(db)), \
              patch.object(ip_sched, "script_owned", return_value=script_row), \
              patch.object(ip_sched, "_resolve_extractor_llm", return_value=("deepseek", "deepseek-v4-flash")), \
+             patch.object(ip_sched, "_resolve_recorder_llm", return_value=("deepseek", "deepseek-v4-flash")), \
              patch.object(ip_sched, "_has_user_llm_credential", return_value=True):
             return ip.estimate_module_rebuild(1, 1, "world_key", body=body)
 
@@ -245,6 +250,7 @@ class RunnerCallsExtractFunctions(unittest.TestCase):
 
         with patch.object(ip_worker, "connect", return_value=_fake_connect_cm(db)), \
              patch.object(ip.JobController, "update", return_value=None), \
+             patch.object(ip.JobController, "is_cancelled", return_value=False), \
              patch.object(ip_worker, "finalize_job_if_unterminated", return_value=None):
             ip._run_module_rebuild("job1", 42, 7, module, body)
 
@@ -294,6 +300,7 @@ class RunnerCallsExtractFunctions(unittest.TestCase):
             self._run_module("worldbook_enrich", {"pattern": "战姬|神姬"})
         mock_enrich.assert_called_once_with(
             7, 42, pattern="战姬|神姬", api_id=None, model=None, apply=True,
+            include_editor=False,
             should_cancel=ANY, progress_cb=ANY,
         )
         self._assert_cancel_wired(mock_enrich)
@@ -347,6 +354,7 @@ class RunnerCallsExtractFunctions(unittest.TestCase):
              patch.object(ip_worker, "connect", return_value=_fake_connect_cm(MagicMock(
                  execute=MagicMock(return_value=_row(5))))), \
              patch.object(ip.JobController, "update") as mock_update, \
+             patch.object(ip.JobController, "is_cancelled", return_value=False), \
              patch.object(ip_worker, "finalize_job_if_unterminated", return_value=None):
             ip._run_module_rebuild("job1", 42, 7, "world_key", {})
         # 找到写终态那次 update 调用,断言 status 为 done_with_errors(overcut 记为 partial_failure)
@@ -357,7 +365,7 @@ class RunnerCallsExtractFunctions(unittest.TestCase):
 class NonOwnerRejected(unittest.TestCase):
     """4. 非 owner 调用被拒绝。schedule_module_rebuild 复用既有 script_owned 校验路径
     (platform_app.perms.script_owned,同一函数已被现有模块如 chunks/canon 使用,
-    owner 校验行为本身已由既存测试路径覆盖 —— 这里只确认三个新模块同样触发该校验,
+    owner 校验行为本身已由既存测试路径覆盖 —— 这里只确认四个新模块同样触发该校验,
     不重复造新的校验逻辑)。"""
 
     def _assert_rejected(self, module: str, body: dict | None = None):
@@ -377,13 +385,12 @@ class NonOwnerRejected(unittest.TestCase):
         self._assert_rejected("world_key")
 
     def test_world_key_use_llm_rejects_non_owner_before_credential_check(self):
-        # use_llm=True 会先触发 require_user_llm_credential;非 owner 校验应仍然生效
-        # (script_owned 在 credential 校验之后执行 —— 但即便凭证校验先跑,非owner用户
-        # 也不应该拿到 job_id;这里验证最终仍抛 ValueError)。
+        # 2026-10 起先校验所有权再做凭证检查:非 owner 不应从错误码/提示里
+        # 推断凭证状态,也不会把「无凭证」盖在「无权访问」上。
         with patch.object(ip_sched, "init_db"), \
              patch.object(ip_sched, "connect", return_value=_fake_connect_cm(MagicMock())), \
              patch.object(ip_sched, "script_owned", return_value=None), \
-             patch.object(ip_sched, "require_user_llm_credential", return_value=None):
+             patch.object(ip_sched, "_has_user_llm_credential", return_value=True):
             with self.assertRaises(ValueError):
                 ip.schedule_module_rebuild(999, 7, "world_key", body={"use_llm": True})
 

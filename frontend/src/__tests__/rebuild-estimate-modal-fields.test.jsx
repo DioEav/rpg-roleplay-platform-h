@@ -8,7 +8,7 @@
  */
 import React from 'react';
 import { describe, it, expect, vi } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen } from '@testing-library/react';
 import { RebuildEstimateModal } from '../components/RebuildEstimateModal.jsx';
 
 const ZERO = { ok: true, tokens_est: 0, cost_est: 0, affects: ['document_chunks'], prereqs: [] };
@@ -46,5 +46,69 @@ describe('RebuildEstimateModal 信息密度', () => {
     expect(screen.getByText('mimo-v2.6-flash')).toBeTruthy();
     expect(screen.queryByText('预估成本')).toBeNull();
     expect(screen.queryByText('kb_canon_entities')).toBeNull();
+  });
+
+  it('cards:不再提供“保留已有卡面内容”开关（改为自动手编保护）', () => {
+    renderModal(LLM, 'cards');
+    expect(screen.queryByLabelText(/保留已有卡面内容/)).toBeNull();
+    // 改为常驻提示：手编字段自动保护，刷新走编辑器里的“手编”标签
+    expect(screen.getByText(/自动保护/)).toBeTruthy();
+  });
+
+  it('worldbook_enrich:勾选 include_editor 会下发覆盖手编开关', () => {
+    const onOptionsChange = vi.fn();
+    render(
+      <RebuildEstimateModal
+        open
+        module="worldbook_enrich"
+        scriptId={1}
+        estimate={{ ...LLM, prereqs: [] }}
+        loading={false}
+        options={null}
+        onOptionsChange={onOptionsChange}
+        onClose={() => {}}
+        onConfirm={() => {}}
+      />,
+    );
+    fireEvent.click(screen.getByLabelText(/连手编条目一起覆盖/));
+    expect(onOptionsChange).toHaveBeenCalledWith({ include_editor: true });
+  });
+
+  it('canon:勾选“强制覆盖手编字段”会下发 force_overwrite_manual', () => {
+    const onOptionsChange = vi.fn();
+    render(
+      <RebuildEstimateModal
+        open
+        module="canon"
+        scriptId={1}
+        estimate={{ ...LLM, prereqs: [] }}
+        loading={false}
+        options={null}
+        onOptionsChange={onOptionsChange}
+        onClose={() => {}}
+        onConfirm={() => {}}
+      />,
+    );
+    fireEvent.click(screen.getByLabelText(/强制覆盖手编字段/));
+    expect(onOptionsChange).toHaveBeenCalledWith({ force_overwrite_manual: true });
+  });
+
+  it('cards:切换 LLM 时显式下发 chapter_max:null / mode（配合 hook 合并）', () => {
+    const onOptionsChange = vi.fn();
+    render(
+      <RebuildEstimateModal
+        open
+        module="cards"
+        scriptId={1}
+        estimate={{ ...LLM, prereqs: [] }}
+        loading={false}
+        options={null}
+        onOptionsChange={onOptionsChange}
+        onClose={() => {}}
+        onConfirm={() => {}}
+      />,
+    );
+    fireEvent.click(screen.getByLabelText(/LLM 丰富重建/));
+    expect(onOptionsChange).toHaveBeenCalledWith({ chapter_max: null, mode: 'llm' });
   });
 });

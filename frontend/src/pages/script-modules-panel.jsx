@@ -29,7 +29,7 @@ import { ModuleStatusCard } from '../components/ModuleStatusCard.jsx';
 import { ModuleMatrixOverview } from '../components/ModuleMatrixOverview.jsx';
 import { RebuildEstimateModal } from '../components/RebuildEstimateModal.jsx';
 
-// 收敛处置④:「知识库中心」新增三张模块卡(后端并行注册,契约:
+// 收敛处置④:「知识库中心」新增四张模块卡(后端并行注册,契约:
 // POST /api/scripts/{id}/rebuild/{module}[/estimate] 与既有 7 模块完全同构,
 // useScriptRebuild 的 cardProps(module) 天然适配,零改动即可接入)。
 export const EXTRA_MODULE_CARDS = [
@@ -101,8 +101,9 @@ export function useScriptRebuild(scriptId) {
         }
       }
     } catch (_) {
-      // backend not deployed yet — leave payload null, cards render in 'unknown'
-      setStatusPayload({ modules: {} });
+      // 网络抖动/后端重启:保留上一份快照,不要把全部卡片清成「未知」。
+      // 仅首次加载失败(还没有任何快照)才落空壳,让卡片显示 unknown。
+      setStatusPayload((prev) => prev || { modules: {} });
     } finally {
       setStatusLoading(false);
     }
@@ -234,11 +235,15 @@ export function useScriptRebuild(scriptId) {
 
   // 进度感知角色卡:cards 重建面板里改「重建到第 N 章」/「LLM 丰富」时,带新 options 重估并记下,
   // 让 confirmRebuild 用最新 options 派发(chapter_max / mode)。
+  // 2026-10:改为**合并**而不是整体替换 —— 弹窗里的 chapter_max / mode / source /
+  // include / force_overwrite_manual 是独立开关,每次只发自己那一份;直接替换会把
+  // 之前勾过的选项丢掉(例如先勾「强制覆盖」再改 chapter_max,force 会消失)。
   const updateOptions = React.useCallback(async (nextOptions) => {
     if (!pendingModule || !scriptId) return;
-    setPendingOptions(nextOptions || null);
-    await runEstimate(pendingModule, nextOptions || {});
-  }, [pendingModule, scriptId, runEstimate]);
+    const merged = { ...(pendingOptions || {}), ...(nextOptions || {}) };
+    setPendingOptions(merged);
+    await runEstimate(pendingModule, merged);
+  }, [pendingModule, pendingOptions, scriptId, runEstimate]);
 
   const closeEstimate = React.useCallback(() => {
     setPendingModule(null);
@@ -265,8 +270,15 @@ export function useScriptRebuild(scriptId) {
     } catch (e) {
       const p = (e && e.payload) || {};
       if (p.job_id) {
-        // 409 conflict — 复用已在跑的 job
+        // 409/单飞冲突 — 复用已在跑的 job;若后端带 error(参数不同/别的模块在跑),
+        // 必须显式提示,不能让用户以为自己新点的那个模式已经在跑。
         setActiveJob({ job_id: p.job_id, kind: `rebuild_${pendingModule}`, module: pendingModule, status: 'running', overall_progress: 0, overall_total: 100 });
+        if (p.error) {
+          window.__apiToast?.(
+            t('modules.toast.job_busy', { defaultValue: '已有任务在跑' }),
+            { kind: 'warn', duration: 4500, detail: p.error },
+          );
+        }
       } else {
         window.__apiToast?.(t('modules.toast.dispatch_fail', { defaultValue: '派发失败' }), { kind: 'danger', detail: p.error || e?.message || '' });
       }
@@ -285,6 +297,8 @@ export function useScriptRebuild(scriptId) {
       totalCount: m.total_count,
       lastJobId: m.last_job_id,
       lastRebuiltAt: m.last_rebuilt_at,
+      lastStatus: m.last_status,
+      lastError: m.last_error,
       source: m.source,
       activeJobId: activeJob ? (activeJob.job_id || activeJob.id) : null,
       onRebuild: openEstimate,
@@ -332,7 +346,7 @@ export function ModuleRebuildPanel({ scriptId }) {
   return (
     <CSSpaceBetween size="l">
       <ModuleMatrixOverview {...rb.matrixProps} />
-      {/* 收敛处置④:三张新模块卡——与既有 7 模块走同一套 rb.cardProps/openEstimate 机制,
+      {/* 收敛处置④:四张新模块卡——与既有 7 模块走同一套 rb.cardProps/openEstimate 机制,
           端点 POST /api/scripts/{id}/rebuild/{module}[/estimate] 自动成立(后端并行注册)。 */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: 12 }}>
         {EXTRA_MODULE_CARDS.map((m) => (

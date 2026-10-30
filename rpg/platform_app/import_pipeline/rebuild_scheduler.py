@@ -4,6 +4,7 @@
 """
 from __future__ import annotations
 
+import json
 import secrets
 import threading
 from typing import Any
@@ -12,6 +13,7 @@ from psycopg.types.json import Jsonb
 
 from ..db import connect, init_db
 from ..perms import script_owned
+from .errors import MissingUserCredentialError
 from .rebuild_registry import (
     REBUILD_MODULES,
     _embedding_preflight_or_raise,
@@ -23,8 +25,69 @@ from .stages_llm import (
     _credential_api_id_for,
     _has_user_llm_credential,
     _resolve_extractor_llm,
-    require_user_llm_credential,
 )
+
+# ── 执行侧模型解析(estimate / 凭证闸 / runner 必须同源)────────────────────
+# facts_refine / worldbook_enrich / world_key 的 runner 实际走 agents.recorder 的
+# 模型偏好(recorder.*, 回退 extractor.*);而 estimate 和凭证闸此前用 extractor.*。
+# 用户配了 recorder 模型但没配 key 时,估算显示可用、派发也过闸,执行才报
+# 「无可用 api/model」。这里统一按模块选择执行侧解析器。
+_RECORDER_MODULES = frozenset({"facts_refine", "worldbook_enrich", "world_key"})
+
+
+def _resolve_recorder_llm(user_id: int, body: dict[str, Any]) -> tuple[str, str]:
+    """recorder 模型解析(与 extract.facts_refine / worldbook_enrich / world_key 同源)。
+
+    单独包一层便于测试 patch;任何解析异常降级为 ("",""),由调用方按"无可用凭证"处理。
+    """
+    try:
+        from agents.recorder import _resolve_recorder_api_and_model
+        from model_aliases import normalize_api_id
+
+        api_id, model = _resolve_recorder_api_and_model(
+            user_id, body.get("api_id") or None, body.get("model") or None,
+        )
+        return normalize_api_id(api_id or ""), (model or "")
+    except Exception:
+        return "", ""
+
+
+def _execution_llm(user_id: int, module: str, body: dict[str, Any]) -> tuple[str, str]:
+    """返回该模块**执行侧**真正会用的 (api_id, model)。"""
+    if module in _RECORDER_MODULES:
+        return _resolve_recorder_llm(user_id, body)
+    return _resolve_extractor_llm(user_id)
+
+
+def _options_fingerprint(body: dict[str, Any] | None) -> str:
+    """任务参数指纹:用于判断"同 kind 已在跑"的任务是否和本次请求同参。
+
+    旧实现只看 kind,直接复用 job_id —— 用户先点「零 LLM 重建」再点「LLM 丰富重建」
+    会被静默合并成前者。这里把 options 标准化后比较,参数不同就明确报错。
+    """
+    try:
+        return json.dumps(body or {}, sort_keys=True, ensure_ascii=False, default=str)
+    except Exception:
+        return str(body or {})
+
+
+def _count_enrich_candidates(db, script_id: int, pattern: str, include_editor: bool = False) -> int:
+    """世界书充实的候选条目数(estimate / status / runner 三处必须同一口径)。
+
+    默认排除 metadata.source='editor' 的手编条目 —— runner 默认也不会覆盖它们
+    (见 extract.worldbook_enrich)。旧实现三处口径不一致:status 算全部、estimate
+    算全部、runner 覆盖全部,导致"手编条目被悄悄重写"且进度数字对不上。
+    """
+    sql = (
+        "select count(*) as c from worldbook_entries "
+        "where script_id = %s and title ~ %s"
+    )
+    params: list[Any] = [script_id, pattern]
+    if not include_editor:
+        from ..knowledge._manual import WORLDBOOK_CONTENT_GUARD_SQL
+        sql += WORLDBOOK_CONTENT_GUARD_SQL
+    row = db.execute(sql, tuple(params)).fetchone()
+    return int(row["c"]) if row else 0
 
 
 def estimate_module_rebuild(
@@ -124,15 +187,33 @@ def estimate_module_rebuild(
             "world_key": ["chapter_facts", "script_timeline_anchors"],
             "story_phase": ["chapter_facts", "phase_digests", "script_timeline_anchors"],
         }.get(module, [kind])
-        if module in {"chapter-facts", "anchors"} and chunks_total == 0:
+        # 章节是所有派生数据的根:chunks / chapter-facts 只依赖 script_chapters。
+        # 旧实现对 chapter-facts 也要求 chunks,实际 rebuild_facts_from_db 只读章节,
+        # 导致有章节、没切块时无法生成摘要。
+        if module in {"chunks", "chapter-facts"} and chapter_count == 0:
             prereqs.append({
-                "key": "chunks",
-                "label": "章节切块",
+                "key": "chapters",
+                "label": "章节",
                 "ok": False,
-                "hint": "当前剧本还没有章节切块,请先重做「章节切片」。",
-                "count": chunks_total,
-                "total": max(chapter_count, 1),
+                "hint": "该剧本还没有章节,请先导入正文或新建章节。",
+                "count": 0,
+                "total": 0,
             })
+        # anchors 真正读的是 chapter_facts(rebuild_timeline_from_db),不是 chunks。
+        # 旧实现给 anchors 挂「先重做章节切片」→ 有 facts 也被挡;反过来 facts 空时
+        # 估算放行、派发后才报「chapter_facts 没有章节数据」。world_key 同理。
+        if module in {"anchors", "world_key"}:
+            with connect() as db:
+                facts_total = _scalar(db, "select count(*) as c from chapter_facts where script_id = %s")
+            if facts_total == 0:
+                prereqs.append({
+                    "key": "chapter_facts",
+                    "label": "章节事实",
+                    "ok": False,
+                    "hint": "当前剧本还没有章节事实,请先重做「章节事实」。",
+                    "count": 0,
+                    "total": max(chapter_count, 1),
+                })
         # worldbook 默认 canon(零 LLM,从知识库人物建)且**无回退** → canon 为空时硬失败
         # 「kb_canon_entities 为空」(前端表现为「点了没反应」,群反馈行者无疆)→ 给阻断 prereq。
         # cards **不在此列**:rebuild_cards_from_canon 在 canon 为空时会退化为 facts 词频(零 LLM),
@@ -171,27 +252,50 @@ def estimate_module_rebuild(
                     "count": 0,
                     "total": max(chapter_count, 1),
                 })
-        # worldbook_enrich 充实的是已存在、标题命中 pattern 的世界书条目;世界书为空则无可充实。
-        if module == "worldbook_enrich" and wb_total == 0:
-            prereqs.append({
-                "key": "worldbook",
-                "label": "世界书条目",
-                "ok": False,
-                "hint": "当前剧本还没有世界书条目,请先重做「世界书」。",
-                "count": 0,
-            })
+        # worldbook_enrich 充实的是已存在、标题命中 pattern 且**非手编**的世界书条目。
+        # 候选为 0 时该模块对本剧本不适用(卡片会显示 n/a),估算层直接说明原因,
+        # 避免用户点了半天发现没有任何可处理条目。
+        if module == "worldbook_enrich":
+            _pattern = str(body.get("pattern") or "力量|概念|势力|体系")
+            _matched: int | None
+            try:
+                with connect() as db:
+                    _matched = _count_enrich_candidates(
+                        db, script_id, _pattern, bool(body.get("include_editor")),
+                    )
+            except Exception as exc:
+                # 标题正则是用户可传的 API 参数;非法正则不该把估算打成 500。
+                prereqs.append({
+                    "key": "pattern",
+                    "label": "匹配正则",
+                    "ok": False,
+                    "hint": f"标题正则无效：{str(exc)[:200]}",
+                })
+                _matched = None
+            if _matched == 0:
+                prereqs.append({
+                    "key": "worldbook_enrich_candidates",
+                    "label": "可充实条目",
+                    "ok": False,
+                    "hint": "没有标题命中核心设定词的可充实条目(手编条目默认跳过),该模块对本剧本不适用。",
+                    "count": 0,
+                })
         if needs_llm:
-            api_id, llm_model = _resolve_extractor_llm(user_id)
+            # estimate 必须和 runner 用同一套模型解析:facts_refine / worldbook_enrich /
+            # world_key 执行侧走 recorder.* 偏好(回退 extractor.*),其余走 extractor.*。
+            # 旧实现一律用 extractor,导致"估算可用、执行报无模型"。
+            api_id, llm_model = _execution_llm(user_id, module, body)
             model = llm_model
-            if not _has_user_llm_credential(user_id, api_id):
+            if not api_id or not _has_user_llm_credential(user_id, api_id):
                 prereqs.append({
                     "key": "llm_credentials",
                     "label": "LLM API Key",
                     "ok": False,
-                    "hint": "请先在「设置 → API 设置」配置知识提取模型的 API Key。",
+                    "hint": "请先在「设置 → API 设置」配置本模块实际使用的模型 API Key"
+                            "(摘要精炼/世界书充实/世界观切分走「史官」模型,其余走「知识提取」模型)。",
                     "api_id": api_id,
                     "model": llm_model,
-                    "credential_api_id": _credential_api_id_for(api_id),
+                    "credential_api_id": _credential_api_id_for(api_id) if api_id else "",
                     "needs_credentials": True,
                 })
             # 真·chat-LLM 路径才算 token+成本(否则「免费」会撒谎)。粗估,UI 标注≈。
@@ -268,23 +372,50 @@ def schedule_module_rebuild(
     # BYOK(第二层窄确认)—— 与 estimate_module_rebuild 同一对齐规则。
     if module == "world_key" and body.get("use_llm"):
         needs_llm = True
-    if needs_llm:
-        require_user_llm_credential(user_id)
+    # 先校验所有权再做凭证检查:非 owner 不应从错误码/提示里推断出凭证状态,
+    # 也避免"无凭证"错误盖掉"无权访问"。
     with connect() as db:
         if not script_owned(db, script_id, user_id):
             raise ValueError("无权访问该剧本")
-
+    if needs_llm:
+        # 凭证闸与 estimate / runner 同源:执行侧真正会用哪个 provider 就检查哪个。
+        _api_id, _llm_model = _execution_llm(user_id, module, body)
+        if not _api_id or not _has_user_llm_credential(user_id, _api_id):
+            raise MissingUserCredentialError(
+                _api_id or "unknown", _llm_model or "",
+                _credential_api_id_for(_api_id) if _api_id else "",
+            )
     if module == "embeddings":
         _embedding_preflight_or_raise(user_id)
 
     with connect() as db:
+        # 单飞（per-script）:同一剧本同一时刻只允许一个后台任务。
+        # 旧实现只按 kind 去重,两个标签页可以同时跑 canon 全量 + facts_refine
+        # (双倍 LLM 花费 + DB 争用);而全量导入本来就有全局并发闸,不该被 rebuild 绕过。
+        # 同 kind 且参数相同 → 复用(幂等);参数不同 → 明确报错,不能静默跑错模式。
         existing = db.execute(
-            "select job_id from import_jobs "
-            "where user_id = %s and script_id = %s and kind = %s "
-            "and status in ('pending', 'running') order by id desc limit 1",
-            (user_id, script_id, kind),
+            "select job_id, kind, budget_estimate from import_jobs "
+            "where user_id = %s and script_id = %s "
+            "and status in ('queued', 'pending', 'running') "
+            "order by id desc limit 1",
+            (user_id, script_id),
         ).fetchone()
         if existing:
+            if existing["kind"] != kind:
+                return {
+                    "ok": False,
+                    "code": "script_busy",
+                    "job_id": existing["job_id"],
+                    "error": f"该剧本已有任务在跑（{existing['kind']}），请等它完成或取消后再试。",
+                }
+            old_options = ((existing.get("budget_estimate") or {}).get("options") or {})
+            if _options_fingerprint(old_options) != _options_fingerprint(body):
+                return {
+                    "ok": False,
+                    "code": "options_mismatch",
+                    "job_id": existing["job_id"],
+                    "error": "该模块已有任务在跑且参数不同（如零 LLM / LLM 丰富），请等它完成后再试。",
+                }
             return {"ok": True, "job_id": existing["job_id"], "reused": True}
         job_id = f"rb_{module}_{script_id}_{secrets.token_hex(6)}"
         db.execute(
@@ -437,17 +568,14 @@ def _estimate_tokens_facts_refine(body, chapter_count) -> tuple[int, int]:
 
 
 def _estimate_tokens_worldbook_enrich(script_id, body) -> tuple[int, int]:
-    # 命中 pattern 的世界书条目数(与 enrich_script_worldbook 同一 `title ~ pattern`
-    # 查询口径,不调 LLM,只查一次 DB)× ~2k tokens/条目。
+    # 候选条目数必须与 runner 同一口径(默认排除 editor 手编,可 include_editor 覆盖),
+    # 否则估算的 token 数和实际会处理的条目数对不上。
     _pattern = str(body.get("pattern") or "力量|概念|势力|体系")
     try:
         with connect() as db:
-            _wb_hit_row = db.execute(
-                "select count(*) as c from worldbook_entries "
-                "where script_id = %s and title ~ %s",
-                (script_id, _pattern),
-            ).fetchone()
-        _n_entries = int(_wb_hit_row["c"]) if _wb_hit_row else 0
+            _n_entries = _count_enrich_candidates(
+                db, script_id, _pattern, bool(body.get("include_editor")),
+            )
     except Exception:
         _n_entries = 0
     est_in = _n_entries * 2000

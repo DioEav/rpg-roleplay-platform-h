@@ -52,8 +52,12 @@ def _ensure_parser_installed() -> Path | None:
     cwd = Path(tempfile.gettempdir()) / "babel_check"
     cwd.mkdir(exist_ok=True)
     pkg = cwd / "node_modules" / "@babel" / "parser"
-    if pkg.exists():
+    # 不能只看目录存在：上次 npm 中断会留下空目录，node 仍报 MODULE_NOT_FOUND，
+    # 测试却跳过重装。必须确认 package.json + 入口文件都在。
+    if (pkg / "package.json").exists() and (pkg / "lib" / "index.js").exists():
         return cwd
+    if pkg.exists():
+        shutil.rmtree(pkg, ignore_errors=True)
     try:
         subprocess.run(
             ["npm", "install", "--silent", "--no-audit", "--no-fund", "@babel/parser@7"],

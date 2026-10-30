@@ -41,8 +41,9 @@ export function ModuleMatrixOverview({ scriptId, status, loading, activeJobId, o
               totalCount={m.total_count}
               lastJobId={m.last_job_id}
               lastRebuiltAt={m.last_rebuilt_at}
+              lastStatus={m.last_status}
+              lastError={m.last_error}
               source={m.source}
-              metadata={m.metadata}
               activeJobId={activeJobId}
               onRebuild={onRebuild}
               onViewDetail={onViewDetail}

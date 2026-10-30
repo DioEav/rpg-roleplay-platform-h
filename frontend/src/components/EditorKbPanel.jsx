@@ -54,6 +54,9 @@ export function useKbHealthBadge(scriptId) {
       let staleCount = 0;
       for (const m of arr) {
         if (!m || typeof m !== 'object') continue;
+        // 2026-10:4 个增强模块(摘要精炼/世界书充实/世界观切分/阶段划分)也计入
+        // 健康徽标 —— 它们反映真实的数据完整度,用户要求可见。optional 字段只作为
+        // API 元数据保留,不再决定是否计数。
         const st = m.status || 'unknown';
         // n/a = 该剧本不适用此模块(如未启用嵌入),不是「需要重建」;旧逻辑把它算成 stale,
         // 新剧本徽标会一直亮一个用户无法处理的数量。

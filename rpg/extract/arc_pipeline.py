@@ -139,6 +139,7 @@ def run_arc_extraction(
     chapter_max: int | None = None,
     seed_sample: int = 12,
     progress_cb: Callable[[str, dict], None] | None = None,
+    force_overwrite_manual: bool = False,
 ) -> dict[str, Any]:
     """RAG + 弧段骨架算法。
 
@@ -263,7 +264,7 @@ def run_arc_extraction(
                           "succeeded": succeeded, "failed": len(arcs) - succeeded})
 
     if not extracts:
-        return {"ok": False, "error": "全部弧段 LLM 提取失败(共 %d 弧,无一成功;请检查「设置→API 设置」里知识提取模型的凭证是否可用)" % len(arcs)}
+        return {"ok": False, "error": f"全部弧段 LLM 提取失败(共 {len(arcs)} 弧,无一成功;请检查「设置→API 设置」里知识提取模型的凭证是否可用)"}
 
     # 4.5) era fallback:Pass 0 共识门严会返空,从 N 弧 Pass 1 二次共识(要求 ≥ 25% 弧投同票)
     if not era and extracts:
@@ -299,7 +300,11 @@ def run_arc_extraction(
 
     with connect() as db:
         # v28: 传 book_id → resolve_and_write 同步 NPC canon 进 character_cards 表
-        stats = R.resolve_and_write(db, script_id, extracts, embedder=embedder, book_id=book_id)
+        # 2026-10: force_overwrite_manual=True 时跳过手编字段保护（弹窗强制覆盖）。
+        stats = R.resolve_and_write(
+            db, script_id, extracts, embedder=embedder, book_id=book_id,
+            preserve_manual=not force_overwrite_manual,
+        )
         tl = R.build_timeline(db, script_id, extracts)
         wb = R.build_constant_worldbook(db, script_id, book_id, seed)
 

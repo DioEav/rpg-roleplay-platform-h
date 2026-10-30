@@ -588,8 +588,13 @@ def backfill_worldlines(
                 continue
             world_label = chapter_map[ch]
             in_world_time = clean_in_world_time(row.get("story_time_label") or "")
+            # in_world_time 只补空,不覆盖已有值:facts_refine 可能刚用 LLM 精炼过
+            # (metadata.source='llm_refined'),而 story_time_label 往往还是章标题
+            # 占位。旧实现无条件覆盖 → 先精炼再回填世界线,精炼成果直接丢失。
+            # NULL/空串 = 尚未提炼,才用清洗后的 story_time_label 兜底。
             db.execute(
-                "update chapter_facts set worldline_key=%s, in_world_time=%s "
+                "update chapter_facts set worldline_key=%s, "
+                "in_world_time = case when coalesce(in_world_time,'') = '' then %s else in_world_time end "
                 "where script_id=%s and chapter=%s",
                 (world_label, in_world_time or None, script_id, ch),
             )

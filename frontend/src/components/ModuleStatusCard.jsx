@@ -1,7 +1,7 @@
 /* ModuleStatusCard — Editorial × 古籍数字化 重设计版.
    保持所有 props contract 不变 (module / status / doneCount / totalCount / lastJobId /
    lastRebuiltAt / source / onRebuild / onViewDetail / activeJobId / extraActions /
-   title / description / metadata).
+   title / description).
    去除 Cloudscape 依赖 — 纯 CSS module + inline style.
 */
 
@@ -116,15 +116,6 @@ function fmtCountdown(iso, t) {
   } catch (_) { return null; }
 }
 
-/* ── Zhuyin (朱印) protagonist badge ── */
-function ZhuyinBadge({ t }) {
-  return (
-    <div className={s.zhuyinBadge} title={t('module_status.protagonist_badge_title')}>
-      <span className={s.zhuyinChar}>主</span>
-    </div>
-  );
-}
-
 /* ─────────────────────────────────────────────────────── */
 
 export function ModuleStatusCard({
@@ -135,6 +126,8 @@ export function ModuleStatusCard({
   totalCount,
   lastJobId,
   lastRebuiltAt,
+  lastStatus,
+  lastError,
   source: sourceOverride,
   onRebuild,
   onViewDetail,
@@ -142,7 +135,6 @@ export function ModuleStatusCard({
   extraActions,
   title,
   description,
-  metadata,        /* { is_protagonist? } — 后端已写 */
 }) {
   const { t } = useTranslation();
   const meta   = MODULE_META[module] || {};
@@ -155,7 +147,14 @@ export function ModuleStatusCard({
 
   const sinceStr       = fmtCountdown(lastRebuiltAt, t);
   const rebuildDisabled = !!activeJobId || status === 'running';
-  const isProtagonist  = metadata && metadata.is_protagonist;
+  // 上一次任务的失败态常驻显示:此前失败只有几秒 toast,卡片随后仍显示"就绪",
+  // 用户离开页面再回来完全看不出刚才失败过。error 由后端 modules-status 提供
+  // (已截首行,不含 traceback)。
+  const lastFailure = lastStatus === 'failed'
+    ? t('module_status.last_failed', { defaultValue: '上次任务失败' })
+    : lastStatus === 'done_with_errors'
+      ? t('module_status.last_partial', { defaultValue: '上次任务部分失败' })
+      : null;
 
   /* ── count display parts ── */
   const hasBoth = doneCount != null && totalCount != null && totalCount > 0;
@@ -170,8 +169,11 @@ export function ModuleStatusCard({
   const useCover = !!(unitInfo && unitInfo.cover && hasBoth);
 
   /* ── progress bar ── */
-  // cover 格式下 done/total 是跨单位比值(块数/章数),百分比无意义,不渲染进度条
-  const progress = useCover ? null : charProgressBar(doneCount, totalCount);
+  // cover 格式下 done/total 是跨单位比值(块数/章数),百分比无意义,不渲染进度条。
+  // n/a(模块对本剧本不适用)也不渲染计数/进度:后端为了状态派生会把 done 抬到 1,
+  // 直接显示会变成「1 章 · 覆盖 1487 章」这种误导文案。
+  const showCount = status !== 'n/a';
+  const progress = (!showCount || useCover) ? null : charProgressBar(doneCount, totalCount);
 
   /* ── card root class ── */
   let cardCls = s.card;
@@ -185,9 +187,6 @@ export function ModuleStatusCard({
 
   return (
     <div className={cardCls}>
-      {/* 朱印 — rendered absolutely inside card */}
-      {isProtagonist && <ZhuyinBadge t={t} />}
-
       {/* ── Head row: title + source tag + actions ── */}
       <div className={s.cardHead}>
         <div className={s.cardTitleGroup}>
@@ -231,7 +230,9 @@ export function ModuleStatusCard({
       <div className={s.cardBody}>
         {/* Count */}
         <div className={s.countBlock}>
-          {useCover ? (
+          {!showCount ? (
+            <span className={s.countDash}>—</span>
+          ) : useCover ? (
             <>
               {/* 跨单位格式:「4499 块 · 覆盖 1487 章」— done 与 total 单位不同,不渲染成分数 */}
               <span className={s.countNum}>{doneCount}</span>
@@ -271,6 +272,15 @@ export function ModuleStatusCard({
         {/* Time since */}
         {sinceStr && (
           <span className={s.timeLabel}>{sinceStr}</span>
+        )}
+        {lastFailure && (
+          <span
+            className={s.timeLabel}
+            style={{ color: 'var(--danger, #b4483c)' }}
+            title={lastError || ''}
+          >
+            {lastFailure}
+          </span>
         )}
       </div>
 

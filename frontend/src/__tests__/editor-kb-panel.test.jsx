@@ -64,6 +64,24 @@ describe('useKbHealthBadge', () => {
     expect(result.current).toEqual({ stale_count: 1, ready: false });
   });
 
+  it('optional 增强模块也计入 stale_count(2026-10 需求)', async () => {
+    window.api = {
+      scripts: {
+        getModulesStatus: vi.fn(async () => ({
+          ok: true,
+          modules: [
+            { module: 'chunks', status: 'ready' },
+            { module: 'facts_refine', status: 'missing', optional: true },
+            { module: 'worldbook_enrich', status: 'partial', optional: true },
+          ],
+        })),
+      },
+    };
+    const { result } = renderHook(() => useKbHealthBadge(42));
+    await waitFor(() => expect(result.current).not.toBeNull());
+    expect(result.current).toEqual({ stale_count: 2, ready: false });
+  });
+
   it('scriptId 为空 → 不请求,badge 为 null', async () => {
     const getModulesStatus = vi.fn();
     window.api = { scripts: { getModulesStatus } };

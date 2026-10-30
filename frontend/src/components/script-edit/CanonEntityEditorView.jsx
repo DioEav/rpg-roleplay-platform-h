@@ -19,6 +19,7 @@ import CSSelect from '@cloudscape-design/components/select';
 import CSTextFilter from '@cloudscape-design/components/text-filter';
 import CSPagination from '@cloudscape-design/components/pagination';
 import DetailDrawer from '../DetailDrawer.jsx';
+import { ManualBadge } from '../ManualBadge.jsx';
 import CSTokenGroup from '@cloudscape-design/components/token-group';
 import CSExpandableSection from '@cloudscape-design/components/expandable-section';
 import CSFormField from '@cloudscape-design/components/form-field';
@@ -122,6 +123,23 @@ export function CanonEntityEditorView({ scriptId, ownerId, currentUserId }) {
   const [items, setItems] = React.useState([]);
   const [loading, setLoading] = React.useState(true);
   const [reloadTick, setReloadTick] = React.useState(0);
+
+  // 精确解锁 canon 手编字段（field=null → 整行解锁）。
+  const onUnlockManual = React.useCallback(async (entity, field) => {
+    if (!entity?.logical_key) return;
+    try {
+      await window.api.scripts.canonUnlockManual(
+        scriptId, entity.logical_key, field ? [field] : null,
+      );
+      setReloadTick((x) => x + 1);
+      window.__apiToast?.(t('manual.unlocked', { defaultValue: '已取消手编标记' }),
+        { kind: 'ok', duration: 1600 });
+    } catch (err) {
+      window.__apiToast?.(t('manual.unlock_fail', { defaultValue: '取消手编标记失败' }),
+        { kind: 'danger', detail: err?.message });
+      throw err;
+    }
+  }, [scriptId, t]);
   // 服务端分页:数据量不设上限,按页拉取;total = 当前过滤条件下的真实总数(标题计数由此驱动)
   const PAGE_SIZE = 200;
   const [page, setPage] = React.useState(1);
@@ -353,18 +371,27 @@ export function CanonEntityEditorView({ scriptId, ownerId, currentUserId }) {
       );
     }
     return (
-      <span
-        title={entity.name || ''}
-        style={{
-          cursor: readonly ? 'default' : 'text',
-          borderBottom: readonly ? 'none' : '1px dashed var(--line-soft)',
-          // 名称列收窄:超长单行省略(悬停看全文,点「查看明细」/详情抽屉有完整信息)
-          display: 'inline-block', maxWidth: 140, verticalAlign: 'bottom',
-          overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-        }}
-        onClick={() => !readonly && setEditCell({ key: entity.logical_key, field: 'name', value: entity.name || '' })}
-      >
-        {entity.name || '—'}
+      <span style={{ display: 'inline-flex', alignItems: 'center', maxWidth: 220, overflow: 'hidden' }}>
+        <span
+          title={entity.name || ''}
+          style={{
+            cursor: readonly ? 'default' : 'text',
+            borderBottom: readonly ? 'none' : '1px dashed var(--line-soft)',
+            // 名称列收窄:超长单行省略(悬停看全文,点「查看明细」/详情抽屉有完整信息)
+            display: 'inline-block', maxWidth: 140, verticalAlign: 'bottom',
+            overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+          }}
+          onClick={() => !readonly && setEditCell({ key: entity.logical_key, field: 'name', value: entity.name || '' })}
+        >
+          {entity.name || '—'}
+        </span>
+        {/* 手编提示：字段级 manual_fields；旧数据 source='editor' 整行兜底 */}
+        <ManualBadge
+          fields={entity.attrs?.manual_fields}
+          source={entity.attrs?.source}
+          kind="canon"
+          onUnlock={readonly ? undefined : (field) => onUnlockManual(entity, field)}
+        />
       </span>
     );
   }
@@ -544,7 +571,15 @@ export function CanonEntityEditorView({ scriptId, ownerId, currentUserId }) {
               </div>
             )}
             <div style={{ paddingLeft: 16, borderLeft: '2px solid var(--line-soft)' }}>
-              <CSBox fontWeight="bold">{entity.name || entity.logical_key}</CSBox>
+              <CSBox fontWeight="bold">
+                {entity.name || entity.logical_key}
+                <ManualBadge
+                  fields={entity.attrs?.manual_fields}
+                  source={entity.attrs?.source}
+                  kind="canon"
+                  onUnlock={readonly ? undefined : (field) => onUnlockManual(entity, field)}
+                />
+              </CSBox>
               <CSBox fontSize="body-s" color="text-body-secondary">
                 {t(`scripts.edit.canon.type_${entity.type}`) || entity.type}
                 {entity.entity_subtype ? ` · ${entity.entity_subtype}` : ''}

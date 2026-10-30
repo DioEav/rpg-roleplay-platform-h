@@ -46,39 +46,84 @@ def upsert_canon_entity(db, script_id: int, logical_key: str, *, name: str, type
                         first_revealed_chapter: int = 0, public_knowledge: bool = False,
                         importance: int = 0, metadata: dict | None = None,
                         full_name: str = "", identity: str = "", background: str = "",
-                        entity_subtype: str = "", parent_logical_key: str = "") -> dict:
+                        entity_subtype: str = "", parent_logical_key: str = "",
+                        manual_fields: set[str] | None = None) -> dict:
     # v34: full_name / identity / background 进规范层 KB,GM 服务可从同一处取
     # v43: entity_subtype + parent_logical_key 解决"德军/铁人团/无忧宫"全平级 faction 问题
-    # 空串语义=不覆盖旧值(case when 保留已有);只在 LLM 抽到非空时更新。
+    # 2026-10 字段级手编:manual_fields 里的列在冲突更新时保留旧值，其余列正常刷新。
+    # 旧数据只有 attrs.source='editor' 没有 manual_fields 的整行兜底由调用方
+    # (resolve_and_write) 计算后以完整集合传入。
     return db.execute(
         """
         insert into kb_canon_entities(script_id, logical_key, name, aliases, type, summary, attrs,
           first_revealed_chapter, public_knowledge, importance, metadata,
           full_name, identity, background, entity_subtype, parent_logical_key)
-        values (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s, %s,%s,%s, %s,%s)
+        values (%(script_id)s, %(logical_key)s, %(name)s, %(aliases)s, %(type)s, %(summary)s,
+                %(attrs)s, %(first_revealed_chapter)s, %(public_knowledge)s, %(importance)s,
+                %(metadata)s, %(full_name)s, %(identity)s, %(background)s, %(entity_subtype)s,
+                %(parent_logical_key)s)
         on conflict(script_id, logical_key) do update set
-          name=excluded.name, aliases=excluded.aliases, type=excluded.type, summary=excluded.summary,
-          attrs=excluded.attrs, first_revealed_chapter=excluded.first_revealed_chapter,
-          public_knowledge=excluded.public_knowledge, importance=excluded.importance, metadata=excluded.metadata,
-          full_name = case when length(excluded.full_name) > 0
-                           then excluded.full_name else kb_canon_entities.full_name end,
-          identity = case when length(excluded.identity) > 0
-                          then excluded.identity else kb_canon_entities.identity end,
-          background = case when length(excluded.background) > 0
-                            then excluded.background else kb_canon_entities.background end,
-          entity_subtype = case when length(excluded.entity_subtype) > 0
-                                then excluded.entity_subtype else kb_canon_entities.entity_subtype end,
-          parent_logical_key = case when length(excluded.parent_logical_key) > 0
-                                    then excluded.parent_logical_key else kb_canon_entities.parent_logical_key end,
+          name=case when %(manual)s ? 'name' then kb_canon_entities.name else excluded.name end,
+          aliases=case when %(manual)s ? 'aliases' then kb_canon_entities.aliases else excluded.aliases end,
+          type=case when %(manual)s ? 'type' then kb_canon_entities.type else excluded.type end,
+          summary=case when %(manual)s ? 'summary' then kb_canon_entities.summary else excluded.summary end,
+          -- attrs/metadata 是开放对象：手编时整块保留；非手编时把新值并入旧值，
+          -- 同时保留 manual_fields/source 两个标记键（excluded 里没有它们）。
+          attrs=case when %(manual)s ? 'attrs' then kb_canon_entities.attrs
+                     else coalesce(kb_canon_entities.attrs,'{}'::jsonb)
+                          || (excluded.attrs - 'manual_fields' - 'source') end,
+          first_revealed_chapter=case when %(manual)s ? 'first_revealed_chapter'
+                                      then kb_canon_entities.first_revealed_chapter
+                                      else excluded.first_revealed_chapter end,
+          public_knowledge=case when %(manual)s ? 'public_knowledge'
+                                then kb_canon_entities.public_knowledge
+                                else excluded.public_knowledge end,
+          importance=case when %(manual)s ? 'importance' then kb_canon_entities.importance
+                          else greatest(coalesce(kb_canon_entities.importance,0),
+                                        coalesce(excluded.importance,0)) end,
+          metadata=case when %(manual)s ? 'metadata' then kb_canon_entities.metadata
+                        else coalesce(kb_canon_entities.metadata,'{}'::jsonb)
+                             || (excluded.metadata - 'manual_fields' - 'source') end,
+          full_name = case when %(manual)s ? 'full_name' then kb_canon_entities.full_name
+                           when length(excluded.full_name) > 0 then excluded.full_name
+                           else kb_canon_entities.full_name end,
+          identity = case when %(manual)s ? 'identity' then kb_canon_entities.identity
+                          when length(excluded.identity) > 0 then excluded.identity
+                          else kb_canon_entities.identity end,
+          background = case when %(manual)s ? 'background' then kb_canon_entities.background
+                            when length(excluded.background) > 0 then excluded.background
+                            else kb_canon_entities.background end,
+          entity_subtype = case when %(manual)s ? 'entity_subtype' then kb_canon_entities.entity_subtype
+                                when length(excluded.entity_subtype) > 0 then excluded.entity_subtype
+                                else kb_canon_entities.entity_subtype end,
+          parent_logical_key = case when %(manual)s ? 'parent_logical_key'
+                                    then kb_canon_entities.parent_logical_key
+                                    when length(excluded.parent_logical_key) > 0 then excluded.parent_logical_key
+                                    else kb_canon_entities.parent_logical_key end,
           -- 推进 updated_at:canon 编辑器以它为乐观锁基线。知识库重建/提取走本 upsert,
           -- 不推进版本的话,编辑器里未保存的旧内容会静默覆盖刚重建的实体。
           updated_at = now()
         returning *
         """,
-        (script_id, logical_key, name, Jsonb(aliases or []), type, summary, Jsonb(attrs or {}),
-         first_revealed_chapter, public_knowledge, importance, Jsonb(metadata or {}),
-         full_name or "", identity or "", background or "",
-         entity_subtype or "", parent_logical_key or ""),
+        {
+            "script_id": script_id,
+            "logical_key": logical_key,
+            "name": name,
+            "aliases": Jsonb(aliases or []),
+            "type": type,
+            "summary": summary,
+            "attrs": Jsonb(attrs or {}),
+            "first_revealed_chapter": first_revealed_chapter,
+            "public_knowledge": public_knowledge,
+            "importance": importance,
+            "metadata": Jsonb(metadata or {}),
+            "full_name": full_name or "",
+            "identity": identity or "",
+            "background": background or "",
+            "entity_subtype": entity_subtype or "",
+            "parent_logical_key": parent_logical_key or "",
+            "manual": Jsonb(sorted(manual_fields or [])),
+        },
     ).fetchone()
 
 

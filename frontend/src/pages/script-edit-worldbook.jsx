@@ -11,6 +11,7 @@ import React from 'react';
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
 import { usePlatformData } from '../platform-app.jsx';
+import { ManualBadge } from '../components/ManualBadge.jsx';
 
 import CSHeader from '@cloudscape-design/components/header';
 import CSTable from '@cloudscape-design/components/table';
@@ -366,6 +367,25 @@ export function WorldbookEditorView({ script }) {
     }
   }, [isOwner, selectedItems, script?.id, t, batching, batchPriority]);
 
+  /* ────── 精确解锁手编字段（field=null → 整条解锁） ────── */
+  const onUnlockManual = useCallback(async (entry, field) => {
+    if (!entry?.id || !script?.id) return;
+    try {
+      const r = await window.api.scripts.worldbookUnlockManual(
+        script.id, entry.id, field ? [field] : null,
+      );
+      const meta = r?.entry?.metadata ?? {};
+      setEntries(arr => arr.map(e => e.id === entry.id ? { ...e, metadata: meta } : e));
+      setDraft(d => (d && d.id === entry.id ? { ...d, metadata: meta } : d));
+      window.__apiToast?.(t('manual.unlocked', { defaultValue: '已取消手编标记' }),
+        { kind: 'ok', duration: 1600 });
+    } catch (err) {
+      window.__apiToast?.(t('manual.unlock_fail', { defaultValue: '取消手编标记失败' }),
+        { kind: 'danger', detail: err?.message });
+      throw err;
+    }
+  }, [script?.id, t]);
+
   /* ────── Fork ────── */
   const onFork = useCallback(async () => {
     setForking(true);
@@ -407,7 +427,16 @@ export function WorldbookEditorView({ script }) {
       sortingField: 'title',
       cell: (e) => (
         <div>
-          <CSBox fontWeight="bold">{e.title || e.keyword || e.name || e.key || '—'}</CSBox>
+          <CSBox fontWeight="bold">
+            {e.title || e.keyword || e.name || e.key || '—'}
+            {/* 手编提示：字段级 manual_fields；旧数据 source='editor' 走整行兜底 */}
+            <ManualBadge
+              fields={e.metadata?.manual_fields}
+              source={e.metadata?.source}
+              kind="worldbook"
+              onUnlock={isOwner ? (field) => onUnlockManual(e, field) : undefined}
+            />
+          </CSBox>
           {inferSubtype(e) && (
             <CSBox fontSize="body-s" color="text-body-secondary">{inferSubtype(e)}</CSBox>
           )}
@@ -463,7 +492,7 @@ export function WorldbookEditorView({ script }) {
         </span>
       ),
     },
-  ], [t, isOwner, openPanel]);
+  ], [t, isOwner, openPanel, onUnlockManual]);
 
   /* ────── render ────── */
 

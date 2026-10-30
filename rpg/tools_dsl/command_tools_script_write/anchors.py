@@ -93,6 +93,10 @@ def _t_update_anchor(user_id: int, script_id: int | None, args: dict, state: Any
                 params.append([str(x) for x in args["keywords"]])
             if not sets:
                 return "失败: 没有要更新的字段"
+            # 手编标记(2026-10):update_anchor 此前没写 source='editor' →
+            # 作者手改的原著锚点会被时间线重建删掉/重算。任何字段编辑都标 editor，
+            # 让 rebuild_timeline_from_db 的 "只删非 editor" 保护生效。
+            sets.append("source='editor'")
             # 确认预览时注入的版本基线:同一条 UPDATE WHERE 原子复核。
             base_ts = None
             if args.get("base_updated_at"):

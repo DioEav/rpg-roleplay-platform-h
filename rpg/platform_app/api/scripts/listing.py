@@ -14,6 +14,35 @@ from ...db import connect
 from .._deps import json_response, require_user, value_error_response
 from ._shared import router
 
+# modules-status 的 stale 传播依赖图。value = 该模块的**直接上游**；
+# "chapters" 代表 script_chapters 表本身（不是模块）。
+#
+# 背景：旧实现把「章节表最后一次编辑时间」和每个模块的最近 job 比较 → 改一个错别字
+# 就让 7 个主模块全部变「需要重建」。实际依赖是分层的：
+#   · 编辑一章 → 只有直接吃章节的 chunks / chapter-facts 需要重建；
+#   · chapter-facts 重做完成 → anchors / story_phase / facts_refine / world_key 才过期；
+#   · canon 重做完成 → cards / worldbook / embeddings 才过期。
+# 这样用户只会看到"真正该做的下一步"，而不是一屏红灯。
+# cards 的源取决于 canon 是否为空（canon 空时退化 facts 词频），函数内动态校正；
+# canon 全量读 chapters、resolve_only 读 chapter_facts，两个都列上（保守）。
+MODULE_UPSTREAMS: dict[str, tuple[str, ...]] = {
+    "chunks": ("chapters",),
+    "chapter-facts": ("chapters",),
+    "canon": ("chapters", "chapter-facts"),
+    "cards": ("canon",),  # 动态：canon_done==0 时改用 chapter-facts
+    "worldbook": ("canon", "chapter-facts"),
+    "anchors": ("chapter-facts",),
+    "embeddings": ("chunks", "cards", "worldbook", "canon"),
+    "facts_refine": ("chapter-facts",),
+    "worldbook_enrich": ("worldbook",),
+    "world_key": ("chapter-facts",),
+    "story_phase": ("chapter-facts",),
+}
+
+# 可选增强模块标记(仅 API 元数据):2026-10 起前端健康徽标**也计入**这些模块
+# (用户要求看到真实完整度)。保留该字段是为了让其它消费方仍能区分"开局必需/增强"。
+OPTIONAL_MODULES = frozenset({"facts_refine", "worldbook_enrich", "world_key", "story_phase"})
+
 
 @router.get("/api/scripts")
 # 同步 def:scripts_page 在协程里阻塞事件循环 → 启动六路请求被迫串行。线程池并行。
@@ -77,11 +106,9 @@ async def api_script_modules_status(script_id: int, user=Depends(require_user)):
             "select count(*) as c from chapter_facts where script_id = %s "
             "and metadata->>'source' = 'llm_refined'"
         )
-        # 世界书条目充实(额外卡):done/total = 可充实的核心条目数
-        # (标题命中 力量|概念|势力|体系 模式,与 enrich 执行侧同一口径)
-        enrich_total = _scalar(
-            "select count(*) as c from worldbook_entries where script_id = %s and title ~ '力量|概念|势力|体系'"
-        )
+        # 世界书条目充实(额外卡)的 done/total 在 job 映射之后计算(见下方),
+        # 因为候选口径要跟随"最近一次成功任务"的 include_editor / pattern。
+        # 默认跳过 metadata.source='editor' 的手编条目 —— 与 enrich 执行侧一致。
         # 世界观切分回填(额外卡):done = 已回填 worldline_key 的章数,total = 总章数。
         # 单世界书(worldless)特殊处理:回填器会如实返回「未发现多世界结构」,该模块对
         # 这本书是**不适用**而非缺失 —— done=total(=总章数) 让状态派生为 ready,
@@ -131,42 +158,134 @@ async def api_script_modules_status(script_id: int, user=Depends(require_user)):
                               "worldbook", "anchors", "embeddings", "story_phase"],
         }
         job_rows = db.execute(
-            "select kind, job_id, status, finished_at, created_at "
+            "select kind, job_id, status, finished_at, created_at, error, budget_estimate "
             "from import_jobs where script_id = %s "
             "order by created_at desc limit 50",
             (script_id,),
         ).fetchall()
         last_job_by_module: dict[str, dict[str, Any]] = {}
+        # 只有 done/done_with_errors 才算"数据已重建"。failed 任务只用于卡片上的
+        # 「上次失败」提示,不能拿它的 finished_at 洗白 stale —— 否则重建失败后模块
+        # 反而显示"就绪",用户看不出数据还是旧的。
+        last_success_by_module: dict[str, dict[str, Any]] = {}
         for r in job_rows:
             kind = r.get("kind") or ""
-            for mod in kind_to_modules.get(kind) or []:
-                if mod in last_job_by_module:
-                    continue  # job_rows 按时间倒序,首个即该模块最近一次
-                last_job_by_module[mod] = {
-                    "job_id": r.get("job_id"),
-                    "status": r.get("status"),
-                    "finished_at": str(r.get("finished_at")) if r.get("finished_at") else None,
-                    "kind": kind,
-                }
+            options = (r.get("budget_estimate") or {}).get("options") or {}
+            mode = str(options.get("source") or options.get("mode") or "").lower()
+            mods = kind_to_modules.get(kind) or []
+            # LLM 全量提取类任务会顺带写 canon/cards/anchors/worldbook:
+            #   · rebuild_canon 全量 = run_llm_extraction(全链路);resolve_only 只写 canon;
+            #   · cards 的 LLM 丰富重建同样走 run_llm_extraction(全链路)。
+            # 映射不全 → 数据已刷新但模块仍显示"需要重建"(误报)。
+            if kind == "rebuild_canon":
+                mods = (["canon"] if mode == "resolve_only"
+                        else ["canon", "cards", "anchors", "worldbook"])
+            elif kind == "rebuild_cards" and mode == "llm":
+                mods = ["canon", "cards", "anchors", "worldbook"]
+            payload = {
+                "job_id": r.get("job_id"),
+                "status": r.get("status"),
+                "finished_at": str(r.get("finished_at")) if r.get("finished_at") else None,
+                "kind": kind,
+                # 上次任务参数(canon resolve_only / worldbook source 等);
+                # stale 依赖图据此选"真正的上游",避免全量 canon 被 facts 重做误标。
+                "options": options,
+                # 失败原因给卡片常驻显示用。job.error 可能带 traceback,只留首行
+                # (与 get_job_status 的 SEC 处理一致,避免把绝对路径回传前端)。
+                "error": str(r.get("error") or "").split("\n", 1)[0][:300],
+            }
+            for mod in mods:
+                if mod not in last_job_by_module:
+                    last_job_by_module[mod] = payload  # job_rows 按时间倒序,首个即最近一次
+                if (str(r.get("status") or "") in ("done", "done_with_errors")
+                        and mod not in last_success_by_module):
+                    last_success_by_module[mod] = payload
+
+        # 世界书充实状态:候选/已充实口径必须跟随**最近一次成功任务**的设置。
+        # 用户勾选 include_editor 时,手编条目也应计入 total/done,否则进度会永远
+        # 显示"还有 N 条没充实"(实际那些条目是被主动跳过的)。pattern 同理。
+        _enrich_job = last_success_by_module.get("worldbook_enrich") or {}
+        _enrich_opts = _enrich_job.get("options") or {}
+        _enrich_include_editor = bool(_enrich_opts.get("include_editor"))
+        _enrich_pattern = str(_enrich_opts.get("pattern") or "力量|概念|势力|体系")
+        _enrich_where = "script_id = %s and title ~ %s"
+        _enrich_params: tuple = (script_id, _enrich_pattern)
+        if not _enrich_include_editor:
+            from ...knowledge._manual import WORLDBOOK_CONTENT_GUARD_SQL
+            _enrich_where += WORLDBOOK_CONTENT_GUARD_SQL
+        _et_row = db.execute(
+            f"select count(*) as c from worldbook_entries where {_enrich_where}",
+            _enrich_params,
+        ).fetchone()
+        enrich_total = int(_et_row["c"]) if _et_row else 0
+        _ed_row = db.execute(
+            f"select count(*) as c from worldbook_entries where {_enrich_where} "
+            "and metadata->>'enriched' = 'llm_r5'",
+            _enrich_params,
+        ).fetchone()
+        enrich_done = int(_ed_row["c"]) if _ed_row else 0
 
     # E2E 暴露:rebuild-panel agent 的前端读 m.done_count/m.total_count/m.status,
     # 但 _build 返的是 done/total + 没 status → 卡片"条数:—" + "modules.status.unknown"
     # 同时双写新字段(done_count/total_count/status)+ 老字段(done/total)兼容
-    def _build(name: str, done: int, total: int, not_applicable: bool = False) -> dict[str, Any]:
-        lj = last_job_by_module.get(name)
+    def _build(
+        name: str,
+        done: int,
+        total: int,
+        not_applicable: bool = False,
+        *,
+        optional: bool = False,
+    ) -> dict[str, Any]:
+        lj = last_job_by_module.get(name)          # 最近一次尝试(含失败,用于展示)
+        slj = last_success_by_module.get(name)     # 最近一次成功重建(用于 stale/时间)
         stale = False
-        if lj and lj.get("finished_at") and script_updated and done > 0:
-            stale = str(script_updated) > str(lj.get("finished_at"))
+        if slj and slj.get("finished_at") and done > 0:
+            # stale 走依赖图传播(见 MODULE_UPSTREAMS):只有直接上游比本模块最近一次
+            # **成功**重建更新才标 stale。failed 任务不能洗白 stale(见上方 last_success 注释)。
+            upstream = MODULE_UPSTREAMS.get(name, ())
+            if name == "cards":
+                # canon 为空时 cards 是从 facts 词频反推的,上游换成 chapter-facts。
+                upstream = ("canon",) if canon_done > 0 else ("chapter-facts",)
+            elif name == "canon":
+                # resolve_only 从 chapter_facts 重聚类;全量/导入读 chapters。
+                # 按上次成功重建的实际来源选上游,避免 facts 重做后把"全量 canon"误标过期
+                # (全量 canon 不读 facts,误报会诱导用户重烧一次昂贵的 LLM)。
+                _opts = slj.get("options") or {}
+                _mode = str(_opts.get("source") or _opts.get("mode") or "").lower()
+                upstream = ("chapter-facts",) if _mode == "resolve_only" else ("chapters",)
+            elif name == "worldbook":
+                # canon 聚合路径依赖 canon;LLM 抽取路径(含全量导入)依赖 chapter-facts。
+                _opts = slj.get("options") or {}
+                _mode = str(_opts.get("source") or _opts.get("mode") or "").lower()
+                if slj.get("kind") == "full_pipeline" or _mode == "llm":
+                    upstream = ("chapter-facts",)
+                else:
+                    upstream = ("canon",)
+            upstream_times: list[str] = []
+            for up in upstream:
+                if up == "chapters":
+                    if script_updated:
+                        upstream_times.append(str(script_updated))
+                else:
+                    up_job = last_success_by_module.get(up) or {}
+                    if up_job.get("finished_at"):
+                        upstream_times.append(str(up_job["finished_at"]))
+            # 依赖数据缺失(老数据没有 job 记录)时退回旧判定,保守标 stale 而不是漏报。
+            if not upstream_times and script_updated:
+                upstream_times.append(str(script_updated))
+            stale = bool(upstream_times and max(upstream_times) > str(slj["finished_at"]))
         # status 派生:
         #   running: 有活跃 job (pending/running)
-        #   stale:   旧版数据但 chapters 已变
+        #   stale:   直接上游已变,旧版数据未跟上
         #   ready:   done>=total>0 或 done>0 且 total=0(canon/cards 等无 total 概念)
         #   partial: 0<done<total
         #   missing: done==0
-        #   n/a:     模块对该剧本不适用(如单世界书的世界观切分)——非缺失也非失败
+        #   n/a:     模块对该剧本不适用(如单世界书的世界观切分/无候选的世界书充实)
         if not_applicable:
             status = "n/a"
-        elif lj and lj.get("status") in ("pending", "running"):
+        elif lj and lj.get("status") in ("queued", "pending", "running"):
+            # queued 也算运行中:全量导入在全局并发闸排队时,数据同样还没刷新,
+            # 卡片不应显示"就绪"诱导用户再点一次。
             status = "running"
         elif stale:
             status = "stale"
@@ -182,9 +301,15 @@ async def api_script_modules_status(script_id: int, user=Depends(require_user)):
             "total_count": total,     # 同上
             "status": status,         # 派生 'ready'|'partial'|'missing'|'stale'|'running'|'n/a'
             "not_applicable": not_applicable,
+            "optional": optional,     # 可选增强模块(前端健康徽标跳过,不制造永久红灯)
             "stale": stale,
             "last_job_id": (lj or {}).get("job_id"),
             "last_status": (lj or {}).get("status"),
+            # 前端卡片"x 分钟前"和失败态常驻提示依赖这两个字段;此前从未返回,
+            # 导致重建时间永不显示、失败只留几秒 toast。
+            # last_rebuilt_at 取"最近一次成功重建"(数据实际年龄),不是失败尝试的时间。
+            "last_rebuilt_at": (slj or {}).get("finished_at"),
+            "last_error": (lj or {}).get("error") or "",
         }
 
     return json_response({
@@ -193,12 +318,16 @@ async def api_script_modules_status(script_id: int, user=Depends(require_user)):
         "modules": [
             _build("chunks", chunks_done, max(chapter_count, 1)),
             _build("chapter-facts", facts_done, max(chapter_count, 1)),
-            _build("story_phase", story_phase_done, max(chapter_count, 1)),
+            _build("story_phase", story_phase_done, max(chapter_count, 1), optional=True),
             # 三张操作型额外卡:done/total 反映各自的操作覆盖面
-            # (摘要精炼/世界观切分按章计;条目充实按可充实条目计,0=无可充实条目→ready)
-            _build("facts_refine", refine_done, max(chapter_count, 1)),
-            _build("worldbook_enrich", enrich_total, 0),
-            _build("world_key", world_key_done, max(chapter_count, 1), not_applicable=world_key_not_applicable),
+            # (摘要精炼/世界观切分按章计;条目充实按"已充实/可充实"计,0 候选→n/a)
+            _build("facts_refine", refine_done, max(chapter_count, 1), optional=True),
+            _build(
+                "worldbook_enrich", enrich_done, enrich_total,
+                not_applicable=(enrich_total == 0), optional=True,
+            ),
+            _build("world_key", world_key_done, max(chapter_count, 1),
+                   not_applicable=world_key_not_applicable, optional=True),
             _build("canon", canon_done, 0),
             _build("cards", cards_done, 0),
             _build("worldbook", wb_done, 0),
@@ -258,7 +387,7 @@ async def api_script_timeline(script_id: int, user=Depends(require_user)):
             """
             select id, story_phase, story_time_label, chapter_min, chapter_max,
                    chapter_count, sample_summary, confidence, keywords, sample_title,
-                   updated_at
+                   source, updated_at
             from script_timeline_anchors
             where script_id = %s
             order by chapter_min asc, id asc
@@ -286,6 +415,8 @@ async def api_script_timeline(script_id: int, user=Depends(require_user)):
             # 会静默覆盖 DB 真实值(审计 P0 数据丢失)。keywords 是 text[] → 原样返回数组。
             "keywords": r["keywords"] or [],
             "sample_title": r["sample_title"] or "",
+            # 手编标记:update_anchor 现在会写 source='editor';前端据此显示「手编」标签。
+            "source": r.get("source") or "novel",
             # 乐观锁基线:锚点 PUT 的 base_updated_at 与之比对。
             "updated_at": r["updated_at"],
         })

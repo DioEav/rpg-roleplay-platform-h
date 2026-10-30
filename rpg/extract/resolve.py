@@ -62,6 +62,32 @@ class CanonEntity:
     parent_logical_key: str = ""
 
 
+# 全量重抽实际会 UPDATE 的 canon 列（2026-10 强制覆盖语义）。
+# 无条件更新的列：upsert SQL 不判断 excluded 是否为空，直接写新值。
+# 注意不含 attrs/metadata：resolve_and_write 不传这两个对象，upsert 里只是
+# old.attrs || '{}'（等价原值），并没有真正覆盖用户手编的 JSON 内容 —— 它们的
+# manual 标记必须保留；否则“强制覆盖”会把没被动过的 attrs 也误标成系统数据。
+_CANON_ALWAYS_WRITTEN: frozenset[str] = frozenset({
+    "name", "aliases", "type", "summary",
+    "first_revealed_chapter", "public_knowledge", "importance",
+})
+# 条件更新的列：upsert SQL 用 `case when length(excluded.x) > 0` 保留旧值 ——
+# 本次抽到空值时字段并没有被覆盖，手编标记必须留着，否则用户手写的 identity 会被
+# 下一次普通重建当成“系统数据”刷新掉。
+_CANON_WRITTEN_IF_NONEMPTY: tuple[str, ...] = (
+    "full_name", "identity", "background", "entity_subtype", "parent_logical_key",
+)
+
+
+def _canon_overwritten_fields(c: CanonEntity) -> set[str]:
+    """本次全量重抽对单个 canon entity 真正会写到的字段集合。"""
+    written = set(_CANON_ALWAYS_WRITTEN)
+    for f in _CANON_WRITTEN_IF_NONEMPTY:
+        if getattr(c, f, ""):
+            written.add(f)
+    return written
+
+
 def _slug(name: str) -> str:
     s = re.sub(r"\s+", "_", _to_simplified(name).strip())
     return re.sub(r"[^\w一-鿿·.-]", "", s)[:80] or "entity"
@@ -354,7 +380,7 @@ def cluster_entities(mentions: dict, *, embedder=None, sim_threshold: float = 0.
     归一名相等 / 互为子串(如 薇欧拉 ⊂ 薇欧拉小姐);嵌入仅作高阈值(默认 0.95)次级信号
     且要求首字相同。**绝不靠嵌入把不同人名合并**(0.86 旧阈值会把 14 个角色并成 1)。"""
     by_type: dict[str, list] = defaultdict(list)
-    for (name, typ), rec in mentions.items():
+    for (_name, typ), rec in mentions.items():
         by_type[typ].append(rec)
 
     canon: list[CanonEntity] = []
@@ -572,7 +598,8 @@ def compute_protagonist_importance(canon: list, chapter_extracts: list, *, title
 
 
 def resolve_and_write(db, script_id: int, chapter_extracts: list, *, embedder=None,
-                      public_threshold: int = 3, book_id: int | None = None) -> dict:
+                      public_threshold: int = 3, book_id: int | None = None,
+                      preserve_manual: bool = True) -> dict:
     """完整 Pass2:消歧 → 写 kb_canon_entities + 同步 NPC 角色卡到 character_cards。
 
     v28: 新增 character_cards 同步。把 type='character' 的 canon entity 落进 character_cards
@@ -580,6 +607,8 @@ def resolve_and_write(db, script_id: int, chapter_extracts: list, *, embedder=No
     字段与 PC/persona 完全对齐(由 v28 多态合并保证)。
 
     book_id 可不传(从 books 表按 script_id 反查),传则直接用。
+    preserve_manual(2026-10):默认 True = 按 manual_fields 字段级保护手编内容；
+      False = 弹窗「强制覆盖手编字段」显式要求覆盖，跳过所有手编保护。
     """
     mentions = gather_entity_mentions(chapter_extracts)
     canon = cluster_entities(mentions, embedder=embedder)
@@ -680,9 +709,41 @@ def resolve_and_write(db, script_id: int, chapter_extracts: list, *, embedder=No
         if c.parent_logical_key == c.logical_key:
             c.parent_logical_key = ""
 
+    # 字段级手编保护(2026-10):先取已有实体的 manual_fields，逐实体决定哪些列
+    # 本次可以刷新、哪些必须保留。旧数据只有 attrs.source='editor' 没有 manual_fields
+    # → 全部字段保护（整行兜底）。全字段手编的实体直接跳过，避免只推进 updated_at
+    # 打乱编辑器乐观锁基线。
+    from platform_app.knowledge._manual import (
+        CANON_MANUAL_FIELDS,
+        clear_canon_force_marks,
+        protected_canon_fields,
+    )
+    manual_by_key: dict[str, set[str]] = {}
+    if preserve_manual:
+        try:
+            for _r in db.execute(
+                "select logical_key, attrs from kb_canon_entities where script_id = %s",
+                (script_id,),
+            ).fetchall():
+                _prot = protected_canon_fields(_r.get("attrs"))
+                if _prot:
+                    manual_by_key[_r["logical_key"]] = _prot
+        except Exception as _ee:
+            import logging as _lg
+            _lg.getLogger(__name__).warning(
+                "[resolve] canon manual_fields 查询失败,本次按无手编处理: %s", _ee)
+
     written = 0
+    skipped_editor = 0
+    manual_protected = 0
     for c in canon:
-        canon_repo.upsert_canon_entity(
+        manual = manual_by_key.get(c.logical_key, set())
+        if manual:
+            manual_protected += 1
+        if manual and set(CANON_MANUAL_FIELDS) <= manual:
+            skipped_editor += 1
+            continue
+        row = canon_repo.upsert_canon_entity(
             db, script_id, c.logical_key, name=c.name, type=c.type, aliases=c.aliases,
             summary=c.summary, first_revealed_chapter=c.first_revealed_chapter,
             public_knowledge=(c.importance > public_threshold and c.first_revealed_chapter == 1),
@@ -693,18 +754,33 @@ def resolve_and_write(db, script_id: int, chapter_extracts: list, *, embedder=No
             full_name=c.full_name,
             identity=c.identity,
             background=c.background,
+            manual_fields=manual,
         )
+        # 强制覆盖（preserve_manual=False）后只清“本次真正写到”的字段标记：
+        # 无条件列直接清；full_name/identity/... 只在本次抽到非空值时才清。
+        # 这样 canonical upsert 虽然放开了保护，但用户在其他字段上的手编标记不会被误删。
+        if not preserve_manual and row:
+            clear_canon_force_marks(
+                db, script_id, c.logical_key,
+                row.get("attrs") if isinstance(row, dict) else None,
+                _canon_overwritten_fields(c),
+            )
         written += 1
 
     # v28: 同步 character 类 canon → character_cards 表(NPC 角色卡)
     character_canon = [c for c in canon if c.type == "character"]
-    npc_cards_written = sync_character_cards_from_canon(db, script_id, character_canon, book_id=book_id)
+    npc_cards_written = sync_character_cards_from_canon(
+        db, script_id, character_canon, book_id=book_id,
+        preserve_manual=preserve_manual,
+    )
 
     # phase_backend: 把 cluster_entities 的 stats(embedder_fallback / cluster_method)
     # 透出给 progress 上报,告知前端"这次提取的实体聚类用了向量 vs 纯启发式",
     # 帮 ops 判断 Vertex 配额/凭证健康度。
     cluster_stats = getattr(cluster_entities, "_last_stats", {}) or {}
     return {"mentions": len(mentions), "entities_written": written,
+            "skipped_editor_entities": skipped_editor,
+            "manual_protected_entities": manual_protected,
             "by_type": _count_by_type(canon),
             "npc_cards_written": npc_cards_written,
             "embedder_fallback": bool(cluster_stats.get("embedder_fallback")),
@@ -713,7 +789,8 @@ def resolve_and_write(db, script_id: int, chapter_extracts: list, *, embedder=No
 
 
 def sync_character_cards_from_canon(db, script_id: int, character_canon: list[CanonEntity],
-                                    *, book_id: int | None = None) -> int:
+                                    *, book_id: int | None = None,
+                                    preserve_manual: bool = True) -> int:
     """把 type='character' 的 CanonEntity 同步进 character_cards(card_type='npc')。
 
     v28 后 character_cards 是多态表(npc/pc/persona 三态合一),NPC 行约束:
@@ -733,12 +810,53 @@ def sync_character_cards_from_canon(db, script_id: int, character_canon: list[Ca
         book_id = int(row["id"])
 
     written = 0
+    # 字段级手编保护(2026-10):先取已有卡的 manual_fields，逐人物决定哪些字段
+    # 这次可以用新抽取值刷新、哪些必须保留。旧数据只有 source='editor' 没有
+    # manual_fields → 全部人设字段保护（整行兜底）。
+    # force（preserve_manual=False）也需要这份旧 metadata 来做“只清实际覆盖字段”的
+    # 标记回收，所以两条路径都查。
+    from platform_app.knowledge._manual import (
+        clear_character_card_force_marks,
+        protected_card_fields,
+    )
+    existing_meta_by_name: dict[str, dict] = {}
+    try:
+        for _r in db.execute(
+            "select name, metadata from character_cards "
+            "where script_id = %s and card_type = 'npc'", (script_id,),
+        ).fetchall():
+            existing_meta_by_name[_r["name"]] = _r.get("metadata") or {}
+    except Exception as _exc:
+        import logging as _lg
+        _lg.getLogger(__name__).warning(
+            "[resolve] card manual_fields 查询失败,本次按无手编处理: %s", _exc)
     for c in character_canon:
-        # INSERT … ON CONFLICT DO UPDATE 一把搞定:
+        protected = (protected_card_fields(existing_meta_by_name.get(c.name))
+                     if preserve_manual else set())
+        # 手编字段传空值 → SQL 的 "excluded 非空才覆盖" 保留旧值;
+        # 非手编字段传新值 → 正常刷新。清空型手编（用户把字段改成空）也靠这里保留。
+        new_full_name = "" if "full_name" in protected else c.full_name
+        new_aliases = [] if "aliases" in protected else c.aliases
+        new_identity = "" if "identity" in protected else c.identity
+        new_background = "" if "background" in protected else c.background
+        # force 时本次真正会被 SQL 写进去的字段 = 传了非空值的那些
+        # （空串/空数组走 SQL 的 else 分支保留旧值，不能算覆盖）。
+        overwritten = set()
+        if not preserve_manual:
+            # 与 SQL 的 `length(excluded.x) > 0` 对齐：只有空串算“没写”，
+            # 不要用 strip()（纯空白串 SQL 仍会写进去，标记也应清）。
+            if str(new_full_name or ""):
+                overwritten.add("full_name")
+            if new_aliases:
+                overwritten.add("aliases")
+            if str(new_identity or ""):
+                overwritten.add("identity")
+            if str(new_background or ""):
+                overwritten.add("background")
+        # INSERT … ON CONFLICT DO UPDATE:
         #   新行 → 插入提取字段
-        #   旧行 → 用 LLM 新抽的覆盖 aliases/first_revealed_chapter/importance,
-        #          identity/background/full_name 仅在 EXCLUDED 非空时覆盖(避免空字符串
-        #          把用户已编辑过的内容刷没)
+        #   旧行 → 手编字段保留；非手编字段用新抽取值刷新（空值不覆盖旧值）。
+        #   first_revealed_chapter 取更早、importance 取更高(只增不减,防回退)。
         db.execute(
             """
             insert into character_cards(
@@ -751,12 +869,12 @@ def sync_character_cards_from_canon(db, script_id: int, character_canon: list[Ca
             on conflict(script_id, name) where card_type = 'npc' do update set
               full_name = case when length(excluded.full_name) > 0
                                then excluded.full_name else character_cards.full_name end,
-              aliases = excluded.aliases,
+              aliases = case when jsonb_array_length(coalesce(excluded.aliases,'[]'::jsonb)) > 0
+                             then excluded.aliases else character_cards.aliases end,
               identity = case when length(excluded.identity) > 0
                               then excluded.identity else character_cards.identity end,
               background = case when length(excluded.background) > 0
                                 then excluded.background else character_cards.background end,
-              -- 重抽时:取更早的首次出场章节、保留更高的 importance(防 LLM 偶尔漏抽某章而回退)
               first_revealed_chapter = case
                 when character_cards.first_revealed_chapter = 0 then excluded.first_revealed_chapter
                 when excluded.first_revealed_chapter = 0 then character_cards.first_revealed_chapter
@@ -766,10 +884,16 @@ def sync_character_cards_from_canon(db, script_id: int, character_canon: list[Ca
               row_version = character_cards.row_version + 1,
               updated_at = now()
             """,
-            (book_id, script_id, c.name, c.full_name, Jsonb(c.aliases),
-             c.identity, c.background, c.first_revealed_chapter, c.importance,
+            (book_id, script_id, c.name, new_full_name, Jsonb(new_aliases),
+             new_identity, new_background, c.first_revealed_chapter, c.importance,
              Jsonb({"source": "extracted", "logical_key": c.logical_key})),
         )
+        # 强制覆盖只清本次真的写进去的字段；personality/tags 等本次没写的标记保留。
+        if overwritten:
+            clear_character_card_force_marks(
+                db, script_id, c.name,
+                existing_meta_by_name.get(c.name), overwritten,
+            )
         written += 1
     return written
 
@@ -991,7 +1115,8 @@ def _entry_trigger_keys(name: str, canon_by_name: dict) -> list[str]:
     return out
 
 
-def build_constant_worldbook(db, script_id: int, book_id: int, seed) -> int:
+def build_constant_worldbook(db, script_id: int, book_id: int, seed,
+                             *, preserve_manual: bool = True) -> int:
     """生成 worldbook_entries — 每个 faction/power_concept/location 独立一条。
 
     book_id 必填。priority 分层同时决定 insertion_position(见 _worldbook_insertion_position):
@@ -1168,27 +1293,70 @@ def build_constant_worldbook(db, script_id: int, book_id: int, seed) -> int:
                             _entry_trigger_keys(nm, canon_by_name)))
 
     written = 0
+    # 字段级手编 guard：preserve_manual=False（弹窗强制覆盖）时全部退化为 true。
+    def _guard(field: str) -> str:
+        if not preserve_manual:
+            return "true"
+        return (
+            f"coalesce(worldbook_entries.metadata->'manual_fields','[]'::jsonb) ? '{field}' "
+            "or (coalesce(worldbook_entries.metadata->>'source','') = 'editor' "
+            "and worldbook_entries.metadata->'manual_fields' is null)"
+        )
+
+    # 非强制：保留 existing 的 source/manual_fields 标记，只并入新产物的其它键。
+    # 强制：也先保留旧标记（字段值已由 _guard 放开写入）；循环结束后再按本次真正写到的
+    # 列清标记。这样 tags/title 等本次没写的字段手编标记不会被误删。
+    _metadata_expr = (
+        "coalesce(worldbook_entries.metadata,'{}'::jsonb) "
+        "|| (excluded.metadata - 'source' - 'manual_fields')"
+    )
+    written_titles: list[str] = []
     for title, content, priority, keys in entries:
         # 分派 insertion_position:高价值(索引/纪元/核心势力)常驻;detail 卡走 'worldbook'
         # 靠 keys 触发,退出 constant 3000 预算竞争(病灶=旧实现全员 constant 致 detail 被静默丢)。
         ipos = _worldbook_insertion_position(priority)
-        db.execute(
-            """
+        cur = db.execute(
+            f"""
             insert into worldbook_entries(book_id, script_id, title, content, keys, priority, insertion_position, enabled, metadata)
             values (%s, %s, %s, %s, %s, %s, %s, true, %s)
             on conflict(script_id, title) do update set
-              content=excluded.content, priority=excluded.priority,
-              keys=excluded.keys,
-              insertion_position=excluded.insertion_position,
-              metadata=excluded.metadata, updated_at=now()
-            where coalesce(worldbook_entries.metadata->>'source','') not in ('editor','llm_pipeline')
+              -- 字段级手编保护(2026-10):manual_fields 里列出的字段保留旧值；
+              -- 旧数据只有 source='editor' 没有 manual_fields → 整行兜底。
+              -- preserve_manual=False（强制覆盖）时 guard 恒 true，所有字段刷新。
+              content = case when {_guard("content")}
+                then worldbook_entries.content else excluded.content end,
+              priority = case when {_guard("priority")}
+                then worldbook_entries.priority else excluded.priority end,
+              keys = case when {_guard("keys")}
+                then worldbook_entries.keys else excluded.keys end,
+              insertion_position = case when {_guard("insertion_position")}
+                then worldbook_entries.insertion_position else excluded.insertion_position end,
+              metadata = {_metadata_expr},
+              updated_at=now()
+            where coalesce(worldbook_entries.metadata->>'source','') <> 'llm_pipeline'
             """,
             (book_id, script_id, title, content, Jsonb(keys), priority, ipos,
              Jsonb({"source": "extracted"})),
         )
-        # 同名冲突时 editor 与 llm_pipeline 条目不覆盖(各路产物叠加,先到先得);
-        # refreshed 的是 extracted 自己的旧条目。written 计数含被保护跳过的行,
+        # rowcount=0 表示同名 llm_pipeline 条目被保护跳过 → 它没被本次写到，
+        # 不能清它的手编标记。只有真正 insert/update 的行才进入清理清单。
+        if getattr(cur, "rowcount", 0) and getattr(cur, "rowcount", 0) > 0:
+            written_titles.append(title)
+        # 同名冲突时 llm_pipeline 条目不覆盖(canon 重建不越界删 LLM 产物);
+        # editor 条目只保护手编字段，其余字段仍可刷新。written 计数含被保护的行,
         # 与 before/after_count 口径一致(真实条数以表内 count 为准)。
         written += 1
+    if not preserve_manual and written_titles:
+        # 只清 canon 骨架本次实际写的 content/keys/priority/insertion_position；
+        # tags/title/regex_keys/character_filter/scene_filter 的标记继续保留。
+        from platform_app.knowledge._manual import (
+            WORLDBOOK_REBUILD_WRITTEN_FIELDS,
+            clear_worldbook_force_marks,
+        )
+        clear_worldbook_force_marks(
+            db, script_id, written_titles,
+            written_fields=WORLDBOOK_REBUILD_WRITTEN_FIELDS,
+            default_source="extracted",
+        )
     return written
 

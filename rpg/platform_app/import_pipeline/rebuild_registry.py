@@ -23,7 +23,7 @@ REBUILD_MODULES = {
     "worldbook":     ("rebuild_worldbook",    "世界书重建",   True),  # may be True or False depending on source
     "anchors":       ("rebuild_anchors",      "时间线重建",   False),
     "embeddings":    ("rebuild_embeddings",   "向量重嵌入",   False),
-    # 三个新模块(原 CLI-only 提取能力接入 rebuild 框架,补 API/UI 缺口):
+    # 四个新模块(原 CLI-only 提取能力接入 rebuild 框架,补 API/UI 缺口):
     # · facts_refine: chapter_facts 摘要/故事内时间 LLM 精炼(extract.facts_refine.refine_script),
     #   恒需 BYOK LLM。
     "facts_refine":  ("rebuild_facts_refine", "章节摘要精炼", True),

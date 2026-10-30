@@ -17,6 +17,8 @@
       "title": "模块矩阵",
       "desc": "剧本所有派生数据的当前状态。每个模块可独立重做。"
     },
+    "force_overwrite_label": "强制覆盖手编字段（默认关闭）",
+    "force_overwrite_help": "勾选后本次重建会忽略手编保护，用 LLM/派生结果覆盖本次实际写到的字段；未覆盖的行/字段仍保留「手编」标记。建议先导出剧本 pack 备份。",
     "status": {
       "missing": "未生成",
       "na": "不适用",
@@ -67,6 +69,7 @@
       "cancel_fail": "取消请求失败",
       "dispatched": "重做任务已派发",
       "dispatch_fail": "派发失败",
+      "job_busy": "已有任务在跑",
       "rebuild_done": "重做完成",
       "rebuild_partial": "重做完成,但部分内容可能不完整",
       "rebuild_failed": "重做失败",
@@ -78,15 +81,18 @@
     },
     "chapter-facts": {
       "title": "章节摘要",
-      "desc": "每章 LLM 摘要 + 故事时间标签"
+      "desc": "确定性规则抽取的每章摘要/时间标签（LLM 精炼见「章节摘要 LLM 精炼」）"
     },
     "chapter_facts": {
       "title": "章节摘要",
-      "desc": "每章 LLM 摘要 + 故事时间标签"
+      "desc": "确定性规则抽取的每章摘要/时间标签（LLM 精炼见「章节摘要 LLM 精炼」）"
     },
     "canon": {
       "title": "知识库人物",
-      "desc": "LLM 抽出的人物/势力/地点/物品/概念实体"
+      "desc": "LLM 抽出的人物/势力/地点/物品/概念实体",
+      "resolve_only_label": "零 LLM 重新聚类（仅从章节事实重建实体，不调用 LLM）",
+      "resolve_only_help_on": "免费、秒完成；只重组已落库的章节事实，不会发现新实体，也不会刷新实体摘要。",
+      "resolve_only_help_off": "默认走全量 LLM 重抽（消耗 API Key），会重新阅读章节并产出更完整的实体与摘要。"
     },
     "cards": {
       "title": "NPC 角色卡",
@@ -95,7 +101,11 @@
       "chapter_max_placeholder": "留空 = 全书；填进度章可避免引入未登场角色",
       "chapter_max_help": "只回填该章前已登场的角色，并保留每个角色的首次揭示章（防剧透）。",
       "llm_enrich_label": "LLM 丰富重建（消耗你的 API Key，产更丰富的该时期人设）",
-      "llm_enrich_help": "默认零 LLM、免费。勾选后按区间重抽该时期态；无 Key 会自动降级到免费版。"
+      "llm_enrich_help": "默认零 LLM、免费。勾选后按区间重抽该时期态；无 Key 会自动降级到免费版。",
+      "preserve_label": "保留已有卡面内容（不覆盖手编 identity / 别名）",
+      "preserve_help": "推荐保持勾选：零 LLM / LLM 丰富都只补空字段，手编内容不会被覆盖。",
+      "preserve_help_off": "已关闭保护：本次重做会用 canon 摘要 / LLM 抽取结果刷新已有 identity/别名。",
+      "auto_protect_help": "手编字段（identity/别名等）会自动保护；要刷新可点编辑器里的“手编”标签逐字段解锁，或勾选下方「强制覆盖手编字段」。"
     },
     "worldbook": {
       "desc": "世界观条目集,GM 上下文常驻参考",
@@ -114,6 +124,28 @@
       "include_label": "重嵌哪些类型",
       "include_help": "重做 = 先把选中类型的向量清空再全部重嵌;未勾选的类型原样保留。零 LLM,只消耗嵌入模型配额。",
       "include_empty": "至少选一个类型。"
+    },
+    "facts_refine": {
+      "title": "章节摘要 LLM 精炼",
+      "desc": "把确定性残句摘要升级为 LLM 真摘要 + 故事内时间"
+    },
+    "worldbook_enrich": {
+      "title": "世界书核心条目充实",
+      "desc": "对力量体系/核心设定类条目做机制级充实（默认跳过手编条目）",
+      "include_editor_label": "连手编条目一起覆盖（include_editor）",
+      "include_editor_help_on": "已开启：标题命中核心设定词的手编条目也会被 LLM 重写。请确认原措辞不再需要。",
+      "include_editor_help_off": "默认跳过 metadata.source=editor 的手编条目；只有显式勾选才会覆盖。"
+    },
+    "world_key": {
+      "title": "世界观切分回填",
+      "desc": "多世界书(无限流/穿越)按世界切段,可选 LLM 确认边界",
+      "llm_label": "追加 LLM 窄确认（消耗你的 API Key）",
+      "llm_help_on": "在结构先验之后，对每个段边界调用一次 LLM 复核；new_world 必须引用摘要原话举证，无证据降级为连续世界。",
+      "llm_help_off": "默认零 LLM：按卷/章标题结构先验切分多世界，免费；误判留给 LLM 窄确认修正。"
+    },
+    "story_phase": {
+      "title": "阶段划分",
+      "desc": "LLM 把章节划分到 开端/发展/结局 五阶段,重算阶段摘要与锚点归属"
     }
   },
   "common": {
@@ -7991,6 +8023,8 @@
     "action_detail": "明细",
     "count_unit": "条",
     "cover_chapters": "覆盖 {{total}} 章",
+    "last_failed": "上次任务失败",
+    "last_partial": "上次任务部分失败",
     "protagonist_badge_title": "主角",
     "source_mixed_llm": "可选 LLM",
     "source_zero_llm": "零 LLM",
@@ -8007,6 +8041,59 @@
     "unit_facts": "条",
     "unit_world_key": "章",
     "unit_worldbook": "条"
+  },
+  "manual": {
+    "badge": "手编",
+    "tip_fields": "手编字段：{{fields}}",
+    "tip_legacy": "手编内容（旧数据，整行保护）",
+    "unlock_title": "手编字段（勾选 = 受保护）",
+    "unlock_all": "取消整行手编",
+    "unlock_hint": "取消勾选后，该字段允许下一次重建用 LLM 结果覆盖。",
+    "legacy_hint": "旧数据没有字段清单，整行受保护。取消后允许重建覆盖。",
+    "fields": {
+      "card": {
+        "full_name": "全名",
+        "aliases": "别名",
+        "identity": "身份",
+        "background": "背景",
+        "appearance": "外貌",
+        "personality": "性格",
+        "speech_style": "说话风格",
+        "current_status": "当前状态",
+        "secrets": "秘密",
+        "sample_dialogue": "台词示例",
+        "tags": "标签"
+      },
+      "canon": {
+        "name": "名称",
+        "aliases": "别名",
+        "type": "类型",
+        "summary": "摘要",
+        "attrs": "扩展属性",
+        "first_revealed_chapter": "首次揭示章",
+        "public_knowledge": "公开知识",
+        "importance": "重要度",
+        "metadata": "元数据",
+        "full_name": "全名",
+        "identity": "身份",
+        "background": "背景",
+        "entity_subtype": "子类型",
+        "parent_logical_key": "上级实体"
+      },
+      "worldbook": {
+        "title": "标题",
+        "content": "正文",
+        "keys": "触发关键词",
+        "regex_keys": "正则关键词",
+        "character_filter": "角色过滤",
+        "scene_filter": "场景过滤",
+        "priority": "优先级",
+        "insertion_position": "插入位置",
+        "tags": "标签"
+      }
+    },
+    "unlocked": "已取消手编标记",
+    "unlock_fail": "取消手编标记失败"
   },
   "policy_banner": {
     "days_until_effective": "{{count}} 天后生效",

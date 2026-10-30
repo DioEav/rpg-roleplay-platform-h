@@ -326,6 +326,8 @@ def test_worldbook_update_uses_atomic_baseline():
         "sticky_turns": 0, "cooldown_turns": 0, "probability": 100.0, "enabled": True,
         "keys": [], "regex_keys": [], "character_filter": [], "scene_filter": [],
         "insertion_position": "worldbook",
+        # 2026-10: update 快照/手编标记读取 metadata
+        "metadata": {},
     }
 
     class DB:

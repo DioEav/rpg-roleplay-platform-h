@@ -64,4 +64,12 @@ describe('ModuleStatusCard 计数单位', () => {
     expect(screen.getByText('块')).toBeTruthy();
     expect(screen.queryByText(/覆盖/)).toBeNull();
   });
+
+  it('n/a:不渲染计数/覆盖/进度,只显示占位横线', () => {
+    // 后端为让状态派生为 n/a 会把 done 抬到 1;旧卡片会渲染「1 章 · 覆盖 1487 章」。
+    renderCard({ module: 'world_key', doneCount: 1, totalCount: 1487, status: 'n/a' });
+    expect(screen.getByText('—')).toBeTruthy();
+    expect(screen.queryByText(/覆盖 1487 章/)).toBeNull();
+    expect(screen.queryByText(/%/)).toBeNull();
+  });
 });

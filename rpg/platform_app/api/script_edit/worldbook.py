@@ -15,6 +15,46 @@ from ._shared import _parse_baseline_ts, _require_owner, _write_commit, router
 
 # ─── worldbook CRUD ───────────────────────────────────────────────────────────
 
+def _wb_changed_fields(body: dict[str, Any], before: dict[str, Any]) -> set[str]:
+    """本次编辑真正改变的字段集合（用于字段级手编标记）。
+
+    编辑器保存会整包提交 title/content/priority/enabled/tags 等所有字段，
+    不能把 body 里出现的键都算成手编 —— 否则改一个字段会让全部字段亮「手编」，
+    与 NPC 角色卡的"逐字段 diff"不一致。这里与 before 行逐字段比较，只返回
+    值确实变化的列；enabled/probability 即使变化也不在 WORLDBOOK_MANUAL_FIELDS
+    里，不会点亮手编标签。
+    """
+    changed: set[str] = set()
+    for col in ("title", "content", "insertion_position"):
+        if col in body and str(body.get(col) or "") != str(before.get(col) or ""):
+            changed.add(col)
+    for col in ("priority", "token_budget", "sticky_turns", "cooldown_turns", "first_revealed_chapter"):
+        if col in body:
+            try:
+                if int(body[col]) != int(before.get(col) or 0):
+                    changed.add(col)
+            except (TypeError, ValueError):
+                pass
+    if "probability" in body:
+        try:
+            if float(body["probability"]) != float(before.get("probability") or 0):
+                changed.add("probability")
+        except (TypeError, ValueError):
+            pass
+    if "enabled" in body and bool(body["enabled"]) != bool(before.get("enabled", True)):
+        changed.add("enabled")
+    for col in ("keys", "regex_keys", "character_filter", "scene_filter"):
+        if col in body and isinstance(body[col], list):
+            if [str(x) for x in body[col]] != [str(x) for x in (before.get(col) or [])]:
+                changed.add(col)
+    if "tags" in body and isinstance(body["tags"], list):
+        _meta = before.get("metadata")
+        old_tags = (_meta.get("tags") if isinstance(_meta, dict) else None) or []
+        if [str(x) for x in body["tags"]] != [str(x) for x in old_tags]:
+            changed.add("tags")
+    return changed
+
+
 @router.put("/api/scripts/{script_id}/worldbook/{entry_id}")
 async def api_worldbook_update(
     request: Request, script_id: int, entry_id: int, user=Depends(require_user)
@@ -70,6 +110,8 @@ async def api_worldbook_update(
         before = dict(before_row)
 
         sets, args = [], []
+        _before_meta = before.get("metadata")
+        _old_meta = dict(_before_meta) if isinstance(_before_meta, dict) else {}
         for col in ("title", "content", "insertion_position"):
             if col in body:
                 sets.append(f"{col}=%s")
@@ -99,10 +141,11 @@ async def api_worldbook_update(
                 args.append(Jsonb([str(x) for x in body[col]]))
         if "tags" in body and isinstance(body["tags"], list):
             # tags 存进 metadata.tags
-            meta = dict(before.get("metadata") or {})
-            meta["tags"] = body["tags"]
-            sets.append("metadata=%s")
-            args.append(Jsonb(meta))
+            _old_meta["tags"] = body["tags"]
+
+        # 关键：编辑器保存会整包提交所有字段，手编标记只认"值真的变了"的字段。
+        # 用 before 行做 diff（与 NPC 角色卡同一口径），否则改一个字段会让全部字段亮手编。
+        changed = _wb_changed_fields(body, before)
 
         # KB 卫生(设计 O §5.2):正文/标题变了 → 脏化向量(NULL embedding_vec)。否则编辑后行仍带
         # 旧内容的向量,而「重做」的增量循环 `WHERE embedding_vec IS NULL` 命中 0 行 → 秒完成且向量过期
@@ -111,8 +154,24 @@ async def api_worldbook_update(
             sets.append("embedding_vec=NULL")
             sets.append("embedded_at=NULL")
 
-        if not sets:
+        if not sets and not changed:
             return json_response({"ok": False, "error": "无可更新字段"}, status_code=400)
+
+        # 字段级手编标记(2026-10):记录本次实际改动的列。旧数据只有
+        # meta.source='editor' 没有 manual_fields → 先按整行兜底，再并上本次改动。
+        # 只有"内容类"字段变化才写标记：仅切换 enabled/probability 不把手编标签点亮，
+        # 否则条目会被误判成整行手编、后续重建无法刷新正文。
+        from platform_app.knowledge._manual import WORLDBOOK_MANUAL_FIELDS, is_legacy_editor
+        _manual = set(_old_meta.get("manual_fields") or [])
+        _legacy = is_legacy_editor(_old_meta)
+        if _legacy:
+            _manual |= set(WORLDBOOK_MANUAL_FIELDS)
+        _manual_delta = changed & set(WORLDBOOK_MANUAL_FIELDS)
+        _manual |= _manual_delta
+        if _manual_delta or _manual or _legacy:
+            _new_meta = {**_old_meta, "source": "editor", "manual_fields": sorted(_manual)}
+            sets.append("metadata=%s")
+            args.append(Jsonb(_new_meta))
 
         sets.append("updated_at=now()")
         args.extend([entry_id, script_id])
@@ -209,9 +268,17 @@ async def api_worldbook_add(
 
         tags = body.get("tags") if isinstance(body.get("tags"), list) else []
         # source='editor':标记为「用户/编辑器手写」,与 AI 工具 upsert_worldbook_entry 一致,
-        # 让 resolve.py 重建知识库时豁免本条(coalesce(source)<>'editor'),不被 canon 重建覆盖/清除。
-        # 此前 UI「新建」漏打此标记 → 手建条目会被重建静默覆盖(harness provenance 审计 P1)。
-        meta: dict[str, Any] = {"tags": tags, "source": "editor"}
+        # 让重建时按字段豁免本条。新建 = 用户提供的字段都是手编字段（字段级标记）。
+        from platform_app.knowledge._manual import WORLDBOOK_MANUAL_FIELDS
+        _manual = {
+            k for k in WORLDBOOK_MANUAL_FIELDS
+            if k in body and body.get(k) is not None
+        }
+        meta: dict[str, Any] = {
+            "tags": tags,
+            "source": "editor",
+            "manual_fields": sorted(_manual),
+        }
 
         new_row = db.execute(
             """
@@ -265,6 +332,50 @@ async def api_worldbook_add(
     except Exception:
         pass
     return json_response({"ok": True, "entry": after, "commit_id": commit_id})
+
+
+@router.post("/api/scripts/{script_id}/worldbook/{entry_id}/unlock-manual")
+async def api_worldbook_unlock_manual(
+    request: Request, script_id: int, entry_id: int, user=Depends(require_user)
+):
+    """取消世界书条目的手编标记（字段级精确解锁 / 整条解锁）。仅 owner。"""
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    fields = body.get("fields") if isinstance(body.get("fields"), list) else None
+    with connect() as db:
+        try:
+            _require_owner(db, script_id, user["id"])
+        except ValueError as exc:
+            return value_error_response(exc, status_code=403)
+        before = db.execute(
+            "SELECT id, metadata FROM worldbook_entries WHERE id=%s AND script_id=%s",
+            (entry_id, script_id),
+        ).fetchone()
+        if not before:
+            return json_response({"ok": False, "error": "worldbook entry 不存在"}, status_code=404)
+        from ...knowledge._manual import unlock_manual_fields
+        new_meta = unlock_manual_fields(
+            before.get("metadata"), fields, default_source="extracted",
+        )
+        db.execute(
+            "UPDATE worldbook_entries SET metadata=%s, updated_at=now() "
+            "WHERE id=%s AND script_id=%s",
+            (Jsonb(new_meta), entry_id, script_id),
+        )
+        try:
+            _write_commit(
+                db, script_id=script_id, user_id=user["id"],
+                kind="worldbook_unlock_manual",
+                message=f"取消 worldbook 手编标记 #{entry_id}",
+                payload={"table": "worldbook_entries", "op": "unlock_manual",
+                         "ids": {"entry_id": entry_id}, "fields": fields or []},
+            )
+        except Exception:
+            pass
+        db.commit()
+    return json_response({"ok": True, "entry": {"id": entry_id, "metadata": new_meta}})
 
 
 @router.delete("/api/scripts/{script_id}/worldbook/{entry_id}")
@@ -387,8 +498,18 @@ async def api_worldbook_batch(
                 (action == "enable", ids, script_id),
             ).fetchall()
         else:  # set_priority
+            # 批量改优先级 = 用户对"重要度"的手编：同时把 priority 写进
+            # metadata.manual_fields，避免下一次 canon 重建把优先级刷回去。
+            # enable/disable 不标手编（只是显示开关，不是内容编辑）。
             rows = db.execute(
-                "UPDATE worldbook_entries SET priority=%s, updated_at=now() "
+                "UPDATE worldbook_entries SET priority=%s, updated_at=now(), "
+                "metadata = coalesce(metadata,'{}'::jsonb) "
+                "  || jsonb_build_object('source','editor') "
+                "  || jsonb_build_object('manual_fields', ("
+                "       SELECT jsonb_agg(DISTINCT v) "
+                "       FROM jsonb_array_elements_text("
+                "         coalesce(metadata->'manual_fields','[]'::jsonb) || '\"priority\"'::jsonb"
+                "       ) AS t(v))) "
                 "WHERE id = ANY(%s) AND script_id=%s RETURNING id",
                 (priority, ids, script_id),
             ).fetchall()
