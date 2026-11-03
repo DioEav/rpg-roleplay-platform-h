@@ -24,6 +24,7 @@ export function RebuildEstimateModal({ open, module, scriptId, estimate, loading
   const isCanon = module === 'canon';
   const isWorldKey = module === 'world_key';
   const isAnchors = module === 'anchors';
+  const isChunks = module === 'chunks';
   // 有字段级手编保护的模块：显示「强制覆盖手编字段」开关（worldbook_enrich 用它自己的
   // include_editor 开关，不重复显示）。
   const showForce = ['cards', 'canon', 'worldbook', 'anchors'].includes(module);
@@ -45,6 +46,9 @@ export function RebuildEstimateModal({ open, module, scriptId, estimate, loading
   // 按类型重嵌:embeddings 的 include 勾选本地态。默认全选 = 后端不传 include 时的行为,
   // 所以打开弹窗时不需要额外重估一次。
   const [embedKinds, setEmbedKinds] = React.useState(EMBED_KINDS);
+  // 阶段 4:chunks 默认增量(只重切变更章);embeddings 默认完整重嵌(增量只补 NULL)。
+  const [chunkIncremental, setChunkIncremental] = React.useState(true);
+  const [embedIncremental, setEmbedIncremental] = React.useState(false);
   // 弹窗每次打开(module 变化)重置本地态,避免上次残留。
   React.useEffect(() => {
     if (open && isCards) {
@@ -54,6 +58,11 @@ export function RebuildEstimateModal({ open, module, scriptId, estimate, loading
     if (open && isEmbeddings) {
       const inc = options && Array.isArray(options.include) ? options.include.filter((k) => EMBED_KINDS.includes(k)) : null;
       setEmbedKinds(inc && inc.length ? inc : EMBED_KINDS);
+      setEmbedIncremental(!!(options && options.incremental));
+    }
+    if (open && isChunks) {
+      // 未显式传 incremental=false 时默认增量;结构/版本变化由后端自动全量。
+      setChunkIncremental(options?.incremental !== false);
     }
     if (open && isWorldbook) {
       setWbLlm(!!(options && (options.source === 'llm' || options.mode === 'llm')));
@@ -80,7 +89,19 @@ export function RebuildEstimateModal({ open, module, scriptId, estimate, loading
       ? EMBED_KINDS.filter((k) => k === kind || embedKinds.includes(k))  // 保持 EMBED_KINDS 顺序
       : embedKinds.filter((k) => k !== kind);
     setEmbedKinds(next);
-    if (next.length && onOptionsChange) onOptionsChange({ include: next });
+    if (next.length && onOptionsChange) onOptionsChange({ include: next, incremental: embedIncremental });
+  };
+
+  // 阶段 4:chunks 增量重切(只处理变更章,结构/版本变化自动全量)。
+  const onChunkIncrementalToggle = (checked) => {
+    setChunkIncremental(checked);
+    if (onOptionsChange) onOptionsChange({ incremental: checked });
+  };
+
+  // 阶段 4:embeddings 增量只补 NULL,不清空已有向量。
+  const onEmbedIncrementalToggle = (checked) => {
+    setEmbedIncremental(checked);
+    if (onOptionsChange) onOptionsChange({ include: embedKinds, incremental: checked });
   };
 
   const emitOptions = React.useCallback((nextCh, nextLlm) => {
@@ -183,6 +204,27 @@ export function RebuildEstimateModal({ open, module, scriptId, estimate, loading
       }
     >
       <div className={s.estimateBody}>
+        {/* 阶段 4:章节切片增量重切开关 */}
+        {isChunks && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 14,
+                        padding: '12px 14px', border: '1px solid var(--border, #d8d2c4)', borderRadius: 6 }}>
+            <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, cursor: 'pointer' }}>
+              <input
+                type="checkbox"
+                checked={chunkIncremental}
+                onChange={(e) => onChunkIncrementalToggle(e.target.checked)}
+                disabled={loading}
+              />
+              <span>{t('modules.chunks.incremental_label', { defaultValue: '增量重切（只处理内容变更的章节）' })}</span>
+            </label>
+            <span style={{ fontSize: 11, color: 'var(--muted-2, #9a8f78)', marginLeft: 24 }}>
+              {chunkIncremental
+                ? t('modules.chunks.incremental_help_on', { defaultValue: '只重切 updated_at 变化的章节，未变章节的 chunks 与向量原样保留；首次、切片版本变化、章节结构变化会自动回退全量。' })
+                : t('modules.chunks.incremental_help_off', { defaultValue: '全量重切：清空整本 chunks 并重建，随后需要重嵌全部向量。' })}
+            </span>
+          </div>
+        )}
+
         {/* 按类型重嵌:embeddings 的 include 勾选(后端早就支持 body.include,只是 UI 一直没给口子) */}
         {isEmbeddings && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 14,
@@ -205,6 +247,21 @@ export function RebuildEstimateModal({ open, module, scriptId, estimate, loading
             </div>
             <span style={{ fontSize: 11, color: 'var(--muted-2, #9a8f78)' }}>
               {t('modules.embeddings.include_help', { defaultValue: '重做 = 先把选中类型的向量清空再全部重嵌;未勾选的类型原样保留。零 LLM,只消耗嵌入模型配额。' })}
+            </span>
+            <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, cursor: 'pointer' }}>
+              <input
+                type="checkbox"
+                data-testid="embed-incremental"
+                checked={embedIncremental}
+                onChange={(e) => onEmbedIncrementalToggle(e.target.checked)}
+                disabled={loading}
+              />
+              <span>{t('modules.embeddings.incremental_label', { defaultValue: '增量：只补未嵌入的条目，不清空已有向量' })}</span>
+            </label>
+            <span style={{ fontSize: 11, color: 'var(--muted-2, #9a8f78)', marginLeft: 24 }}>
+              {embedIncremental
+                ? t('modules.embeddings.incremental_help_on', { defaultValue: '只补 embedding_vec/embedding 为 NULL 的条目；适合刚增量重切/新增章节后补向量。内容已改但向量仍存在的卡片/世界书不会被刷新，需完整重嵌。' })
+                : t('modules.embeddings.incremental_help_off', { defaultValue: '完整重嵌：先清空选中类型的向量再全部重嵌，内容改动一定会刷新。' })}
             </span>
             {noEmbedKind && (
               <span style={{ fontSize: 11, color: 'var(--danger, #b4483c)' }}>

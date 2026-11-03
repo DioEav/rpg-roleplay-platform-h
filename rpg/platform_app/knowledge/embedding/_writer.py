@@ -198,9 +198,9 @@ def _embed_chunks_loop_inner(script_id: int, user_id: int) -> None:
     _consecutive_fails = 0
     while True:
         with connect() as db:
-            # 拉一批未 embed 的(只拉 id+content,内存友好)
+            # 拉一批未 embed 的(只拉 id+content+metadata,内存友好)
             rows = db.execute(
-                "select id, content from document_chunks "
+                "select id, content, metadata from document_chunks "
                 "where script_id = %s and embedding_vec is null "
                 "order by chapter_index, chunk_index limit %s",
                 (script_id, BATCH_SIZE),
@@ -208,7 +208,18 @@ def _embed_chunks_loop_inner(script_id: int, user_id: int) -> None:
         if not rows:
             break
 
-        texts = [r["content"][:PER_CHUNK_CHAR_LIMIT] for r in rows]  # 见模块顶 PER_CHUNK_CHAR_LIMIT 注释
+        # v2:嵌入文本 = context_header + 原文(整块),让向量带"第几章/什么标题"的上下文。
+        # 旧块没有 header → 退化为纯原文,零行为变化。PER_CHUNK_CHAR_LIMIT 已提到 1250,
+        # 覆盖 1200 块 + header。
+        texts = []
+        for r in rows:
+            meta = r.get("metadata")
+            if not isinstance(meta, dict):
+                meta = {}  # 历史脏数据可能是 list/string;不能假设 object
+            header = str(meta.get("context_header") or "").strip()
+            base = r.get("content") or ""
+            text = f"{header}\n{base}" if header else base
+            texts.append(text[:PER_CHUNK_CHAR_LIMIT])
         vecs = _embed_batch(texts, user_id=user_id)
         if vecs is None:
             _consecutive_fails += 1
@@ -234,7 +245,7 @@ def _embed_chunks_loop_inner(script_id: int, user_id: int) -> None:
             if _n == 0:
                 break
             with connect() as db:
-                for r, v in zip(rows[:_n], vecs[:_n]):
+                for r, v in zip(rows[:_n], vecs[:_n], strict=False):
                     db.execute(
                         "update document_chunks set embedding_vec = %s::vector, embedded_at = now() where id = %s",
                         (_vec_literal(v), r["id"]),
@@ -242,7 +253,7 @@ def _embed_chunks_loop_inner(script_id: int, user_id: int) -> None:
             continue
 
         with connect() as db:
-            for r, v in zip(rows, vecs):
+            for r, v in zip(rows, vecs, strict=False):
                 db.execute(
                     "update document_chunks set embedding_vec = %s::vector, embedded_at = now() where id = %s",
                     (_vec_literal(v), r["id"]),
@@ -275,7 +286,7 @@ def _embed_chunks_loop_inner(script_id: int, user_id: int) -> None:
             if vecs is None:
                 continue
             with connect() as db:
-                for c, v in zip(batch, vecs):
+                for c, v in zip(batch, vecs, strict=False):
                     db.execute(
                         "update character_cards set embedding_vec = %s::vector, embedded_at = now() where id = %s",
                         (_vec_literal(v), c["id"]),
@@ -300,7 +311,7 @@ def _embed_chunks_loop_inner(script_id: int, user_id: int) -> None:
             if vecs is None:
                 continue
             with connect() as db:
-                for w, v in zip(batch, vecs):
+                for w, v in zip(batch, vecs, strict=False):
                     db.execute(
                         "update worldbook_entries set embedding_vec = %s::vector, embedded_at = now() where id = %s",
                         (_vec_literal(v), w["id"]),

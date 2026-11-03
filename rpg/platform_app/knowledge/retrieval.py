@@ -3,8 +3,8 @@ from __future__ import annotations
 from platform_app import runtime
 from platform_app.db import connect, init_db
 from platform_app.knowledge._pin import effective_kb_script_id
-from platform_app.knowledge._search import _search_chunks, _search_entities
-from platform_app.knowledge._utils import _query_tokens
+from platform_app.knowledge._search import _expand_chunk_windows, _search_chunks, _search_entities
+from platform_app.knowledge._utils import _pick_snippet, _query_tokens
 from platform_app.perms import owns_save
 
 
@@ -132,13 +132,43 @@ def retrieve_script_context(
             user_id=user_id,
         )
         if chunk_rows:
-            parts.append(
-                "=== Postgres 原文片段 ===\n"
-                + "\n\n".join(
-                    f"[第{row['chapter_index']}章片段]\n{row['content'][:360].strip()}"
-                    for row in chunk_rows
+            # 阶段 2(small-to-big):命中块先扩展成**同章**父窗口(同场景优先,
+            # 同章相邻兜底,≤1600 字),再在父窗口内做查询感知片段(≤900 字)。
+            # 绝不跨章:父窗口只从命中章自己的块里取,ch10 不会带出 ch500。
+            try:
+                windows = _expand_chunk_windows(db, script_id, chunk_rows)
+            except Exception:
+                windows = chunk_rows  # 父窗口失败退回命中块,不影响本轮检索
+            seen_windows: set[object] = set()
+            snippets: list[str] = []
+            for w in windows:
+                meta = w.get("metadata")
+                if not isinstance(meta, dict):
+                    meta = {}
+                wkey = tuple(w.get("window_chunk_ids") or ()) or str(
+                    meta.get("chunk_key") or meta.get("content_hash") or w.get("id") or ""
                 )
-            )
+                if wkey and wkey in seen_windows:
+                    continue
+                if wkey:
+                    seen_windows.add(wkey)
+                snippet = _pick_snippet(
+                    w.get("window_content") or w.get("content") or "",
+                    tokens, max_chars=900,
+                )
+                if not snippet:
+                    continue
+                # 重叠窗口/重复片段:新片段已包含在已注入文本里就跳过。
+                if any(snippet in prev for prev in snippets):
+                    continue
+                title = str(meta.get("chapter_title") or "").strip()
+                label = f"[第{w['chapter_index']}章片段" + (f"｜{title}" if title else "") + "]"
+                snippets.append(f"{label}\n{snippet}")
+                # 父窗口单条上限 900 字:4 条约 3600 字,仍远低于 novel_retrieval 预算。
+                if len(snippets) >= 4:
+                    break
+            if snippets:
+                parts.append("=== Postgres 原文片段 ===\n" + "\n\n".join(snippets))
 
         # task 51/52: LightRAG 双层检索第 2 层 — entity 层向量召回。
         # query 提到 NPC 名 / 地名 / 设定词时,直接返回完整人物卡 + 世界书条目,

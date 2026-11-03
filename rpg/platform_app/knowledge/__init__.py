@@ -20,7 +20,7 @@ from platform_app.knowledge._chunks import (
 )
 from platform_app.knowledge._constants import CHUNK_CHARS, CHUNK_OVERLAP
 from platform_app.knowledge._sync import _ensure_book
-from platform_app.knowledge._utils import _chunk_text
+from platform_app.knowledge._utils import _chunk_chapter, _chunk_text
 from platform_app.knowledge.character_cards import (
     CharacterCardConflict,
     delete_character_card,
@@ -58,6 +58,7 @@ from platform_app.knowledge.worldline import (
 __all__ = [
     "CHUNK_CHARS",
     "CHUNK_OVERLAP",
+    "_chunk_chapter",
     "ensure_game_session",
     "sync_script_knowledge",
     "set_worldline_variable",

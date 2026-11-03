@@ -77,7 +77,10 @@
     },
     "chunks": {
       "title": "章节切片",
-      "desc": "全书按段切片入库,RAG 检索的最小单位"
+      "desc": "全书按段切片入库,RAG 检索的最小单位",
+      "incremental_label": "增量重切（只处理内容变更的章节）",
+      "incremental_help_on": "只重切 updated_at 变化的章节，未变章节的 chunks 与向量原样保留；重切后会自动补新块向量；首次、切片版本变化、章节结构变化会自动回退全量。",
+      "incremental_help_off": "全量重切：清空整本 chunks 并重建，随后需要重嵌全部向量。"
     },
     "chapter-facts": {
       "title": "章节摘要",
@@ -123,7 +126,10 @@
       "desc": "pgvector 嵌入,RAG 语义召回用",
       "include_label": "重嵌哪些类型",
       "include_help": "重做 = 先把选中类型的向量清空再全部重嵌;未勾选的类型原样保留。零 LLM,只消耗嵌入模型配额。",
-      "include_empty": "至少选一个类型。"
+      "include_empty": "至少选一个类型。",
+      "incremental_label": "增量：只补未嵌入的条目，不清空已有向量",
+      "incremental_help_on": "只补 embedding_vec/embedding 为 NULL 的条目；适合刚增量重切/新增章节后补向量。内容已改但向量仍存在的卡片/世界书不会被刷新，需完整重嵌。",
+      "incremental_help_off": "完整重嵌：先清空选中类型的向量再全部重嵌，内容改动一定会刷新。"
     },
     "facts_refine": {
       "title": "章节摘要 LLM 精炼",
@@ -2017,6 +2023,23 @@
     }
   },
   "scripts": {
+    "split_mode_labels": {
+      "empty": "空文本",
+      "custom_pattern": "自定义规则",
+      "numbered_sections": "篇章小节",
+      "pagination_headings": "分页标题",
+      "adaptive_fusion": "规则融合自适应",
+      "rule_chapter_cn": "中文章节规则",
+      "rule_corpus": "语料章节规则",
+      "rule_chapter_en": "英文章节规则",
+      "rule_number_dot": "数字点号规则",
+      "rule_paren_num": "括号编号规则",
+      "strong_headings": "标准章节标题",
+      "weak_headings": "弱标题推断",
+      "fallback_window": "固定窗口兜底",
+      "quality_fallback_window": "质量兜底窗口"
+    },
+    "kb_center": "知识库中心",
     "my": {
       "title": "剧本管理",
       "description": "管理已导入的剧本:查看章节、覆盖设定、建立向量索引或导出剧本包。",
@@ -2248,6 +2271,8 @@
       "tab_extract": "知识提取",
       "split_mode": "切分模式",
       "split_confidence": "切分置信度",
+      "extract_full_title": "全量重新提取",
+      "extract_full_desc": "重跑规范提取管线(知识库人物/角色卡同步/时间线锚点/世界书条目/实体嵌入全刷新)。章节切片与摘要请用上方矩阵卡片。",
       "saves_count": "存档数",
       "saves_n": "{{n}} 个",
       "embed_index": "向量索引",
@@ -2730,6 +2755,8 @@
     "audit": {
       "btn": "AI 复核人名/语义",
       "desc": "用所选模型对本剧本全部 NPC 卡做一次复核:合并同一人的多张卡(如 金玉/玉儿/小玉)、识别并锁定真主角、删除官职/地名等非人名卡。按需触发,不影响导入流程与成本。",
+      "desc_short": "合并同人多卡、锁定真主角、删非人名卡——按需触发,不进导入流水线。",
+      "section_title": "NPC 角色卡 · AI 复核",
       "fail": "AI 复核失败",
       "model_desc": "选择本次复核用的模型(默认你设置的默认模型,可改;复核质量越好的模型越准)。",
       "need_key": "该模型还没配 API Key",

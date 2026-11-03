@@ -307,7 +307,7 @@ def sync_script_knowledge(user_id: int, script_id: int, *, rebuild: bool = False
         _sync_character_cards,
         _sync_worldbook_entries,
     )
-    from platform_app.knowledge._utils import _chunk_text
+    from platform_app.knowledge._utils import _chunk_chapter
 
     _init_db()
     # task 47: rebuild=True 时不读旧 character_cards,避免 feedback loop:
@@ -366,9 +366,17 @@ def sync_script_knowledge(user_id: int, script_id: int, *, rebuild: bool = False
         for chapter in chapters:
             document = _upsert_document(db, book, script, chapter)
             db.execute("delete from document_chunks where document_id = %s", (document["id"],))
-            chunks = _chunk_text(chapter["content"])
-            for chunk_index, content in enumerate(chunks):
-                _insert_chunk(db, book, script, chapter, document, chunk_index, content)
+            # v2 场景化切片,与导入/重建路径同一口径。
+            chunks = _chunk_chapter(
+                chapter["content"],
+                script_id=script["id"],
+                chapter_id=chapter["id"],
+                chapter_index=chapter["chapter_index"],
+                title=chapter.get("title") or "",
+            )
+            for chunk_index, chunk in enumerate(chunks):
+                _insert_chunk(db, book, script, chapter, document, chunk_index,
+                              chunk["content"], metadata=chunk["metadata"])
             chunk_count += len(chunks)
 
             fact = _fact_from_chapter(chapter, summaries, known_names, known_locations, known_concepts)

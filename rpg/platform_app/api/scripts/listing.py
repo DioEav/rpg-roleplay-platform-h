@@ -261,6 +261,13 @@ async def api_script_modules_status(script_id: int, user=Depends(require_user)):
                     upstream = ("chapter-facts",)
                 else:
                     upstream = ("canon",)
+            elif name == "embeddings" and done >= total and chunks_done > 0:
+                # 增量重切后 _auto_embed_incremental 会自动补新块向量,但不会单独写一条
+                # rebuild_embeddings 任务。若仍把 chunks 当上游,刚补完就会显示「需要重建」
+                # (chunks 任务时间比旧的 embeddings 任务新),用户会被诱导再点一次全量。
+                # done>=total 说明所有 chunk 都已有向量,chunks 上游已同步;cards/worldbook/
+                # canon 仍按各自最近成功任务判断,避免掩盖它们的真实过期。
+                upstream = tuple(u for u in upstream if u != "chunks")
             upstream_times: list[str] = []
             for up in upstream:
                 if up == "chapters":

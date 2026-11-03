@@ -6,13 +6,17 @@ from __future__ import annotations
 
 import re
 from collections import Counter
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from psycopg.types.json import Jsonb
 
 from ..db import connect
 from ..perms import script_owned
 from .stages_llm import _resolve_extractor_llm
+
+if TYPE_CHECKING:
+    # 仅用于函数注解(from __future__ annotations 下运行时不求值),避免 ruff F821。
+    from .control import JobController
 
 
 # ══════════════════════════════════════════════════════════════════════
@@ -40,8 +44,20 @@ def _stage_chunks(ctl: JobController, script_id: int, user_id: int) -> int:
                 raise RuntimeError("cancelled")
             doc = knowledge._upsert_document(db, book, script, chapter)
             db.execute("delete from document_chunks where document_id = %s", (doc["id"],))
-            for ci, content in enumerate(knowledge._chunk_text(chapter["content"])):
-                knowledge._insert_chunk(db, book, script, chapter, doc, ci, content)
+            # v2 场景化切片:800-1200 字/块、句界切、带 context_header/偏移。
+            # content 仍是原文;header 只进 metadata/嵌入/提示词。
+            chunks = knowledge._chunk_chapter(
+                chapter["content"],
+                script_id=script["id"],
+                chapter_id=chapter["id"],
+                chapter_index=chapter["chapter_index"],
+                title=chapter.get("title") or "",
+            )
+            for ci, chunk in enumerate(chunks):
+                knowledge._insert_chunk(
+                    db, book, script, chapter, doc, ci, chunk["content"],
+                    metadata=chunk["metadata"],
+                )
                 chunk_count += 1
             if (i + 1) % 5 == 0 or i == len(chapters) - 1:
                 ctl.update(stage_progress=i + 1)

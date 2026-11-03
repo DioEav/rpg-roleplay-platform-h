@@ -164,8 +164,8 @@ def test_resplit_success_rebuilds_chunks_and_facts(monkeypatch):
 
     class _FakePipeline:
         @staticmethod
-        def rebuild_chunks_from_db(user_id, script_id):
-            calls.append(f"chunks:{user_id}:{script_id}")
+        def rebuild_chunks_from_db(user_id, script_id, *, incremental=True):
+            calls.append(f"chunks:{user_id}:{script_id}:{incremental}")
             return {"ok": True, "before_count": 0, "after_count": 2, "partial_failures": []}
 
         @staticmethod
@@ -182,8 +182,9 @@ def test_resplit_success_rebuilds_chunks_and_facts(monkeypatch):
     assert result["chunks_rebuilt"] is True
     assert result["facts_rebuilt"] is True
     assert result.get("rebuild_error", "") == ""
-    # 两个零 LLM 确定性重建入口都必须被调用,且透传同一 user_id/script_id
-    assert "chunks:7:42" in calls
+    # 两个零 LLM 确定性重建入口都必须被调用,且透传同一 user_id/script_id。
+    # resplit 换了章节结构,chunks 必须走全量(incremental=False),不能沿用增量。
+    assert "chunks:7:42:False" in calls
     assert "facts:7:42" in calls
 
 
@@ -195,7 +196,7 @@ def test_resplit_survives_rebuild_failure(monkeypatch):
 
     class _FakePipelineBoom:
         @staticmethod
-        def rebuild_chunks_from_db(user_id, script_id):
+        def rebuild_chunks_from_db(user_id, script_id, *, incremental=True):
             raise RuntimeError("模拟重建炸了")
 
         @staticmethod
@@ -221,7 +222,7 @@ def test_resplit_partial_rebuild_failure_reports_facts_rebuilt_false(monkeypatch
 
     class _FakePipelinePartial:
         @staticmethod
-        def rebuild_chunks_from_db(user_id, script_id):
+        def rebuild_chunks_from_db(user_id, script_id, *, incremental=True):
             return {"ok": True, "before_count": 0, "after_count": 2, "partial_failures": []}
 
         @staticmethod

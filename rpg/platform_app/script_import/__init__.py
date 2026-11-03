@@ -252,7 +252,11 @@ def resplit_script(
     rebuild_error = ""
     try:
         from .. import import_pipeline
-        chunks_result = import_pipeline.rebuild_chunks_from_db(user_id, script_id)
+        # 整本重切后章节 id/章号全变,增量安全检测会回退全量;这里显式 incremental=False,
+        # 既省一次检测,也明确语义(结构操作必须全量)。
+        chunks_result = import_pipeline.rebuild_chunks_from_db(
+            user_id, script_id, incremental=False,
+        )
         chunks_rebuilt = bool(chunks_result.get("ok"))
         facts_result = import_pipeline.rebuild_facts_from_db(user_id, script_id)
         facts_rebuilt = bool(facts_result.get("ok"))

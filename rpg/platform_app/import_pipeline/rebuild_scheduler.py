@@ -174,6 +174,8 @@ def estimate_module_rebuild(
                 "total": max(chapter_count, 1),
             })
         note = f"将检查 {target_total} 条向量目标,当前已完成 {target_done} 条。"
+        if body.get("incremental"):
+            note += " 增量模式只补未嵌入的条目;内容已改但向量仍存在的卡片/世界书不会被刷新。"
     else:
         affects = {
             "chunks": ["document_chunks"],
@@ -327,6 +329,9 @@ def estimate_module_rebuild(
                 except Exception:
                     cost_est = 0.0
         note = "该模块将作为后台任务运行,可关闭页面后回来查看进度。"
+        if module == "chunks":
+            note = ("增量模式只重切内容变更的章节,重切后自动补新块向量;首次、切片版本变化、"
+                    "章节结构变化会自动回退全量。")
 
     return {
         "ok": True,

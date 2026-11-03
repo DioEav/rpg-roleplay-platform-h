@@ -14,6 +14,7 @@ import { ScriptsLibraryView } from './ScriptsLibraryView.jsx';
 import { ChaptersModal } from './ChaptersModal.jsx';
 import { OverridesModal } from './OverridesModal.jsx';
 import { scriptPlayBlockReason, activeJobPlayBlockReason } from './shared.js';
+import { splitModeLabel } from '../../lib/split-mode.js';
 import CSHeader from '@cloudscape-design/components/header';
 import CSTable from '@cloudscape-design/components/table';
 import CSContainer from '@cloudscape-design/components/container';
@@ -363,7 +364,7 @@ function ScriptsListView() {
         ) },
         { id: 'chapters', header: t('scripts.my.chapters'), cell: (s) => isInternalPlaceholder(s) ? <CSBox color="text-status-inactive">—</CSBox> : (s.chapter_count || 0).toLocaleString() },
         { id: 'words', header: t('scripts.my.words'), cell: (s) => isInternalPlaceholder(s) ? <CSBox color="text-status-inactive">—</CSBox> : `${((s.word_count || 0) / 10000).toFixed(1)} ${t('scripts.my.wan')}` },
-        { id: 'mode', header: t('scripts.my.split_mode'), cell: (s) => isInternalPlaceholder(s) ? <CSBox color="text-status-inactive">—</CSBox> : (s.import_report?.mode_label || '—') },
+        { id: 'mode', header: t('scripts.my.split_mode'), cell: (s) => isInternalPlaceholder(s) ? <CSBox color="text-status-inactive">—</CSBox> : splitModeLabel(s.import_report, t) },
         { id: 'problem', header: t('scripts.my.problem'), cell: (s) => {
           if (isInternalPlaceholder(s)) return <CSStatusIndicator type="pending">{t('scripts.page.placeholder_in_dev')}</CSStatusIndicator>;
           const r = s.readiness || null;

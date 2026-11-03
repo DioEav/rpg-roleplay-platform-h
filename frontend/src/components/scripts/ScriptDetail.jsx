@@ -19,6 +19,7 @@ import { ModuleMatrixOverview } from '../ModuleMatrixOverview.jsx';
 import { RebuildEstimateModal } from '../RebuildEstimateModal.jsx';
 import { ManualBadge } from '../ManualBadge.jsx';
 import { scriptPlayBlockReason } from './shared.js';
+import { splitModeLabel } from '../../lib/split-mode.js';
 import { VersionHistoryDrawer } from './VersionHistoryDrawer.jsx';
 // 「共享模式」四档选择器(私密/公开/固定快照/跟随最新)已隐藏 —— 遗留 UI:
 // 「公开」档调 /pin 接口必报 400(后端只收两种引用模式);两个 pin 档位只会 pin 到
@@ -523,7 +524,7 @@ function ScriptDetailPanel({ script: s, savesCount, scriptSaves = [], embedStatu
             <CSKeyValuePairs columns={4} items={[
               { label: t('scripts.my.chapters'), value: (s.chapter_count || 0).toLocaleString() },
               { label: t('scripts.my.words'), value: `${((s.word_count || 0) / 10000).toFixed(1)} ${t('scripts.my.wan')}` },
-              { label: t('scripts.editor.split_mode'), value: s.import_report?.mode_label || '—' },
+              { label: t('scripts.editor.split_mode'), value: splitModeLabel(s.import_report, t) },
               { label: t('scripts.editor.split_confidence'), value: s.import_report?.confidence != null ? `${Math.round(s.import_report.confidence * 100)}%` : '—' },
               { label: t('scripts.editor.saves_count'), value: t('scripts.editor.saves_n', { n: savesCount }) },
               { label: t('scripts.editor.embed_index'), value: (

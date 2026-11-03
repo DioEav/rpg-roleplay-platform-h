@@ -48,7 +48,9 @@ _MAX_EMBED_BATCH_RETRIES = 5
 # 每个 chunk 文本上限(char),配合 batch_size 控制总 token。
 # Vertex 中文 ~1 char/0.5 token,2400 char ≈ 1200 token;30 × 1200 = 36000 仍超。
 # 改成 1200 char/chunk ≈ 600 token;30 × 600 = 18000 安全。
-PER_CHUNK_CHAR_LIMIT = 1200
+# 2026-11 v2 切片:块最大 1200 字 + context_header(~20 字),1200 会截掉 header/尾部;
+# 提到 1250(≈625 token ×30 ≈ 18750,仍低于 Vertex 20k 上限),保证整块完整入向量。
+PER_CHUNK_CHAR_LIMIT = 1250
 # 嵌入请求超时按「本批条数」自适应:本地/自部署慢模型每条 embedding 可能 2-3s(群反馈 abci
 # 实测 2.5s/条),一批 30/64 条就要 75-160s,**原硬编码 60s 必超时** → 模型返 200 但平台已放弃 →
 # 向量索引永远卡在 0(实测现象:模型日志收到几条请求后「半天才增加一条」)。按条数 × 每条预算

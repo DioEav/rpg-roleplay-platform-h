@@ -4,6 +4,7 @@ import React, { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Icon } from '../icons.jsx';
 import { isCredentialsError } from '../../lib/creds.js';
+import { splitModeLabel } from '../../lib/split-mode.js';
 import { fmtN, isPlayBlocked } from './helpers.js';
 import { ChaptersView } from './ChaptersView.jsx';
 import { WorldbookView } from './WorldbookView.jsx';
@@ -154,7 +155,7 @@ function ScriptDetailView({ script, saves, embedStatus, currentUserId, onBack, o
                   <div className="pl-card">
                     <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 8, fontSize: 12.5 }}>
                       <span style={{ color: 'var(--muted)' }}>{t('mobile.scripts.detail.split_mode')}</span>
-                      <span>{script.import_report.mode_label || '—'}</span>
+                      <span>{splitModeLabel(script.import_report, t)}</span>
                     </div>
                     {script.import_report.confidence != null && (
                       <div style={{ marginBottom: 8 }}>

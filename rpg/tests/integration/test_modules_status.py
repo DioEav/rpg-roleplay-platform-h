@@ -92,7 +92,7 @@ class ModulesStatusEndpointShape(unittest.TestCase):
         self.assertIsNone(by_name["chunks"]["last_rebuilt_at"])
         self.assertEqual(by_name["chunks"]["last_error"], "")
 
-    def _run_with_jobs(self, jobs, chapters_updated_at="2026-06-20"):
+    def _run_with_jobs(self, jobs, chapters_updated_at="2026-06-20", embeddings_done=100):
         ctx = MagicMock()
         ctx.__enter__.return_value = ctx
         ctx.__exit__.return_value = False
@@ -109,7 +109,7 @@ class ModulesStatusEndpointShape(unittest.TestCase):
             {"c": 5},    # cards
             {"c": 5},    # worldbook
             {"c": 213},  # anchors
-            {"c": 100},  # embeddings
+            {"c": embeddings_done},  # embeddings
             {"c": 5},    # worldbook_enrich 候选
             {"c": 2},    # worldbook_enrich 已充实
         ]
@@ -184,6 +184,39 @@ class ModulesStatusEndpointShape(unittest.TestCase):
         self.assertEqual(by["chunks"]["last_error"], "provider down")
         self.assertEqual(by["chunks"]["last_rebuilt_at"], "2026-06-01 00:00:00")
         self.assertEqual(by["chunks"]["status"], "stale")
+
+    def test_auto_embedded_chunks_do_not_leave_embeddings_stale(self):
+        """增量重切自动补块向量后,embeddings 卡不应因 chunks 任务更新而假过期。
+
+        场景:chunks 共 430 块且全部有向量(embed_done=430),chunks 增量任务 06-05
+        成功;embeddings 卡上一次成功任务仍是 06-01。旧逻辑把 chunks 当上游 →
+        stale,诱导用户再点一次全量 embedding。块齐全时视为 chunks 上游已同步。
+        """
+        jobs = [
+            {"kind": "rebuild_chunks", "job_id": "j2", "status": "done",
+             "finished_at": "2026-06-05 00:00:00", "created_at": "2026-06-05 00:00:00",
+             "error": "", "budget_estimate": {"options": {"incremental": True}}},
+            {"kind": "full_pipeline", "job_id": "j1", "status": "done",
+             "finished_at": "2026-06-01 00:00:00", "created_at": "2026-06-01 00:00:00",
+             "error": ""},
+        ]
+        by = self._run_with_jobs(jobs, chapters_updated_at="2026-06-01", embeddings_done=430)
+        self.assertFalse(by["embeddings"]["stale"])
+        self.assertEqual(by["embeddings"]["status"], "ready")
+
+    def test_incomplete_embeddings_still_stale_after_chunks_rebuild(self):
+        """自动补向量没跑/没跑完(done<total)时,embeddings 仍应提示过期。"""
+        jobs = [
+            {"kind": "rebuild_chunks", "job_id": "j2", "status": "done",
+             "finished_at": "2026-06-05 00:00:00", "created_at": "2026-06-05 00:00:00",
+             "error": "", "budget_estimate": {"options": {"incremental": True}}},
+            {"kind": "full_pipeline", "job_id": "j1", "status": "done",
+             "finished_at": "2026-06-01 00:00:00", "created_at": "2026-06-01 00:00:00",
+             "error": ""},
+        ]
+        by = self._run_with_jobs(jobs, chapters_updated_at="2026-06-01", embeddings_done=100)
+        self.assertTrue(by["embeddings"]["stale"])
+        self.assertEqual(by["embeddings"]["status"], "stale")
 
     def test_full_canon_rebuild_counts_as_cards_worldbook_anchors_refresh(self):
         """rebuild_canon 全量跑的是 run_llm_extraction 全链路,会顺带刷新

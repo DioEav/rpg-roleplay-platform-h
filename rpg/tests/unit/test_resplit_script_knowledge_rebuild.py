@@ -125,7 +125,8 @@ class ResplitScriptReturnBodyFields(unittest.TestCase):
 
     def test_rebuild_functions_are_called_and_facts_rebuilt_true(self):
         result, mock_chunks, mock_facts = self._run_resplit_with_rebuild_mocks()
-        mock_chunks.assert_called_once_with(1, 1)
+        # 整本重切后章节结构全变:必须显式 incremental=False(全量),不能走增量。
+        mock_chunks.assert_called_once_with(1, 1, incremental=False)
         mock_facts.assert_called_once_with(1, 1)
         self.assertIs(result.get("facts_rebuilt"), True)
         self.assertIs(result.get("chunks_rebuilt"), True)
@@ -137,7 +138,7 @@ class ResplitScriptReturnBodyFields(unittest.TestCase):
         # 主流程必须继续成功返回，不能因为重建失败而抛异常/整体失败
         self.assertTrue(result.get("ok"))
         self.assertIs(result.get("facts_rebuilt"), False)
-        mock_chunks.assert_called_once_with(1, 1)
+        mock_chunks.assert_called_once_with(1, 1, incremental=False)
 
 
 if __name__ == "__main__":

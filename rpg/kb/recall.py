@@ -233,6 +233,24 @@ def recall(save_id: int, query: str, *, mode: str = "none", token_budget: int = 
             except Exception as exc:
                 log.debug("[recall] chunks 跳过: %s", exc)
 
+        # 阶段 2:命中块扩成同章父窗口(同场景优先/同章兜底,≤1600),再取查询感知片段
+        # (≤900)。与 retrieval.retrieve_script_context 同一口径;绝不跨章。
+        if chunk_rows:
+            try:
+                from platform_app.knowledge._search import _expand_chunk_windows
+                chunk_rows = _expand_chunk_windows(_db, int(_script_id), chunk_rows)
+            except Exception as exc:
+                log.debug("[recall] parent window 跳过: %s", exc)
+            try:
+                from platform_app.knowledge._utils import _pick_snippet
+                for _r in chunk_rows:
+                    _r["_snippet"] = _pick_snippet(
+                        _r.get("window_content") or _r.get("content") or "",
+                        tokens, max_chars=900,
+                    )
+            except Exception as exc:
+                log.debug("[recall] snippet 跳过: %s", exc)
+
         return RecallResult(candidates=picked, chunks=chunk_rows, ceil_chap=ceil_chap,
                             tokens_used=used)
 
@@ -262,7 +280,14 @@ def _render_kb_body(result: RecallResult) -> str:
     if result.chunks:
         clines = ["=== Postgres 原文片段 ==="]
         for r in result.chunks:
-            clines.append(f"[第{r.get('chapter_index')}章片段]\n{str(r.get('content') or '')[:360].strip()}")
+            # 阶段 2:优先用父窗口 + 查询感知片段;旧行没有 _snippet 时退回 content 头。
+            _sn = str(r.get("_snippet") or r.get("window_content") or r.get("content") or "")[:900]
+            _meta = r.get("metadata")
+            if not isinstance(_meta, dict):
+                _meta = {}
+            _title = str(_meta.get("chapter_title") or "").strip()
+            _label = f"[第{r.get('chapter_index')}章片段" + (f"｜{_title}" if _title else "") + "]"
+            clines.append(f"{_label}\n{_sn.strip()}")
         parts.append("\n\n".join(clines))
     return "\n\n".join(parts)
 

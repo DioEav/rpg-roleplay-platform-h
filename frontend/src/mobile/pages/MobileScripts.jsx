@@ -12,6 +12,7 @@ import { useTranslation } from 'react-i18next';
 import { Icon } from '../icons.jsx';
 import { usePlatformData } from '../../platform-app.jsx';
 import { fmtN, fmtWan, isPlayBlocked, ACTIVE_STATUSES } from '../scripts/helpers.js';
+import { splitModeLabel } from '../../lib/split-mode.js';
 import { EmptyState } from '../scripts/EmptyState.jsx';
 import { ScriptDetailView } from '../scripts/ScriptDetailView.jsx';
 import { ImportView } from '../scripts/ImportView.jsx';
@@ -219,9 +220,9 @@ export function MobileScripts({ nav }) {
                           ? <span className="pill" style={{ height: 18, fontSize: 9.5 }}>{t('mobile.scripts.list.not_ready')}</span>
                           : null}
                   </div>
-                  {s.import_report?.mode_label && (
+                  {(s.import_report?.mode || s.import_report?.mode_label) && (
                     <div style={{ fontSize: 10.5, color: 'var(--muted-2)' }}>
-                      {s.import_report.mode_label}
+                      {splitModeLabel(s.import_report, t)}
                       {s.import_report.confidence != null && (
                         <span className="mono" style={{ marginLeft: 5 }}>
                           {Math.round(s.import_report.confidence * 100)}%

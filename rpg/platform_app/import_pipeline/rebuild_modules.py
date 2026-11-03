@@ -7,6 +7,7 @@ from __future__ import annotations
 from typing import Any
 
 from ..db import connect
+from ..knowledge._utils import CHUNK_VERSION
 from ..perms import script_owned
 
 
@@ -14,8 +15,98 @@ from ..perms import script_owned
 #  phase_backend: 单模块 rebuild 函数(被 /rebuild/{module} 路由调用)
 #  各 rebuild 返 {ok, before_count, after_count, partial_failures, source}
 # ══════════════════════════════════════════════════════════════════════
-def rebuild_chunks_from_db(user_id: int, script_id: int) -> dict[str, Any]:
-    """零 LLM:重新切 document_chunks。从 script_chapters 读,清旧 chunks 写新。"""
+def _incremental_chunk_plan(
+    db, script_id: int, chapters: list[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], str]:
+    """阶段 4:决定增量重切的范围。
+
+    返回 (要重切的章, fallback_reason):
+      · fallback_reason 非空 → 不安全,调用方必须全量(返回全部章);
+      · 空串 → 只重切 changed 章节,其余章节的 chunks/向量原样保留。
+
+    安全检查(任一命中即全量):
+      · 没有任何旧 chunks(首次);
+      · chunks.metadata.chunking_version ≠ 当前 CHUNK_VERSION(切片算法变了);
+      · 有 orphan chunks(chapter_id 已不在 script_chapters);
+      · chunk.chapter_index ≠ script_chapters.chapter_index(章号漂移/合并/重排);
+      · 没有 created_at 基线。
+    增量补齐:新增章/从未切过的非空章没有 chunks,按"变更章"只补它们,不回退全量。
+    变更检测:script_chapters.updated_at > max(document_chunks.created_at)。
+    """
+    def _scalar(sql: str, params: tuple) -> int:
+        row = db.execute(sql, params).fetchone()
+        return int(row["c"]) if row else 0
+
+    total_chunks = _scalar(
+        "select count(*) as c from document_chunks where script_id = %s", (script_id,)
+    )
+    if total_chunks == 0:
+        return list(chapters), "no_existing_chunks"
+
+    version_mismatch = _scalar(
+        "select count(*) as c from document_chunks where script_id = %s "
+        "and coalesce(metadata->>'chunking_version','') <> %s",
+        (script_id, CHUNK_VERSION),
+    )
+    if version_mismatch:
+        return list(chapters), "chunking_version_changed"
+
+    orphan = _scalar(
+        "select count(*) as c from document_chunks dc where dc.script_id = %s "
+        "and not exists (select 1 from script_chapters sc where sc.id = dc.chapter_id)",
+        (script_id,),
+    )
+    if orphan:
+        return list(chapters), "orphan_chunks"
+
+    # 章号漂移(合并/删除/整本重排后 chapter_id 还在但 chapter_index 变了)→ 全量。
+    # 新增章节不属于这里:它没有 chunks,会在下面 missing 列表里按"变更章"增量补齐。
+    mismatch = _scalar(
+        "select count(*) as c from document_chunks dc "
+        "join script_chapters sc on sc.id = dc.chapter_id "
+        "where dc.script_id = %s and dc.chapter_index <> sc.chapter_index",
+        (script_id,),
+    )
+    if mismatch:
+        return list(chapters), "chapter_structure_changed"
+
+    missing_rows = db.execute(
+        "select sc.chapter_index from script_chapters sc where sc.script_id = %s "
+        "and length(coalesce(sc.content,'')) > 0 "
+        "and not exists (select 1 from document_chunks dc where dc.chapter_id = sc.id) "
+        "order by sc.chapter_index",
+        (script_id,),
+    ).fetchall()
+    missing_idx = {int(r["chapter_index"]) for r in missing_rows}
+
+    baseline_row = db.execute(
+        "select max(created_at) as m from document_chunks where script_id = %s",
+        (script_id,),
+    ).fetchone()
+    baseline = baseline_row.get("m") if isinstance(baseline_row, dict) else None
+    if baseline is None:
+        return list(chapters), "no_baseline"
+
+    changed_rows = db.execute(
+        "select chapter_index from script_chapters where script_id = %s "
+        "and updated_at > %s order by chapter_index",
+        (script_id, baseline),
+    ).fetchall()
+    changed_idx = missing_idx | {int(r["chapter_index"]) for r in changed_rows}
+    return [c for c in chapters if int(c["chapter_index"]) in changed_idx], ""
+
+
+def rebuild_chunks_from_db(user_id: int, script_id: int, *,
+                          incremental: bool = True) -> dict[str, Any]:
+    """零 LLM:重新切 document_chunks。
+
+    incremental(阶段 4,默认 True):
+      · 安全时只重切 updated_at > 旧 chunks.created_at 的章节,其余章节的
+        chunks + embedding_vec 原样保留;
+      · 首次/切片版本变化/章节结构变化/orphan chunks 命中 → 自动回退全量,
+        并在返回体里带 fallback_reason;
+      · incremental=False 强制全量(如重切/合并/删除章节后)。
+    """
     from .. import knowledge
     partial_failures: list[dict[str, Any]] = []
     with connect() as db:
@@ -32,23 +123,84 @@ def rebuild_chunks_from_db(user_id: int, script_id: int) -> dict[str, Any]:
             "select * from script_chapters where script_id = %s order by chapter_index",
             (script_id,),
         ).fetchall()
-        # 清旧
-        db.execute("delete from document_chunks where script_id = %s", (script_id,))
+
+        mode = "full"
+        fallback_reason = ""
+        changed_chapters: list[dict[str, Any]] = list(chapters)
+        if incremental and chapters:
+            changed_chapters, fallback_reason = _incremental_chunk_plan(
+                db, script_id, chapters,
+            )
+            mode = "full" if fallback_reason else "incremental"
+        elif not incremental:
+            fallback_reason = "requested_full"
+
+        # 全量:清整本;增量:只清变更章(按 chapter_id,不按章号,避免章号漂移误删)。
+        if mode == "full":
+            db.execute("delete from document_chunks where script_id = %s", (script_id,))
+            deleted_count = before_count
+            kept_chunks = 0
+        else:
+            deleted_count = 0
+            if changed_chapters:
+                chapter_ids = [c["id"] for c in changed_chapters]
+                deleted_row = db.execute(
+                    "select count(*) as c from document_chunks "
+                    "where script_id = %s and chapter_id = any(%s)",
+                    (script_id, chapter_ids),
+                ).fetchone()
+                deleted_count = int(deleted_row["c"]) if deleted_row else 0
+                db.execute(
+                    "delete from document_chunks where script_id = %s "
+                    "and chapter_id = any(%s)",
+                    (script_id, chapter_ids),
+                )
+            kept_chunks = max(0, before_count - deleted_count)
+
         total = 0
-        for chapter in chapters:
+        for chapter in changed_chapters:
+            # 每章一个 savepoint:某章 insert 失败时只回滚该章,不把整个事务打成
+            # aborted(否则后续章全失败、最终 commit 回滚,partial_failures 形同虚设)。
+            # chapter_total 在 savepoint 成功提交后才累加,失败章不计入 new_chunks。
+            chapter_total = 0
             try:
-                doc = knowledge._upsert_document(db, book, script, chapter)
-                for ci, content in enumerate(knowledge._chunk_text(chapter["content"])):
-                    knowledge._insert_chunk(db, book, script, chapter, doc, ci, content)
-                    total += 1
+                with db.transaction():
+                    doc = knowledge._upsert_document(db, book, script, chapter)
+                    # v2 场景化切片,与首次导入同一口径(避免重建后块粒度突然变化)。
+                    chunks = knowledge._chunk_chapter(
+                        chapter["content"],
+                        script_id=script["id"],
+                        chapter_id=chapter["id"],
+                        chapter_index=chapter["chapter_index"],
+                        title=chapter.get("title") or "",
+                    )
+                    for ci, chunk in enumerate(chunks):
+                        knowledge._insert_chunk(
+                            db, book, script, chapter, doc, ci, chunk["content"],
+                            metadata=chunk["metadata"],
+                        )
+                        chapter_total += 1
+                total += chapter_total
             except Exception as exc:
                 partial_failures.append({
                     "chapter": chapter.get("chapter_index"),
                     "error": str(exc),
                 })
+        # after_count 用表内真实总数:增量模式下 total 只是"本次新增块",
+        # 卡片/任务面板要看到的是 kept + new 的最终总量。
+        after_row = db.execute(
+            "select count(*) as c from document_chunks where script_id = %s",
+            (script_id,),
+        ).fetchone()
+        after_count = int(after_row["c"]) if after_row else before_count
     return {
         "ok": True, "source": "script_chapters",
-        "before_count": before_count, "after_count": total,
+        "before_count": before_count, "after_count": after_count,
+        "mode": mode,
+        "changed_chapters": len(changed_chapters),
+        "kept_chunks": kept_chunks,
+        "new_chunks": total,
+        "fallback_reason": fallback_reason,
         "partial_failures": partial_failures,
     }
 

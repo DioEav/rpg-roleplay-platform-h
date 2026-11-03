@@ -312,7 +312,7 @@ function normalizeScript(s) {
     description: s.description || s.subtitle || "",
     chapter_count: s.chapter_count || s.chapters || 0,
     word_count: s.word_count || s.words || 0,
-    import_report: s.import_report || { mode_label: s.mode_label, confidence: s.confidence, problem_label: s.problem_label },
+    import_report: s.import_report || { mode: s.mode, mode_label: s.mode_label, confidence: s.confidence, problem_label: s.problem_label },
     updated_at: fmtAgo(s.updated_at) || s.updated_at_human || "—",
     is_public: !!s.is_public,
     clone_count: s.clone_count || 0,

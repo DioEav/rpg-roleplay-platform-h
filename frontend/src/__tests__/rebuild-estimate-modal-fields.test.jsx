@@ -111,4 +111,25 @@ describe('RebuildEstimateModal 信息密度', () => {
     fireEvent.click(screen.getByLabelText(/LLM 丰富重建/));
     expect(onOptionsChange).toHaveBeenCalledWith({ chapter_max: null, mode: 'llm' });
   });
+
+  it('chunks:默认增量,取消后下发 incremental:false', () => {
+    const onOptionsChange = vi.fn();
+    render(
+      <RebuildEstimateModal
+        open
+        module="chunks"
+        scriptId={1}
+        estimate={{ ...ZERO, prereqs: [] }}
+        loading={false}
+        options={null}
+        onOptionsChange={onOptionsChange}
+        onClose={() => {}}
+        onConfirm={() => {}}
+      />,
+    );
+    const cb = screen.getByLabelText(/增量重切/);
+    expect(cb.checked).toBe(true);
+    fireEvent.click(cb);
+    expect(onOptionsChange).toHaveBeenCalledWith({ incremental: false });
+  });
 });

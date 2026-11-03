@@ -38,7 +38,16 @@ def _upsert_document(db, book: dict[str, Any], script: dict[str, Any], chapter: 
     ).fetchone()
 
 
-def _insert_chunk(db, book: dict[str, Any], script: dict[str, Any], chapter: dict[str, Any], document: dict[str, Any], chunk_index: int, content: str) -> None:
+def _insert_chunk(db, book: dict[str, Any], script: dict[str, Any], chapter: dict[str, Any],
+                  document: dict[str, Any], chunk_index: int, content: str,
+                  metadata: dict[str, Any] | None = None) -> None:
+    """写入一个 chunk。metadata 由 v2 切片器提供(context_header/scene_index/偏移等),
+    与 content_hash 合并后落 document_chunks.metadata;content 仍是原文。"""
+    meta: dict[str, Any] = {
+        "content_hash": hashlib.sha256(content.encode("utf-8")).hexdigest()[:16],
+    }
+    if metadata:
+        meta.update(metadata)
     db.execute(
         """
         insert into document_chunks(
@@ -56,7 +65,7 @@ def _insert_chunk(db, book: dict[str, Any], script: dict[str, Any], chapter: dic
             chunk_index,
             content,
             max(1, len(content) // 2),
-            Jsonb({"content_hash": hashlib.sha256(content.encode("utf-8")).hexdigest()[:16]}),
+            Jsonb(meta),
         ),
     )
 

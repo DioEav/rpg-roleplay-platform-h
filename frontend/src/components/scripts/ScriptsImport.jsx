@@ -10,6 +10,7 @@ import { isCredentialsError } from '../../lib/creds.js';
 import { lsGetJSON, lsSetJSON, lsRemove } from '../../lib/storage.js';
 import AgentModelPicker from '../AgentModelPicker.jsx';
 import { SPLIT_RULES, IMPORT_JOB_TERMINAL_STATUSES } from './shared.js';
+import { splitModeLabel } from '../../lib/split-mode.js';
 import { ImportJobBanner, ImportJobResult, ImportEstimateView } from './import-job-views.jsx';
 import CSHeader from '@cloudscape-design/components/header';
 import CSContainer from '@cloudscape-design/components/container';
@@ -417,8 +418,8 @@ function ScriptsImportView({ embedded = false, onClose } = {}) {
     const cost = totalTokens * 0.75 / 1_000_000;
     const warnings = [];
     if (Array.isArray(result.warnings)) warnings.push(...result.warnings);
-    if (result.report && result.report.mode_label) {
-      warnings.push(t('scripts.page.split_mode_warn', { mode: result.report.mode_label, conf: result.report.confidence ?? "—" }));
+    if (result.report && (result.report.mode || result.report.mode_label)) {
+      warnings.push(t('scripts.page.split_mode_warn', { mode: splitModeLabel(result.report, t), conf: result.report.confidence ?? "—" }));
     }
     setEstimate({
       file: { name: selectedFile.name, size: selectedFile.size, chapters, words },

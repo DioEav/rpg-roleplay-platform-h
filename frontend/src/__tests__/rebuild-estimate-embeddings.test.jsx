@@ -35,8 +35,10 @@ function renderModal(props) {
   );
 }
 
-/* 4 个类型勾选框 = 文档顺序上的前 4 个 checkbox(embeddings 分支只有这一组)。 */
-const kindBoxes = () => screen.getAllByRole('checkbox');
+/* 4 个类型勾选框 = 文档顺序上的前 4 个 checkbox;第 5 个是阶段 4 的增量开关。 */
+const kindBoxes = () => screen.getAllByRole('checkbox')
+  .filter((b) => b.getAttribute('data-testid') !== 'embed-incremental');
+const incrementalBox = () => screen.getByTestId('embed-incremental');
 
 describe('RebuildEstimateModal — embeddings 按类型重嵌', () => {
   it('embeddings 弹窗渲染 4 个类型勾选框,默认全选', () => {
@@ -50,20 +52,32 @@ describe('RebuildEstimateModal — embeddings 按类型重嵌', () => {
     const onOptionsChange = vi.fn();
     renderModal({ onOptionsChange });
     fireEvent.click(kindBoxes()[1]);  // cards
-    expect(onOptionsChange).toHaveBeenCalledWith({ include: ['chunks', 'worldbook', 'canon'] });
+    expect(onOptionsChange).toHaveBeenCalledWith({
+      include: ['chunks', 'worldbook', 'canon'], incremental: false,
+    });
   });
 
   it('重新勾回 → include 回到 EMBED_KINDS 原顺序,不是点击顺序', () => {
     const onOptionsChange = vi.fn();
     renderModal({ onOptionsChange, options: { include: ['worldbook'] } });
     fireEvent.click(kindBoxes()[0]);  // chunks 勾回
-    expect(onOptionsChange).toHaveBeenLastCalledWith({ include: ['chunks', 'worldbook'] });
+    expect(onOptionsChange).toHaveBeenLastCalledWith({
+      include: ['chunks', 'worldbook'], incremental: false,
+    });
+  });
+
+  it('勾选增量 → include + incremental:true 一起下发', () => {
+    const onOptionsChange = vi.fn();
+    renderModal({ onOptionsChange });
+    fireEvent.click(incrementalBox());
+    expect(onOptionsChange).toHaveBeenCalledWith({
+      include: ['chunks', 'cards', 'worldbook', 'canon'], incremental: true,
+    });
   });
 
   it('全不选 → 确认按钮禁用(否则后端会把空 include 当全选,与所见相反)', () => {
     renderModal();
-    kindBoxes().forEach((b) => fireEvent.click(b));
-    const confirm = screen.getByRole('button', { name: /确认重做|Confirm/ });
+    kindBoxes().forEach((b) => fireEvent.click(b));    const confirm = screen.getByRole('button', { name: /确认重做|Confirm/ });
     expect(confirm).toBeDisabled();
   });
 

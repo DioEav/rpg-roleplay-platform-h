@@ -136,8 +136,113 @@ def _count(db, table: str, script_id: int) -> int:
     return int(row["c"]) if row else 0
 
 
+def _auto_embed_incremental(ctl, user_id, script_id, new_chunks: int) -> dict:
+    """增量重切后自动补新块向量(best-effort)。
+
+    只处理 chunks 进度:embed_script 内部还会顺带补 cards/worldbook 的 NULL,
+    但本函数在 chunks done>=total 时立即返回,不等其它类型 —— 避免为一次改章
+    等整本卡片向量。
+
+    语义:
+      · new_chunks==0 → skipped,不启动线程;
+      · 凭证缺失 → 返回 ok=False + needs_credentials,调用方**不**因此把 chunks
+        任务标失败(块数据本身是好的,向量由 embeddings 卡提示);
+      · provider/线程失败 → ok=False,调用方记 partial_failure;
+      · 用户取消 → ok=True + cancelled=True,worker 落 cancelled,后台线程继续补。
+    """
+    if new_chunks <= 0:
+        return {"ok": True, "skipped": "no_new_chunks"}
+    from ..knowledge import embedding as _embed
+
+    try:
+        start = _embed.embed_script(user_id, script_id)
+    except Exception as exc:
+        return {"ok": False, "error": f"{type(exc).__name__}: {str(exc)[:200]}"}
+    if start.get("ok") is False and not start.get("already_running"):
+        return {
+            "ok": False,
+            "needs_credentials": bool(start.get("needs_credentials")),
+            "error": str(start.get("error") or "embedding provider unavailable")[:300],
+        }
+
+    started = time.monotonic()
+    last_done = -1
+    stall_polls = 0
+    retried = False
+    while True:
+        try:
+            st = _embed.embed_status(script_id)
+        except Exception as exc:
+            return {"ok": False, "error": f"embed_status failed: {str(exc)[:200]}"}
+        chunks = st.get("chunks") or {}
+        done = int(chunks.get("done") or 0)
+        total = int(chunks.get("total") or 0)
+        try:
+            ctl.update(
+                stage="embedding",
+                stage_progress=done, stage_total=max(total, 1),
+                overall_progress=done, overall_total=max(total, 1),
+            )
+        except Exception:
+            pass
+        if total == 0:
+            return {"ok": True, "done": 0, "total": 0}
+        if done >= total:
+            return {"ok": True, "done": done, "total": total}
+        if ctl.is_cancelled():
+            return {"ok": True, "cancelled": True, "done": done, "total": total}
+        if not st.get("running"):
+            # 另一条 embed 线程可能已跑过 chunks 阶段,新块没被拾取 → 再触发一轮。
+            if not retried:
+                retried = True
+                try:
+                    _embed.embed_script(user_id, script_id)
+                except Exception:
+                    pass
+                time.sleep(1)
+                continue
+            return {
+                "ok": False, "done": done, "total": total,
+                "error": f"embedding incomplete {done}/{total}",
+            }
+        if done == last_done:
+            stall_polls += 1
+        else:
+            stall_polls = 0
+            last_done = done
+        if stall_polls >= 40:
+            return {
+                "ok": False, "done": done, "total": total,
+                "error": "embedding stalled 120s",
+            }
+        if time.monotonic() - started > 15 * 60:
+            return {
+                "ok": False, "done": done, "total": total,
+                "error": "embedding timeout 15min",
+            }
+        time.sleep(3)
+
+
 def _rebuild_chunks(ctl, user_id, script_id, body) -> dict:
-    result = rebuild_chunks_from_db(user_id, script_id)
+    # 阶段 4:默认增量(只重切变更章);用户/结构变更可显式传 incremental=false 全量。
+    result = rebuild_chunks_from_db(
+        user_id, script_id,
+        incremental=bool(body.get("incremental", True)),
+    )
+    # 增量重切产生的新块 embedding_vec 为 NULL:自动补一次,避免用户忘了点「向量索引」。
+    # 全量重切不走自动补(可能整本重嵌,成本和旧行为一致,交给 embeddings 模块)。
+    if result.get("ok") and result.get("mode") == "incremental":
+        emb = _auto_embed_incremental(
+            ctl, user_id, script_id, int(result.get("new_chunks") or 0),
+        )
+        result["extra"] = {"auto_embedding": emb}
+        if emb.get("cancelled"):
+            result["cancelled"] = True
+        elif not emb.get("ok") and not emb.get("needs_credentials"):
+            result.setdefault("partial_failures", []).append({
+                "stage": "auto_embedding",
+                "error": str(emb.get("error") or "embedding failed"),
+            })
     return result
 
 
@@ -435,11 +540,16 @@ def _rebuild_embeddings(ctl, user_id, script_id, body) -> dict:
       2. 清空选中类型 → canon 同步重嵌 → chunks/cards/worldbook 触发后台 embed 并
          **轮询到结束**(期间汇报真实进度、响应取消);
       3. after 用真实计数,残留 NULL 记为 partial failure。
+
+    阶段 4 incremental(默认 false):不强制清空已有向量,只补 embedding_vec/embedding
+    为 NULL 的条目。适合"刚增量重切/新增章节"后只补新块;内容已改但向量仍存在的
+    cards/worldbook 不会被刷新(那需要 full)。
     """
     includes = list(body.get("include") or ["chunks", "cards", "worldbook", "canon"])
     includes = [k for k in includes if k in ("chunks", "cards", "worldbook", "canon")]
     if not includes:
         return {"ok": False, "error": "include 里没有可重嵌的类型（chunks/cards/worldbook/canon）"}
+    incremental = bool(body.get("incremental"))
     from extract.embed import embed_canon_entities
 
     from ..knowledge import embedding as _embed
@@ -462,19 +572,23 @@ def _rebuild_embeddings(ctl, user_id, script_id, body) -> dict:
 
     before_counts = _selected_counts()
     before_count = sum(v[0] for v in before_counts.values())
-    with connect() as db:
-        for _k in includes:
-            _sql = _FORCE_CLEAR.get(_k)
-            if not _sql:
-                continue
-            try:
-                db.execute(_sql, (script_id,))
-            except Exception as exc:
-                partial_failures.append({"stage": f"force_clear_{_k}", "error": str(exc)})
-        db.commit()
+    # 阶段 4:incremental 只补 NULL,不清已有向量。full 保持原"强制重嵌"语义。
+    if not incremental:
+        with connect() as db:
+            for _k in includes:
+                _sql = _FORCE_CLEAR.get(_k)
+                if not _sql:
+                    continue
+                try:
+                    db.execute(_sql, (script_id,))
+                except Exception as exc:
+                    partial_failures.append({"stage": f"force_clear_{_k}", "error": str(exc)})
+            db.commit()
     with connect() as db:
         if "canon" in includes:
             try:
+                # embed_canon_entities 默认 only_missing=True:full(已清空)会全嵌,
+                # incremental(未清空)只补 NULL,正是阶段 4 要的行为。
                 emb = embed_canon_entities(db, script_id, user_id=user_id)
                 counts["canon"] = emb
             except Exception as exc:
@@ -574,6 +688,7 @@ def _rebuild_embeddings(ctl, user_id, script_id, body) -> dict:
         "partial_failures": partial_failures,
         "extra": {
             "counts": counts,
+            "incremental": incremental,
             "before": {k: v[0] for k, v in before_counts.items()},
             "after": {k: v[0] for k, v in after_counts.items()},
             "total": {k: v[1] for k, v in after_counts.items()},

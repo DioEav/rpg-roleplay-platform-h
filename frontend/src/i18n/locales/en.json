@@ -1881,6 +1881,23 @@
     }
   },
   "scripts": {
+    "split_mode_labels": {
+      "empty": "Empty text",
+      "custom_pattern": "Custom rule",
+      "numbered_sections": "Section numbering",
+      "pagination_headings": "Paged headings",
+      "adaptive_fusion": "Adaptive rule fusion",
+      "rule_chapter_cn": "Chinese chapter rule",
+      "rule_corpus": "Corpus chapter rule",
+      "rule_chapter_en": "English chapter rule",
+      "rule_number_dot": "Numbered dot rule",
+      "rule_paren_num": "Parenthesized number rule",
+      "strong_headings": "Standard chapter headings",
+      "weak_headings": "Weak heading inference",
+      "fallback_window": "Fixed window fallback",
+      "quality_fallback_window": "Quality fallback window"
+    },
+    "kb_center": "Knowledge Base Center",
     "my": {
       "title": "Scripts",
       "description": "Manage imported scripts: view chapters, override settings, build vector index, or export.",
@@ -2105,6 +2122,8 @@
       "tab_extract": "Knowledge Extraction",
       "split_mode": "Split Mode",
       "split_confidence": "Split Confidence",
+      "extract_full_title": "Re-run Full Extraction",
+      "extract_full_desc": "Re-run the standard extraction pipeline (refreshes knowledge-base characters, character-card sync, timeline anchors, worldbook entries, and entity embeddings). Use the matrix cards above for chapter chunks and summaries.",
       "saves_count": "Saves",
       "saves_n": "{{n}}",
       "embed_index": "Vector Index",
@@ -2594,6 +2613,8 @@
     "audit": {
       "btn": "AI Audit Names/Semantics",
       "desc": "Run a one-time AI audit on all NPC cards in this script: merge duplicate cards for the same character (e.g. different aliases), identify and lock in the true protagonist, and remove cards that are titles, place names, or other non-person entries. Triggered on demand — does not affect the import pipeline or incur automatic costs.",
+      "desc_short": "Merge duplicate cards for the same character, lock in the true protagonist, and remove non-person cards — on demand, outside the import pipeline.",
+      "section_title": "NPC Character Cards · AI Audit",
       "fail": "AI audit failed",
       "model_desc": "Select the model for this audit run. Defaults to your configured default model — a more capable model will produce more accurate results.",
       "need_key": "No API key configured for this model",
@@ -4328,7 +4349,10 @@
     },
     "chunks": {
       "title": "Chapter chunks",
-      "desc": "Whole book split into passages and indexed — the smallest unit for RAG retrieval"
+      "desc": "Whole book split into passages and indexed — the smallest unit for RAG retrieval",
+      "incremental_label": "Incremental rechunk (only changed chapters)",
+      "incremental_help_on": "Only re-chunks chapters whose updated_at changed; unchanged chunks and their vectors are kept. New chunks are auto-embedded after the rechunk. First run, chunking-version changes and chapter-structure changes automatically fall back to a full rebuild.",
+      "incremental_help_off": "Full rechunk: clears the whole book's chunks and rebuilds them; all vectors need re-embedding afterwards."
     },
     "chapter-facts": {
       "title": "Chapter summaries",
@@ -4374,7 +4398,10 @@
       "desc": "pgvector embeddings, used for RAG semantic recall",
       "include_label": "Which types to re-embed",
       "include_help": "Rebuild = clears the selected types' vectors, then re-embeds them all; unchecked types are left as-is. Zero LLM — only consumes embedding-model quota.",
-      "include_empty": "Pick at least one type."
+      "include_empty": "Pick at least one type.",
+      "incremental_label": "Incremental: only fill missing embeddings, keep existing vectors",
+      "incremental_help_on": "Only fills entries whose embedding_vec/embedding is NULL; ideal after an incremental rechunk or newly added chapters. Cards/worldbook whose content changed but still have vectors are not refreshed — use a full rebuild for that.",
+      "incremental_help_off": "Full rebuild: clears the selected types' vectors and re-embeds everything, so changed content is always refreshed."
     },
     "facts_refine": {
       "title": "Chapter summary LLM refine",
