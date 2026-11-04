@@ -75,14 +75,29 @@ class RebuildModulesRegistration(unittest.TestCase):
 
 
 class EstimateFactsRefine(unittest.TestCase):
-    """2. estimate_module_rebuild(facts_refine): chapters_in_range * 1500 input tokens。"""
+    """2. estimate_module_rebuild(facts_refine):候选章节数 + 实际章节长度估算。"""
 
     def _run(self, *, ch_from=None, ch_to=None, chapter_count=10, facts_total=10):
         script_row = {"chapter_count": chapter_count}
         db = MagicMock()
 
+        def _cur(rows=None, one=None):
+            m = MagicMock()
+            m.fetchall.return_value = rows or []
+            m.fetchone.return_value = one
+            return m
+
         def _execute(sql, params=None):
             s = sql.lower()
+            if "left join chapter_facts" in s:
+                start, end = int(params[1]), int(params[2])
+                return _cur(rows=[
+                    {"chapter_index": i} for i in range(start, end + 1)
+                ])
+            if "sum(length(content))" in s:
+                start, end = int(params[1]), int(params[2])
+                n = max(0, end - start + 1)
+                return _cur(one={"n": n, "chars": n * 3000})
             if "from scripts" in s:
                 return _row_obj(script_row)
             if "from chapter_facts" in s:
@@ -123,13 +138,13 @@ class EstimateFactsRefine(unittest.TestCase):
         out = self._run(chapter_count=10, facts_total=10)
         self.assertTrue(out["ok"])
         self.assertEqual(out["module"], "facts_refine")
-        # 10 章 * 1500 input + 10 * 100 output
-        self.assertEqual(out["tokens_est"], 10 * 1500 + 10 * 100)
+        # 10 候选 * (3000 字/2 + 350 提示词) + 10 * 200 output
+        self.assertEqual(out["tokens_est"], 10 * 1850 + 10 * 200)
         self.assertTrue(out["approximate"])
 
     def test_explicit_range_scales_tokens(self):
         out = self._run(ch_from=1, ch_to=3, chapter_count=10, facts_total=10)
-        self.assertEqual(out["tokens_est"], 3 * 1500 + 3 * 100)
+        self.assertEqual(out["tokens_est"], 3 * 1850 + 3 * 200)
 
     def test_empty_chapter_facts_blocks_with_prereq(self):
         out = self._run(chapter_count=10, facts_total=0)
@@ -274,7 +289,7 @@ class RunnerCallsExtractFunctions(unittest.TestCase):
             7, 42,
             ch_from=1, ch_to=3,
             api_id="deepseek", model="deepseek-v4-flash",
-            apply=True,
+            apply=True, only_missing=True, force=False,
             should_cancel=ANY, progress_cb=ANY,
         )
         self._assert_cancel_wired(mock_refine)
@@ -287,7 +302,7 @@ class RunnerCallsExtractFunctions(unittest.TestCase):
             7, 42,
             ch_from=1, ch_to=None,
             api_id=None, model=None,
-            apply=True,
+            apply=True, only_missing=True, force=False,
             should_cancel=ANY, progress_cb=ANY,
         )
         self._assert_cancel_wired(mock_refine)
@@ -464,12 +479,15 @@ class ExtractLoopsHonourCancel(unittest.TestCase):
 
         calls: list[int] = []
 
-        def _fake_refine_chapter(db, script_id, ch, user_id, rapi, rmodel):
+        def _fake_refine_chapter(db, script_id, ch, user_id, rapi, rmodel, **kwargs):
             calls.append(ch)
             return {"summary": "x", "in_world_time": ""}
 
+        cur = MagicMock()
+        cur.fetchone.return_value = {"m": 100}
+        cur.fetchall.return_value = [{"chapter_index": i} for i in range(1, 101)]
         db = MagicMock()
-        db.execute.return_value = MagicMock(fetchone=lambda: {"m": 100})
+        db.execute.return_value = cur
         with patch.object(fr, "refine_chapter", side_effect=_fake_refine_chapter), \
              patch.object(fr, "apply_refined", return_value=None), \
              patch("platform_app.db.connect", return_value=_fake_connect_cm(db)), \

@@ -4356,11 +4356,11 @@
     },
     "chapter-facts": {
       "title": "Chapter summaries",
-      "desc": "Deterministic per-chapter summary / time labels (LLM refinement lives in “Chapter summary LLM refine”)"
+      "desc": "Zero-LLM chapter facts base: structured events/characters/locations/relationships + extractive summary fallback; anchors, canon and card projection depend on it"
     },
     "chapter_facts": {
       "title": "Chapter summaries",
-      "desc": "Deterministic per-chapter summary / time labels (LLM refinement lives in “Chapter summary LLM refine”)"
+      "desc": "Zero-LLM chapter facts base: structured events/characters/locations/relationships + extractive summary fallback; anchors, canon and card projection depend on it"
     },
     "canon": {
       "title": "Knowledge base entities",
@@ -4405,7 +4405,11 @@
     },
     "facts_refine": {
       "title": "Chapter summary LLM refine",
-      "desc": "Upgrades deterministic fragment summaries into real LLM summaries + in-world time"
+      "desc": "Upgrades summary + in-world time on existing chapter facts; does not change events/characters/anchors. Defaults to unrefined or content-changed chapters only",
+      "incremental_label": "Only unrefined / content-changed chapters (recommended)",
+      "incremental_help_on": "Skips chapters already refined with unchanged content; calls the LLM only for new, modified, unrefined, or summary-version-changed chapters.",
+      "incremental_help_off": "Full: re-refines every chapter in range, at higher cost.",
+      "force_label": "Force full re-refine (ignore existing refined results)"
     },
     "worldbook_enrich": {
       "title": "Worldbook core entry enrichment",

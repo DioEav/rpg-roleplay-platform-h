@@ -442,6 +442,22 @@ def _pick_snippet(content: str, tokens: list[str], *, max_chars: int = 520) -> s
     return text[spans[lo][0]:spans[hi][1]].strip()
 
 
+def _sentence_clip(text: str, max_chars: int) -> str:
+    """按完整句累积截断到 max_chars;首句就超限时才退回硬截。"""
+    text = (text or "").strip()
+    if len(text) <= max_chars:
+        return text
+    spans = _split_sentences_with_offsets(text)
+    out: list[str] = []
+    used = 0
+    for s, e in spans:
+        if used + (e - s) > max_chars:
+            break
+        out.append(text[s:e])
+        used += e - s
+    return "".join(out).strip() or text[:max_chars].strip()
+
+
 def _query_tokens(query: str) -> list[str]:
     text = re.sub(r"[^一-鿿A-Za-z0-9_]", " ", query or "")
     tokens = {part for part in text.split() if len(part) >= 2}

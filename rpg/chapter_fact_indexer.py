@@ -552,12 +552,76 @@ def _sentence_truncate(s: str, cap: int = 240) -> str:
     return cut
 
 
+_SUMMARY_V2_CAP = 300
+# 开头是闭引号/标点 → 该句是从对话/句中截出的残片,不适合当摘要首句。
+_SUMMARY_BAD_START = set("”’」』）)；，。、!?！？…—")
+# 开头是开引号/对话 → 是人物台词,不是事件叙述;规则摘要不拿它当首句。
+_SUMMARY_DIALOGUE_START = set("“\"「『")
+
+
+def _clean_summary_sentence(text: str) -> str:
+    """清洗规则摘要候选句;返回空串表示该句不适合进入摘要。
+
+    这里不做语义归纳(零 LLM),只做“像不像一句可独立阅读的叙述”的确定性过滤:
+      · 空白归一;
+      · 跳过闭引号/标点开头(前半句被切掉的残片);
+      · 跳过开引号/对话开头(人物台词,不是事件叙述)。
+    """
+    s = re.sub(r"\s+", " ", str(text or "")).strip()
+    if not s or s[0] in _SUMMARY_BAD_START or s[0] in _SUMMARY_DIALOGUE_START:
+        return ""
+    return s
+
+
 def _summary_from_events(events: list[dict[str, Any]], sentences: list[str]) -> str:
-    # 注意:此为确定性占位(metadata.source=deterministic_import,本质是原文残句而非摘要)。
-    # 真摘要由 extract/facts_refine.py 的 LLM 精炼层按需覆盖(source=llm_refined)。
-    if events:
-        return _sentence_truncate("；".join(event["event"] for event in events[:3]))
-    return _sentence_truncate("；".join(sentences[:3]))
+    """确定性规则摘录 v2(零 LLM)。
+
+    “事件句”不是模型判断的,而是 `_extract_events` 从本章正文里按规则筛出的句子:
+      · 先用 `_sentences` 切句(16-220 字);
+      · 句中命中 `EVENT_KEYWORDS`(决定/发现/死亡/背叛…)、出现已知人物(每个 +2)、
+        地点/概念/标点各加分;
+      · 分数 ≥5 的句子入选,按分数取前 8 条,再按原文顺序排列。
+    本函数从这些事件句里取「开头/中段/结尾」三个代表句,避免只摘前两句导致长章
+    结尾的转折丢失;仍可能在句中出现原文片段,但不再把“；”拼接的残句整段塞给 GM。
+    真摘要由 extract/facts_refine.py 的 LLM 精炼层按需覆盖(source=llm_refined)。
+    """
+    candidates: list[str] = []
+    seen: set[str] = set()
+    for ev in events or []:
+        if not isinstance(ev, dict):
+            continue
+        text = _clean_summary_sentence(
+            str(ev.get("event") or ev.get("summary") or ev.get("desc") or "")
+        )
+        if text and text not in seen:
+            seen.add(text)
+            candidates.append(text)
+    if not candidates:
+        for sent in sentences or []:
+            text = _clean_summary_sentence(sent)
+            if text and text not in seen:
+                seen.add(text)
+                candidates.append(text)
+    if not candidates:
+        # 全是对白/残句时仍给一个可读兜底(总比空摘要好);保留原文,供检索侧标
+        # 「规则摘录」并由 LLM 精炼层后续覆盖。
+        for raw in [
+            *(str(ev.get("event") or ev.get("summary") or ev.get("desc") or "")
+              for ev in (events or []) if isinstance(ev, dict)),
+            *(sentences or []),
+        ]:
+            text = re.sub(r"\s+", " ", raw).strip()
+            if text and text not in seen:
+                seen.add(text)
+                candidates.append(text)
+    if not candidates:
+        return ""
+    if len(candidates) <= 3:
+        picked = candidates
+    else:
+        # 首/中/尾:覆盖章节开头、转折、结尾,不再只看前 3 句。
+        picked = [candidates[i] for i in sorted({0, len(candidates) // 2, len(candidates) - 1})]
+    return _sentence_truncate("；".join(picked), cap=_SUMMARY_V2_CAP)
 
 
 def _story_phase(chapter: int, text: str, script_key: str | None = None) -> str:

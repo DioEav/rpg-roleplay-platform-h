@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import re
+
 from platform_app import runtime
 from platform_app.db import connect, init_db
 from platform_app.knowledge._pin import effective_kb_script_id
 from platform_app.knowledge._search import _expand_chunk_windows, _search_chunks, _search_entities
-from platform_app.knowledge._utils import _pick_snippet, _query_tokens
+from platform_app.knowledge._utils import _pick_snippet, _query_tokens, _sentence_clip
 from platform_app.perms import owns_save
 
 
@@ -96,7 +98,7 @@ def retrieve_script_context(
             _order_params = ()
         fact_rows = db.execute(
             f"""
-            select chapter, title, story_time_label, summary, events
+            select chapter, title, story_time_label, in_world_time, summary, events, metadata
             from chapter_facts
             where script_id = %s
               and (%s::integer is null or chapter >= %s)
@@ -112,13 +114,40 @@ def retrieve_script_context(
         if fact_rows:
             lines = []
             for row in fact_rows:
+                meta = row.get("metadata")
+                if not isinstance(meta, dict):
+                    meta = {}
+                source = str(meta.get("source") or "")
+                # Option A:story_time_label 仍是时间线分段标签;逐章时间优先用精炼的
+                # in_world_time,旧数据/未精炼时退回 story_time_label。
+                time_label = str(
+                    row.get("in_world_time") or row.get("story_time_label") or ""
+                ).strip()
+                summary_text = _sentence_clip(str(row.get("summary") or ""), 300)
                 events = row.get("events") or []
-                event_text = "；".join(str(item.get("event", "")) for item in events[:2] if isinstance(item, dict))
-                lines.append(
-                    f"第{row['chapter']}章《{row['title']}》｜{row.get('story_time_label') or ''}\n"
-                    f"摘要：{(row.get('summary') or '')[:180]}\n"
-                    f"事件：{event_text[:220]}"
+                # 规则摘要 v2 本身由事件句抽取;逐条去掉已包含在摘要里的重复事件。
+                summary_compact = re.sub(r"\W", "", summary_text)
+                kept_events: list[str] = []
+                for item in events:
+                    if not isinstance(item, dict):
+                        continue
+                    ev = str(item.get("event") or item.get("summary") or item.get("desc") or "").strip()
+                    if not ev:
+                        continue
+                    if summary_compact and re.sub(r"\W", "", ev) in summary_compact:
+                        continue
+                    kept_events.append(ev)
+                    if len(kept_events) >= 2:
+                        break
+                event_text = _sentence_clip("；".join(kept_events), 220)
+                summary_label = "规则摘录" if source == "deterministic_import" else "摘要"
+                block = (
+                    f"第{row['chapter']}章《{row['title']}》｜{time_label}\n"
+                    f"{summary_label}：{summary_text}"
                 )
+                if event_text:
+                    block += f"\n事件：{event_text}"
+                lines.append(block)
             parts.append("=== Postgres ChapterFact ===\n" + "\n\n".join(lines))
 
         tokens = _query_tokens(query)

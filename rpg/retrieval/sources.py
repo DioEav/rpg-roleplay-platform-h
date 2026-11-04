@@ -175,7 +175,7 @@ def load_chapter_facts(chapter_min: int | None, chapter_max: int | None, limit: 
                 event_text = ""
             lines.append(
                 f"第{chapter}章《{title}》｜{time_label}\n"
-                f"摘要：{summary[:180]}\n"
+                f"摘要：{summary[:300]}\n"
                 f"事件：{event_text[:220]}"
             )
         return "\n\n".join(lines)

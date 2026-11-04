@@ -311,7 +311,7 @@ def estimate_module_rebuild(
             elif module == "worldbook":             # 必是 source=='llm'(否则 needs_llm=False)
                 est_in, est_out = _estimate_tokens_worldbook(canon_total)
             elif module == "facts_refine":
-                est_in, est_out = _estimate_tokens_facts_refine(body, chapter_count)
+                est_in, est_out = _estimate_tokens_facts_refine(script_id, body, chapter_count)
             elif module == "worldbook_enrich":
                 est_in, est_out = _estimate_tokens_worldbook_enrich(script_id, body)
             elif module == "world_key":              # 必是 use_llm=True(否则 needs_llm=False)
@@ -550,11 +550,11 @@ def _estimate_tokens_worldbook(canon_total) -> tuple[int, int]:
     return est_in, est_out
 
 
-def _estimate_tokens_facts_refine(body, chapter_count) -> tuple[int, int]:
+def _estimate_tokens_facts_refine(script_id: int, body, chapter_count) -> tuple[int, int]:
     # 逐章调 LLM 精炼 summary/in_world_time(extract.facts_refine.refine_script)。
-    # 涉及章节数 = [ch_from, ch_to] 区间(默认整本),按 ~1.5k tokens/章估算
-    # (与 estimate_module_rebuild 既有粗估口径一致,不接 arc budget——精炼是逐章
-    # 独立小调用,非 arc 弧段合并调用)。
+    # 旧实现按 1.5k tokens/章粗估,而单章输入最多 9k 字(≈4.5k tokens)+ 提示词,
+    # 实际可能低 3 倍;且没算“默认增量只处理未精炼/内容变更章”。
+    # 这里按实际候选数 + 实际章节长度估算,与 refine_script 同口径。
     _ch_from_raw = body.get("ch_from")
     _ch_to_raw = body.get("ch_to")
     try:
@@ -567,9 +567,34 @@ def _estimate_tokens_facts_refine(body, chapter_count) -> tuple[int, int]:
         _ch_to = chapter_count
     _ch_to = min(_ch_to, chapter_count) if chapter_count else _ch_to
     _n_chapters = max(0, _ch_to - _ch_from + 1) if (_ch_to and _ch_from) else 0
-    est_in = _n_chapters * 1500
-    est_out = _n_chapters * 100  # 摘要产出短(≤200字),output 远小于 input
-    return est_in, est_out
+    _force = bool(body.get("force"))
+    _only_missing = bool(body.get("only_missing", True)) and not _force
+    try:
+        # 注意:必须用 scheduler 自己的 connect 取候选,不能调 facts_refine 里自动
+        # connect 的 helper —— 单测/调用方 patch 的是 ip_sched.connect,否则会去连真库。
+        from extract.facts_refine import MAX_CONTENT_CHARS, _candidate_chapters
+        with connect() as db:
+            candidates = _candidate_chapters(
+                db, int(script_id), int(_ch_from), int(_ch_to),
+                only_missing=_only_missing, force=_force,
+            )
+            row = db.execute(
+                "select count(*) as n, coalesce(sum(length(content)),0) as chars "
+                "from script_chapters where script_id=%s "
+                "and chapter_index between %s and %s",
+                (int(script_id), int(_ch_from), int(_ch_to)),
+            ).fetchone()
+        _n = len(candidates)
+        _total = int((row or {}).get("n") or 0)
+        _chars = int((row or {}).get("chars") or 0)
+        _avg = (_chars / _total) if _total else 0
+        _per = min(MAX_CONTENT_CHARS, max(1, int(_avg))) if _avg else MAX_CONTENT_CHARS
+        est_in = int(_n * (_per / 2 + 350))  # 中文约 2 char/token + 提示词固定开销
+        est_out = _n * 200                    # 摘要 ≤300 字,output 仍远小于 input
+        return est_in, est_out
+    except Exception:
+        # 估算失败不阻断任务,退回旧的粗估。
+        return _n_chapters * 1500, _n_chapters * 100
 
 
 def _estimate_tokens_worldbook_enrich(script_id, body) -> tuple[int, int]:

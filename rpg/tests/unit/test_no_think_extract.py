@@ -71,9 +71,8 @@ _REFINED_JSON = json.dumps(
 
 
 def _fake_db_facts():
-    # refine_chapter 先 select content(fetchall)再 select title(fetchone),
-    # 两次 execute 都吐同一行:content 供拼正文、title 供 fetchone 取 title。
-    return _Conn([{"content": _CONTENT, "title": "x"}])
+    # refine_chapter 用一条 join 查询取标题/正文/facts 行 id;fake 返回同一行。
+    return _Conn([{"content": _CONTENT, "title": "x", "fact_id": 1}])
 
 
 def test_facts_refine_passes_no_think(monkeypatch):
@@ -89,7 +88,7 @@ def test_facts_refine_passes_no_think(monkeypatch):
 
 
 def test_facts_refine_empty_body_guard_expands_budget(monkeypatch):
-    """第一跳空正文 → 护栏扩预算重试:max_tokens 序列 [300, 1200](max(2x,1200))。"""
+    """第一跳空正文 → 护栏扩预算重试:max_tokens 序列 [800, 1600](max(2x,1200))。"""
     fake, captured = _make_fake([
         ("", {"reasoning_tokens": 300}),   # 第一跳空(思考吃光 300 预算)
         (_REFINED_JSON, {"output_tokens": 50}),  # 扩预算后拿到正文
@@ -98,7 +97,7 @@ def test_facts_refine_empty_body_guard_expands_budget(monkeypatch):
 
     out = facts_refine.refine_chapter(_fake_db_facts(), 7, 3, 1, "relay", "m")
 
-    assert captured["max_tokens"] == [300, 1200]
+    assert captured["max_tokens"] == [800, 1600]
     assert captured["no_think"] == [True, True]
     assert out and out["summary"] == _SUMMARY
 

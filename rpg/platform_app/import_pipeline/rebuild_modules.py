@@ -231,17 +231,21 @@ def rebuild_facts_from_db(user_id: int, script_id: int) -> dict[str, Any]:
         known_concepts = knowledge._known_concepts(world)
         total = 0
         for chapter in chapters:
+            # 每章 savepoint:单章 upsert 失败只回滚该章,不把整个事务打成 aborted。
+            # 与 chunks 重建同一口径;否则 partial_failures 记录后,后续章全失败、
+            # 最终 commit 回滚,用户看到的是“重做失败”而不是“某章失败其余成功”。
             try:
-                doc = db.execute(
-                    "select * from documents where script_id = %s and chapter_id = %s",
-                    (script_id, chapter["id"]),
-                ).fetchone()
-                if not doc:
-                    doc = knowledge._upsert_document(db, book, script, chapter)
-                fact = knowledge._fact_from_chapter(
-                    chapter, summaries, known_names, known_locations, known_concepts,
-                )
-                knowledge._upsert_chapter_fact(db, book, script, chapter, doc, fact)
+                with db.transaction():
+                    doc = db.execute(
+                        "select * from documents where script_id = %s and chapter_id = %s",
+                        (script_id, chapter["id"]),
+                    ).fetchone()
+                    if not doc:
+                        doc = knowledge._upsert_document(db, book, script, chapter)
+                    fact = knowledge._fact_from_chapter(
+                        chapter, summaries, known_names, known_locations, known_concepts,
+                    )
+                    knowledge._upsert_chapter_fact(db, book, script, chapter, doc, fact)
                 total += 1
             except Exception as exc:
                 partial_failures.append({

@@ -25,6 +25,7 @@ export function RebuildEstimateModal({ open, module, scriptId, estimate, loading
   const isWorldKey = module === 'world_key';
   const isAnchors = module === 'anchors';
   const isChunks = module === 'chunks';
+  const isFactsRefine = module === 'facts_refine';
   // 有字段级手编保护的模块：显示「强制覆盖手编字段」开关（worldbook_enrich 用它自己的
   // include_editor 开关，不重复显示）。
   const showForce = ['cards', 'canon', 'worldbook', 'anchors'].includes(module);
@@ -49,6 +50,9 @@ export function RebuildEstimateModal({ open, module, scriptId, estimate, loading
   // 阶段 4:chunks 默认增量(只重切变更章);embeddings 默认完整重嵌(增量只补 NULL)。
   const [chunkIncremental, setChunkIncremental] = React.useState(true);
   const [embedIncremental, setEmbedIncremental] = React.useState(false);
+  // 章节摘要 LLM 精炼:默认增量(只处理未精炼/内容变更/版本变化的章节)。
+  const [refineIncremental, setRefineIncremental] = React.useState(true);
+  const [refineForce, setRefineForce] = React.useState(false);
   // 弹窗每次打开(module 变化)重置本地态,避免上次残留。
   React.useEffect(() => {
     if (open && isCards) {
@@ -63,6 +67,11 @@ export function RebuildEstimateModal({ open, module, scriptId, estimate, loading
     if (open && isChunks) {
       // 未显式传 incremental=false 时默认增量;结构/版本变化由后端自动全量。
       setChunkIncremental(options?.incremental !== false);
+    }
+    if (open && isFactsRefine) {
+      // 后端默认 only_missing=true;force 时忽略增量。
+      setRefineForce(!!(options && options.force));
+      setRefineIncremental(!(options && options.force) && options?.only_missing !== false);
     }
     if (open && isWorldbook) {
       setWbLlm(!!(options && (options.source === 'llm' || options.mode === 'llm')));
@@ -102,6 +111,17 @@ export function RebuildEstimateModal({ open, module, scriptId, estimate, loading
   const onEmbedIncrementalToggle = (checked) => {
     setEmbedIncremental(checked);
     if (onOptionsChange) onOptionsChange({ include: embedKinds, incremental: checked });
+  };
+
+  // facts_refine:默认增量;force 覆盖增量(全部重做)。
+  const onRefineIncrementalToggle = (checked) => {
+    setRefineIncremental(checked);
+    if (onOptionsChange) onOptionsChange({ only_missing: checked, force: false });
+  };
+  const onRefineForceToggle = (checked) => {
+    setRefineForce(checked);
+    if (checked) setRefineIncremental(false);
+    if (onOptionsChange) onOptionsChange({ force: checked, only_missing: checked ? false : refineIncremental });
   };
 
   const emitOptions = React.useCallback((nextCh, nextLlm) => {
@@ -222,6 +242,38 @@ export function RebuildEstimateModal({ open, module, scriptId, estimate, loading
                 ? t('modules.chunks.incremental_help_on', { defaultValue: '只重切 updated_at 变化的章节，未变章节的 chunks 与向量原样保留；首次、切片版本变化、章节结构变化会自动回退全量。' })
                 : t('modules.chunks.incremental_help_off', { defaultValue: '全量重切：清空整本 chunks 并重建，随后需要重嵌全部向量。' })}
             </span>
+          </div>
+        )}
+
+        {/* 章节摘要 LLM 精炼:默认增量,force 覆盖全部 */}
+        {isFactsRefine && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 14,
+                        padding: '12px 14px', border: '1px solid var(--border, #d8d2c4)', borderRadius: 6 }}>
+            <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, cursor: 'pointer' }}>
+              <input
+                type="checkbox"
+                data-testid="facts-refine-incremental"
+                checked={refineIncremental}
+                onChange={(e) => onRefineIncrementalToggle(e.target.checked)}
+                disabled={loading || refineForce}
+              />
+              <span>{t('modules.facts_refine.incremental_label', { defaultValue: '只处理未精炼 / 内容变更的章节（推荐）' })}</span>
+            </label>
+            <span style={{ fontSize: 11, color: 'var(--muted-2, #9a8f78)', marginLeft: 24 }}>
+              {refineIncremental
+                ? t('modules.facts_refine.incremental_help_on', { defaultValue: '跳过已精炼且内容未变的章节；只对新增、修改、未精炼或摘要版本变化的章节调用 LLM。' })
+                : t('modules.facts_refine.incremental_help_off', { defaultValue: '全量：范围内所有章节都重新精炼，成本更高。' })}
+            </span>
+            <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, cursor: 'pointer' }}>
+              <input
+                type="checkbox"
+                data-testid="facts-refine-force"
+                checked={refineForce}
+                onChange={(e) => onRefineForceToggle(e.target.checked)}
+                disabled={loading}
+              />
+              <span>{t('modules.facts_refine.force_label', { defaultValue: '强制全部重做（忽略已有精炼结果）' })}</span>
+            </label>
           </div>
         )}
 

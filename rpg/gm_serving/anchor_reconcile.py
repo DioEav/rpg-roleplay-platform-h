@@ -653,7 +653,9 @@ def _load_estimate_context(save_id: int) -> dict[str, Any] | None:
         lo = max(1, floor, prev)
         hi = lo + _LOOKAHEAD_CAP
         rows = db.execute(
-            "select chapter, story_time_label as label, summary from chapter_facts "
+            "select chapter, "
+            "coalesce(nullif(btrim(in_world_time),''), story_time_label) as label, "
+            "summary from chapter_facts "
             "where script_id=%s and chapter between %s and %s order by chapter",
             (script_id, lo, hi),
         ).fetchall()

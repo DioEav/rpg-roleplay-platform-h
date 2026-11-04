@@ -112,6 +112,29 @@ describe('RebuildEstimateModal 信息密度', () => {
     expect(onOptionsChange).toHaveBeenCalledWith({ chapter_max: null, mode: 'llm' });
   });
 
+  it('facts_refine:默认增量,取消后下发 only_missing:false;强制全量下发 force', () => {
+    const onOptionsChange = vi.fn();
+    render(
+      <RebuildEstimateModal
+        open
+        module="facts_refine"
+        scriptId={1}
+        estimate={{ ...LLM, prereqs: [] }}
+        loading={false}
+        options={null}
+        onOptionsChange={onOptionsChange}
+        onClose={() => {}}
+        onConfirm={() => {}}
+      />,
+    );
+    const inc = screen.getByTestId('facts-refine-incremental');
+    expect(inc.checked).toBe(true);
+    fireEvent.click(inc);
+    expect(onOptionsChange).toHaveBeenCalledWith({ only_missing: false, force: false });
+    fireEvent.click(screen.getByTestId('facts-refine-force'));
+    expect(onOptionsChange).toHaveBeenCalledWith({ force: true, only_missing: false });
+  });
+
   it('chunks:默认增量,取消后下发 incremental:false', () => {
     const onOptionsChange = vi.fn();
     render(

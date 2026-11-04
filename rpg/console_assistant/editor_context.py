@@ -25,7 +25,7 @@ log = logging.getLogger("console_assistant.editor_context")
 _CAP_WORLDBOOK = 1400      # 世界书:≤6 条,各 ≤260
 _CAP_CHARACTERS = 1200     # 人物卡:≤3 张,各 ≤420
 _CAP_CANON = 700           # canon:≤8 行
-_CAP_SUMMARY = 700         # 前情:≤2 章
+_CAP_SUMMARY = 800         # 前情:≤2 章,每章摘要最多 300 字
 _MAX_WB, _MAX_CHARS, _MAX_CANON, _MAX_SUMMARY = 6, 3, 8, 2
 
 
@@ -144,7 +144,7 @@ def _summary_section(db, script_id: int, chapter_index: int | None) -> str:
         # 下面 except 静默吞掉,导致前情永不注入且刷 WARNING 日志。chapter as chapter_index
         # 保持下游迭代用键不变。
         rows = db.execute(
-            "select chapter as chapter_index, summary from chapter_facts "
+            "select chapter as chapter_index, summary, in_world_time from chapter_facts "
             "where script_id=%s and chapter < %s and chapter >= %s "
             "and coalesce(summary,'') <> '' order by chapter desc limit %s",
             (script_id, int(chapter_index), int(chapter_index) - _MAX_SUMMARY, _MAX_SUMMARY),
@@ -157,7 +157,9 @@ def _summary_section(db, script_id: int, chapter_index: int | None) -> str:
         raw = str(r.get("summary") or "")
         if _is_garbage_summary(raw):
             continue  # 跳过分隔线/纯符号污染(如 "======")— 否则前情提要喂垃圾给 GM(群反馈)
-        chunk = f"- 第{r['chapter_index']}章：{_clip(raw, 280)}"
+        itime = str(r.get("in_world_time") or "").strip()
+        time_tag = f"（{itime}）" if itime else ""
+        chunk = f"- 第{r['chapter_index']}章{time_tag}：{_clip(raw, 300)}"
         if used + len(chunk) > _CAP_SUMMARY:
             break
         lines.append(chunk)

@@ -28,6 +28,8 @@ import time
 from dataclasses import dataclass, field
 from typing import Any
 
+from platform_app.knowledge._utils import _sentence_clip
+
 log = logging.getLogger(__name__)
 
 
@@ -68,11 +70,17 @@ class WorldbookResult:
         if self.chapter_facts:
             lines = []
             for cf in self.chapter_facts[:5]:
-                ev = "; ".join(str(e.get("event", "")) for e in (cf.get("events") or [])[:2])
+                ev = "; ".join(
+                    str(e.get("event") or e.get("summary") or e.get("desc") or "")
+                    for e in (cf.get("events") or [])[:2]
+                )
+                time_label = str(
+                    cf.get("in_world_time") or cf.get("story_time_label") or ""
+                ).strip()
                 lines.append(
-                    f"第{cf['chapter']}章《{cf.get('title', '')}》｜{cf.get('story_time_label', '')}\n"
-                    f"  摘要: {(cf.get('summary') or '')[:200]}\n"
-                    f"  事件: {ev[:160]}"
+                    f"第{cf['chapter']}章《{cf.get('title', '')}》｜{time_label}\n"
+                    f"  摘要: {_sentence_clip(str(cf.get('summary') or ''), 300)}\n"
+                    f"  事件: {_sentence_clip(ev, 160)}"
                 )
             parts.append("=== 剧本章节事实 ===\n" + "\n\n".join(lines))
         if self.worldbook_entries:
@@ -191,7 +199,7 @@ def consult(
             cmin = anchor.get("chapter_min") if anchor else None
             cmax = anchor.get("chapter_max") if anchor else None
             cf_rows = db.execute(
-                """select chapter, title, story_time_label, summary, events
+                """select chapter, title, story_time_label, in_world_time, summary, events
                    from chapter_facts where script_id=%s
                      and (%s::int is null or chapter >= %s)
                      and (%s::int is null or chapter <= %s)

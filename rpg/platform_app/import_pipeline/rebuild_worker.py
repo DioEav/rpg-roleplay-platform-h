@@ -712,6 +712,9 @@ def _rebuild_facts_refine(ctl, user_id, script_id, body) -> dict:
         ch_to = int(ch_to_raw) if ch_to_raw not in (None, "") else None
     except (TypeError, ValueError):
         ch_to = None
+    force = bool(body.get("force"))
+    # 默认增量:只处理未精炼/内容变更/版本变化的章节;勾“强制全部”才全量。
+    only_missing = bool(body.get("only_missing", True)) and not force
     with connect() as _dbc:
         before = _count(_dbc, "chapter_facts", script_id)
     def _refine_progress(done: int, total: int) -> None:
@@ -724,7 +727,7 @@ def _rebuild_facts_refine(ctl, user_id, script_id, body) -> dict:
         script_id, user_id,
         ch_from=ch_from, ch_to=ch_to,
         api_id=(body.get("api_id") or None), model=(body.get("model") or None),
-        apply=True,
+        apply=True, only_missing=only_missing, force=force,
         should_cancel=ctl.is_cancelled, progress_cb=_refine_progress,
     )
     with connect() as _dbc:
@@ -743,7 +746,12 @@ def _rebuild_facts_refine(ctl, user_id, script_id, body) -> dict:
         "partial_failures": partial_failures,
         "error": r.get("error") if not r.get("ok") else "",
         "cancelled": bool(r.get("cancelled")),
-        "extra": {"refined": r.get("refined"), "range": r.get("range")},
+        "extra": {
+            "refined": r.get("refined"),
+            "already_done": r.get("already_done"),
+            "total": r.get("total"),
+            "range": r.get("range"),
+        },
     }
     return result
 

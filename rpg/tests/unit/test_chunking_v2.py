@@ -13,6 +13,7 @@ from platform_app.knowledge._utils import (
     _normalize_chunk_text,
     _pick_snippet,
     _query_tokens,
+    _sentence_clip,
 )
 
 SAMPLE = """林砚推开客栈的门，风雪灌进来。掌柜抬头看了他一眼，低声道：“客官，可是姓林？”
@@ -122,6 +123,13 @@ def test_pick_snippet_falls_back_to_head_without_match():
 def test_pick_snippet_short_content_returns_all():
     content = "短内容。"
     assert _pick_snippet(content, ["短"], max_chars=100) == content
+
+
+def test_sentence_clip_stops_at_complete_sentence():
+    text = "第一句完整。第二句完整。第三句会被截断在这里没有句号"
+    out = _sentence_clip(text, 11)
+    assert out == "第一句完整。"
+    assert len(out) <= 11
 
 
 def test_pick_snippet_does_not_expand_into_oversized_sentence():
